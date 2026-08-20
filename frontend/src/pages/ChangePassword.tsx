@@ -16,16 +16,22 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 
 import { useAuth } from '../auth/AuthContext'
-import { MIN_PASSWORD_LENGTH, passwordProblem } from '../utils/password'
+import { useI18n } from '../i18n'
+import {
+  MIN_PASSWORD_LENGTH,
+  passwordProblem,
+  type PasswordProblem,
+} from '../utils/password'
 
 export default function ChangePassword() {
   const { status, mustChangePassword, changePassword } = useAuth()
   const navigate = useNavigate()
+  const { t } = useI18n()
 
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
-  const [localError, setLocalError] = useState<string | null>(null)
+  const [localError, setLocalError] = useState<PasswordProblem | null>(null)
 
   const submit = useMutation({
     mutationFn: () => changePassword(current, next),
@@ -46,12 +52,14 @@ export default function ChangePassword() {
   return (
     <div className="auth-page">
       <section className="card auth-card">
-        <h2 className="card-title">{mustChangePassword ? '請設定新密碼' : '變更密碼'}</h2>
+        <h2 className="card-title">
+          {mustChangePassword
+            ? t('changePassword.titleForced')
+            : t('changePassword.title')}
+        </h2>
 
         {mustChangePassword && (
-          <div className="banner banner-warn">
-            管理員已重設你的密碼。在你設定自己的新密碼之前，其他功能都無法使用。
-          </div>
+          <div className="banner banner-warn">{t('changePassword.forcedNotice')}</div>
         )}
 
         <form
@@ -65,7 +73,9 @@ export default function ChangePassword() {
         >
           <div className="field">
             <label htmlFor="current">
-              {mustChangePassword ? '管理員給的臨時密碼' : '目前密碼'}
+              {mustChangePassword
+                ? t('changePassword.currentForced')
+                : t('changePassword.current')}
             </label>
             <input
               id="current"
@@ -79,7 +89,7 @@ export default function ChangePassword() {
           </div>
 
           <div className="field">
-            <label htmlFor="next">新密碼</label>
+            <label htmlFor="next">{t('changePassword.next')}</label>
             <input
               id="next"
               className="text-input"
@@ -89,11 +99,13 @@ export default function ChangePassword() {
               onChange={(event) => setNext(event.target.value)}
               required
             />
-            <span className="field-hint">至少 {MIN_PASSWORD_LENGTH} 個字元</span>
+            <span className="field-hint">
+              {t('register.passwordHint', { min: MIN_PASSWORD_LENGTH })}
+            </span>
           </div>
 
           <div className="field">
-            <label htmlFor="confirm">確認新密碼</label>
+            <label htmlFor="confirm">{t('changePassword.confirm')}</label>
             <input
               id="confirm"
               className="text-input"
@@ -105,11 +117,15 @@ export default function ChangePassword() {
             />
           </div>
 
-          {localError && <div className="banner banner-error">{localError}</div>}
+          {localError && (
+            <div className="banner banner-error">
+              {t(localError.key, localError.params)}
+            </div>
+          )}
 
           {submit.isError && (
             <div className="banner banner-error">
-              變更失敗：{(submit.error as Error).message}
+              {t('changePassword.failed', { message: (submit.error as Error).message })}
             </div>
           )}
 
@@ -118,12 +134,14 @@ export default function ChangePassword() {
             className="btn btn-primary btn-block"
             disabled={submit.isPending}
           >
-            {submit.isPending ? '變更中…' : '設定新密碼'}
+            {submit.isPending
+              ? t('changePassword.submitting')
+              : t('changePassword.submit')}
           </button>
         </form>
 
         <p className="dim" style={{ marginTop: 14 }}>
-          變更後其他裝置上的登入狀態都會失效，這台會留著。
+          {t('changePassword.note')}
         </p>
       </section>
     </div>

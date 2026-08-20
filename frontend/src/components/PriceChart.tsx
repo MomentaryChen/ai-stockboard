@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 
 import type { DailyPricePoint, MaSeriesPoint } from '../api/types'
+import { useI18n } from '../i18n'
 import { CandleShape } from './Candlestick'
 import { fmtLots, fmtPrice, shortDate } from '../utils/format'
 
@@ -76,16 +77,19 @@ export function buildChartRows(
 }
 
 function ChartTooltip({ active, payload }: any) {
+  // Rendered inside the chart subtree, so the provider is still above it.
+  const { t } = useI18n()
+
   if (!active || !payload?.length) return null
   const row = payload[0].payload as ChartRow
   const dir = row.close >= row.open ? 'up' : 'down'
 
   const lines: Array<[string, string, string?]> = [
-    ['開', fmtPrice(row.open)],
-    ['高', fmtPrice(row.high)],
-    ['低', fmtPrice(row.low)],
-    ['收', fmtPrice(row.close), dir],
-    ['量(張)', fmtLots(row.capacity)],
+    [t('chart.tooltipOpen'), fmtPrice(row.open)],
+    [t('chart.tooltipHigh'), fmtPrice(row.high)],
+    [t('chart.tooltipLow'), fmtPrice(row.low)],
+    [t('chart.tooltipClose'), fmtPrice(row.close), dir],
+    [t('chart.tooltipVolumeLots'), fmtLots(row.capacity)],
   ]
 
   return (
@@ -116,6 +120,8 @@ interface Props {
 }
 
 export default function PriceChart({ rows, mode, visibleMas }: Props) {
+  const { t } = useI18n()
+
   // Pad the domain so candles never touch the plot edges, then snap the bounds
   // to a round step so the axis reads 2150 / 2300 / 2450 rather than 2151.6.
   const domain = useMemo<[number, number]>(() => {
@@ -153,7 +159,7 @@ export default function PriceChart({ rows, mode, visibleMas }: Props) {
         {mode === 'candle' ? (
           <Bar
             dataKey="hl"
-            name="K線"
+            name={t('chart.legendCandle')}
             isAnimationActive={false}
             shape={<CandleShape upColor={UP} downColor={DOWN} />}
             legendType="none"
@@ -162,7 +168,7 @@ export default function PriceChart({ rows, mode, visibleMas }: Props) {
           <Line
             type="monotone"
             dataKey="close"
-            name="收盤價"
+            name={t('chart.legendClose')}
             stroke={UP}
             strokeWidth={1.8}
             dot={false}

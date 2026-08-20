@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../api/client'
 import type { StockInfo } from '../api/types'
+import { translateMarket, translateStockType, useI18n } from '../i18n'
 
 interface Props {
   onSelect: (stock: StockInfo) => void
@@ -13,9 +14,10 @@ interface Props {
 /** Debounced code/name lookup with a keyboard-navigable dropdown. */
 export default function StockSearch({
   onSelect,
-  placeholder = '輸入股票代碼或名稱，例如 2330 或 台積電',
+  placeholder,
   autoClearOnSelect = false,
 }: Props) {
+  const { t } = useI18n()
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -77,7 +79,7 @@ export default function StockSearch({
     <div className="search" ref={boxRef}>
       <input
         value={input}
-        placeholder={placeholder}
+        placeholder={placeholder ?? t('search.placeholder')}
         onChange={(e) => {
           setInput(e.target.value)
           setHighlight(0)
@@ -102,21 +104,22 @@ export default function StockSearch({
               <span className="meta">
                 {/* Only reachable by typing the code in full -- the API keeps
                     delisted instruments out of prefix and name matches. */}
-                {!stock.is_active && '已下市 · '}
-                {stock.market} · {stock.group || stock.type}
+                {!stock.is_active && `${t('search.delisted')} · `}
+                {translateMarket(stock.market, t)} ·{' '}
+                {stock.group || translateStockType(stock.type, t)}
               </span>
             </button>
           ))}
 
           {results.length === 0 && (
             <div className="search-empty">
-              {isFetching ? '搜尋中…' : `找不到符合「${query}」的股票`}
+              {isFetching ? t('search.searching') : t('search.noResults', { query })}
             </div>
           )}
 
           {data && data.total > results.length && (
             <div className="search-empty">
-              共 {data.total} 筆，僅顯示前 {results.length} 筆
+              {t('search.truncated', { total: data.total, shown: results.length })}
             </div>
           )}
         </div>

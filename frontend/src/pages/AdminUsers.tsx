@@ -4,9 +4,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { PasswordResetResponse, Role, User } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
+import { useI18n } from '../i18n'
 
 export default function AdminUsers() {
   const { user: me } = useAuth()
+  const { intlTag, t } = useI18n()
   const queryClient = useQueryClient()
   const [q, setQ] = useState('')
 
@@ -54,19 +56,21 @@ export default function AdminUsers() {
     <div className="stack">
       <div className="row-between wrap" style={{ gap: 16 }}>
         <h2 className="card-title" style={{ margin: 0 }}>
-          使用者管理
+          {t('adminUsers.title')}
         </h2>
         <input
           className="text-input"
           style={{ maxWidth: 260 }}
-          placeholder="搜尋帳號或 Email"
+          placeholder={t('adminUsers.searchPlaceholder')}
           value={q}
           onChange={(event) => setQ(event.target.value)}
         />
       </div>
 
       {error && (
-        <div className="banner banner-error">操作失敗：{(error as Error).message}</div>
+        <div className="banner banner-error">
+          {t('adminUsers.opFailed', { message: (error as Error).message })}
+        </div>
       )}
 
       {issued && (
@@ -85,13 +89,13 @@ export default function AdminUsers() {
           <table className="data">
             <thead>
               <tr>
-                <th>帳號</th>
-                <th>Email</th>
-                <th>手機</th>
-                <th>角色</th>
-                <th>狀態</th>
-                <th>密碼</th>
-                <th>註冊時間</th>
+                <th>{t('adminUsers.colUsername')}</th>
+                <th>{t('adminUsers.colEmail')}</th>
+                <th>{t('adminUsers.colPhone')}</th>
+                <th>{t('adminUsers.colRole')}</th>
+                <th>{t('adminUsers.colStatus')}</th>
+                <th>{t('adminUsers.colPassword')}</th>
+                <th>{t('adminUsers.colCreatedAt')}</th>
                 <th />
               </tr>
             </thead>
@@ -114,7 +118,7 @@ export default function AdminUsers() {
                         style={{ maxWidth: 110 }}
                         value={row.role}
                         disabled={isSelf || busy}
-                        title={isSelf ? '不能變更自己的角色' : undefined}
+                        title={isSelf ? t('adminUsers.selfRoleTitle') : undefined}
                         onChange={(event) =>
                           update.mutate({
                             id: row.id,
@@ -138,14 +142,16 @@ export default function AdminUsers() {
                           })
                         }
                       >
-                        {row.is_active ? '啟用中' : '已停用'}
+                        {row.is_active
+                          ? t('adminUsers.statusActive')
+                          : t('adminUsers.statusInactive')}
                       </button>
                     </td>
                     <td className="dim">
-                      {row.must_change_password ? '待重設' : '—'}
+                      {row.must_change_password ? t('adminUsers.pendingReset') : '—'}
                     </td>
                     <td className="dim tabular">
-                      {new Date(row.created_at).toLocaleDateString('zh-TW')}
+                      {new Date(row.created_at).toLocaleDateString(intlTag)}
                     </td>
                     <td>
                       <div className="row" style={{ gap: 6 }}>
@@ -154,26 +160,21 @@ export default function AdminUsers() {
                           className="btn btn-sm"
                           disabled={isSelf || busy}
                           title={
-                            isSelf
-                              ? '要改自己的密碼請用「變更密碼」'
-                              : undefined
+                            isSelf ? t('adminUsers.selfPasswordTitle') : undefined
                           }
                           onClick={() => {
                             if (
                               window.confirm(
-                                `確定要重設 ${row.username} 的密碼？
-
-` +
-                                  '系統會產生一組臨時密碼並「只顯示一次」，' +
-                                  '該帳號現有的登入狀態會全部失效，' +
-                                  '而且必須先設定新密碼才能使用其他功能。',
+                                t('adminUsers.resetConfirm', {
+                                  username: row.username,
+                                }),
                               )
                             ) {
                               resetPassword.mutate(row.id)
                             }
                           }}
                         >
-                          重設密碼
+                          {t('adminUsers.resetPassword')}
                         </button>
                         <button
                           type="button"
@@ -182,14 +183,16 @@ export default function AdminUsers() {
                           onClick={() => {
                             if (
                               window.confirm(
-                                `確定要刪除 ${row.username}？此帳號的自選股也會一併移除。`,
+                                t('adminUsers.deleteConfirm', {
+                                  username: row.username,
+                                }),
                               )
                             ) {
                               remove.mutate(row.id)
                             }
                           }}
                         >
-                          刪除
+                          {t('adminUsers.delete')}
                         </button>
                       </div>
                     </td>
@@ -200,9 +203,7 @@ export default function AdminUsers() {
           </table>
 
           <p className="dim" style={{ marginTop: 12 }}>
-            共 {users.data?.total ?? 0} 個帳號。系統至少要保留一位啟用中的
-            ADMIN，也無法變更自己的角色或狀態。「待重設」表示該帳號拿的是臨時密碼，
-            登入後只能設定新密碼。
+            {t('adminUsers.footer', { total: users.data?.total ?? 0 })}
           </p>
         </section>
       )}
@@ -225,15 +226,18 @@ function TempPasswordNotice({
   result: PasswordResetResponse
   onDismiss: () => void
 }) {
+  const { t } = useI18n()
   const [copied, setCopied] = useState(false)
 
   return (
     <div className="banner banner-warn">
       <div className="stack" style={{ gap: 10 }}>
         <div>
-          已為 <strong>{result.user.username}</strong>（{result.user.email}）
-          產生臨時密碼。<strong>這組密碼只會顯示這一次</strong>
-          ，關閉後就無法再查看，請立即透過可信任的管道交給對方。
+          {t('adminUsers.tempIssuedFor', {
+            username: result.user.username,
+            email: result.user.email,
+          })}{' '}
+          <strong>{t('adminUsers.tempIssuedOnce')}</strong>
         </div>
 
         <div className="row wrap" style={{ gap: 8 }}>
@@ -253,17 +257,14 @@ function TempPasswordNotice({
               }
             }}
           >
-            {copied ? '已複製' : '複製'}
+            {copied ? t('adminUsers.copied') : t('adminUsers.copy')}
           </button>
           <button type="button" className="btn btn-sm" onClick={onDismiss}>
-            我已收好，關閉
+            {t('adminUsers.dismiss')}
           </button>
         </div>
 
-        <div className="dim">
-          對方登入後必須先設定自己的新密碼，在那之前其他功能都不能用；
-          該帳號原有的登入狀態也已全部失效。
-        </div>
+        <div className="dim">{t('adminUsers.tempIssuedNote')}</div>
       </div>
     </div>
   )

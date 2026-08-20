@@ -3,18 +3,25 @@ import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 
 import { useAuth } from '../auth/AuthContext'
-import { MIN_PASSWORD_LENGTH, passwordProblem } from '../utils/password'
+import { useI18n } from '../i18n'
+import {
+  MIN_PASSWORD_LENGTH,
+  passwordProblem,
+  type PasswordProblem,
+} from '../utils/password'
 
 export default function Register() {
   const { status, register } = useAuth()
   const navigate = useNavigate()
+  const { t } = useI18n()
 
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
-  const [localError, setLocalError] = useState<string | null>(null)
+  // Held as a key, not a sentence, so switching language re-renders it.
+  const [localError, setLocalError] = useState<PasswordProblem | null>(null)
 
   const submit = useMutation({
     mutationFn: () =>
@@ -32,7 +39,7 @@ export default function Register() {
   return (
     <div className="auth-page">
       <section className="card auth-card">
-        <h2 className="card-title">註冊</h2>
+        <h2 className="card-title">{t('register.title')}</h2>
 
         <form
           className="form-stack"
@@ -44,7 +51,7 @@ export default function Register() {
           }}
         >
           <div className="field">
-            <label htmlFor="username">帳號</label>
+            <label htmlFor="username">{t('register.username')}</label>
             <input
               id="username"
               className="text-input"
@@ -55,11 +62,11 @@ export default function Register() {
               onChange={(event) => setUsername(event.target.value)}
               required
             />
-            <span className="field-hint">3–32 個字元，不分大小寫</span>
+            <span className="field-hint">{t('register.usernameHint')}</span>
           </div>
 
           <div className="field">
-            <label htmlFor="email">Email</label>
+            <label htmlFor="email">{t('register.email')}</label>
             <input
               id="email"
               className="text-input"
@@ -72,7 +79,7 @@ export default function Register() {
           </div>
 
           <div className="field">
-            <label htmlFor="phone">手機（選填）</label>
+            <label htmlFor="phone">{t('register.phone')}</label>
             <input
               id="phone"
               className="text-input"
@@ -84,7 +91,7 @@ export default function Register() {
           </div>
 
           <div className="field">
-            <label htmlFor="password">密碼</label>
+            <label htmlFor="password">{t('register.password')}</label>
             <input
               id="password"
               className="text-input"
@@ -94,11 +101,13 @@ export default function Register() {
               onChange={(event) => setPassword(event.target.value)}
               required
             />
-            <span className="field-hint">至少 {MIN_PASSWORD_LENGTH} 個字元</span>
+            <span className="field-hint">
+              {t('register.passwordHint', { min: MIN_PASSWORD_LENGTH })}
+            </span>
           </div>
 
           <div className="field">
-            <label htmlFor="confirm">確認密碼</label>
+            <label htmlFor="confirm">{t('register.confirm')}</label>
             <input
               id="confirm"
               className="text-input"
@@ -110,11 +119,15 @@ export default function Register() {
             />
           </div>
 
-          {localError && <div className="banner banner-error">{localError}</div>}
+          {localError && (
+            <div className="banner banner-error">
+              {t(localError.key, localError.params)}
+            </div>
+          )}
 
           {submit.isError && (
             <div className="banner banner-error">
-              註冊失敗：{(submit.error as Error).message}
+              {t('register.failed', { message: (submit.error as Error).message })}
             </div>
           )}
 
@@ -123,12 +136,13 @@ export default function Register() {
             className="btn btn-primary btn-block"
             disabled={submit.isPending}
           >
-            {submit.isPending ? '註冊中…' : '註冊'}
+            {submit.isPending ? t('register.submitting') : t('register.submit')}
           </button>
         </form>
 
         <p className="dim" style={{ marginTop: 14 }}>
-          已經有帳號了？<Link to="/login">登入</Link>
+          {t('register.haveAccount')}{' '}
+          <Link to="/login">{t('register.loginLink')}</Link>
         </p>
       </section>
     </div>
