@@ -9,8 +9,8 @@ import MaPanel from '../components/MaPanel'
 import PriceChart, { buildChartRows } from '../components/PriceChart'
 import StockSearch from '../components/StockSearch'
 import VolumeChart from '../components/VolumeChart'
+import { POLL_MS, useLiveQuote } from '../hooks/useLiveQuote'
 import { direction, fmtCompact, fmtIndex, fmtLots, fmtSigned } from '../utils/format'
-import { isMarketOpen } from '../utils/market'
 
 const RANGES = [
   { label: '1個月', months: 1 },
@@ -20,7 +20,6 @@ const RANGES = [
 ]
 
 const MA_OPTIONS = ['ma5', 'ma10', 'ma20', 'ma60']
-const POLL_MS = 10_000
 
 /** The landing page: 台股大盤 (TAIEX) -- intraday level, history, and the same
  *  rule-based analysis an individual stock gets. */
@@ -32,9 +31,6 @@ export default function MarketDashboard() {
   const [visibleMas, setVisibleMas] = useState<string[]>(['ma5', 'ma20'])
   // Defaults to the corrected rules; 'twstock' is there to compare against.
   const [ruleSet, setRuleSet] = useState<RuleSet>('grs')
-  // Polling off-session would only re-fetch the same closing level, so start
-  // live only while the exchange is open. The user can still switch it on.
-  const [live, setLive] = useState(isMarketOpen)
 
   const history = useQuery({
     queryKey: ['history', MARKET_INDEX_SID, months],
@@ -46,43 +42,28 @@ export default function MarketDashboard() {
     queryFn: () => api.getTraditionalAnalysis(MARKET_INDEX_SID, months, ruleSet),
   })
 
-  const realtime = useQuery({
-    queryKey: ['realtime', [MARKET_INDEX_SID]],
-    queryFn: () => api.getRealtime([MARKET_INDEX_SID]),
-    refetchInterval: live ? POLL_MS : false,
-    staleTime: 0,
-  })
-
   const rows = useMemo(
     () => buildChartRows(history.data?.data ?? [], analysis.data?.ma_series),
     [history.data, analysis.data],
   )
 
   const lastClose = rows.at(-1)
-  const quote = realtime.data?.quotes.find((q) => q.code === MARKET_INDEX_SID)
-  const marketOpen = isMarketOpen()
-
-  // MIS keeps serving the last tick long after the close, so "is there a quote"
-  // is not the same question as "is the market open". Show the live level while
-  // the session runs, and also in the gap after 13:30 before TWSE publishes the
-  // day's report -- until then `lastClose` is still yesterday.
-  const quoteDay = quote?.time?.slice(0, 10) ?? null
-  const intraday =
-    quote?.latest_trade_price != null &&
-    (marketOpen || (quoteDay !== null && quoteDay > (lastClose?.date ?? '')))
-  const level = intraday ? quote!.latest_trade_price : (lastClose?.close ?? null)
-  const change = intraday ? quote!.change : (lastClose?.change ?? null)
-  const changePct =
-    intraday && quote!.change_percent != null
-      ? quote!.change_percent
-      : lastClose && lastClose.change !== null && lastClose.close - lastClose.change !== 0
-        ? (lastClose.change / (lastClose.close - lastClose.change)) * 100
-        : null
+  const {
+    marketOpen,
+    intraday,
+    price: level,
+    change,
+    changePct,
+    open,
+    high,
+    low,
+    stamp,
+    live,
+    setLive,
+    isFetching,
+  } = useLiveQuote(MARKET_INDEX_SID, lastClose)
 
   const dir = direction(change)
-  const open = intraday ? quote!.open : (lastClose?.open ?? null)
-  const high = intraday ? quote!.high : (lastClose?.high ?? null)
-  const low = intraday ? quote!.low : (lastClose?.low ?? null)
 
   function toggleMa(key: string) {
     setVisibleMas((current) =>
@@ -138,7 +119,7 @@ export default function MarketDashboard() {
               >
                 {live ? `自動更新中 (每 ${POLL_MS / 1000} 秒)` : '已暫停'}
               </button>
-              {realtime.isFetching && <span className="spinner" />}
+              {isFetching && <span className="spinner" />}
             </div>
           </div>
         </div>
@@ -167,10 +148,8 @@ export default function MarketDashboard() {
             <div className="stat-value">{fmtLots(lastClose?.capacity ?? null)}</div>
           </div>
           <div>
-            <div className="stat-label">{marketOpen ? '報價時間' : '最新收盤'}</div>
-            <div className="stat-value">
-              {marketOpen && quote ? quote.time.slice(11) : (lastClose?.date ?? '--')}
-            </div>
+            <div className="stat-label">{intraday ? '報價時間' : '最新收盤'}</div>
+            <div className="stat-value">{stamp}</div>
           </div>
         </div>
 

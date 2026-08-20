@@ -9,7 +9,8 @@ import MaPanel from '../components/MaPanel'
 import PriceChart, { buildChartRows } from '../components/PriceChart'
 import StockSearch from '../components/StockSearch'
 import VolumeChart from '../components/VolumeChart'
-import { direction, fmtCompact, fmtLots, fmtPrice, fmtSigned } from '../utils/format'
+import { POLL_MS, useLiveQuote } from '../hooks/useLiveQuote'
+import { direction, fmtCompact, fmtInt, fmtLots, fmtPrice, fmtSigned } from '../utils/format'
 
 const RANGES = [
   { label: '1個月', months: 1 },
@@ -45,13 +46,24 @@ export default function StockDetail() {
     [history.data, analysis.data],
   )
 
-  const latest = rows.at(-1)
-  const previous = rows.at(-2)
-  const changePct =
-    latest && previous && previous.close
-      ? ((latest.close - previous.close) / previous.close) * 100
-      : null
-  const dir = direction(latest?.change ?? null)
+  const lastClose = rows.at(-1)
+  const {
+    quote,
+    marketOpen,
+    intraday,
+    price,
+    change,
+    changePct,
+    open,
+    high,
+    low,
+    stamp,
+    live,
+    setLive,
+    isFetching,
+  } = useLiveQuote(sid, lastClose)
+
+  const dir = direction(change)
 
   function toggleMa(key: string) {
     setVisibleMas((current) =>
@@ -81,17 +93,31 @@ export default function StockDetail() {
         <div className="row-between wrap">
           <div className="stock-head">
             <span className="sid">{sid}</span>
-            <span className="sname">{history.data?.name ?? analysis.data?.name ?? ''}</span>
+            <span className="sname">
+              {history.data?.name ?? analysis.data?.name ?? quote?.name ?? ''}
+            </span>
             {history.data && <span className="tag">{history.data.source.toUpperCase()}</span>}
+            <span className="tag">{marketOpen ? '盤中' : '收盤'}</span>
           </div>
 
           <div className="row wrap" style={{ gap: 16 }}>
             <div>
-              <span className={`price-now ${dir}`}>{fmtPrice(latest?.close ?? null)}</span>{' '}
+              <span className={`price-now ${dir}`}>{fmtPrice(price)}</span>{' '}
               <span className={`price-change ${dir}`}>
-                {fmtSigned(latest?.change ?? null)}
+                {fmtSigned(change)}
                 {changePct !== null ? ` (${fmtSigned(changePct)}%)` : ''}
               </span>
+            </div>
+
+            <div className="row wrap">
+              <button
+                type="button"
+                className={`btn btn-sm ${live ? 'active' : ''}`}
+                onClick={() => setLive((v) => !v)}
+              >
+                {live ? `自動更新中 (每 ${POLL_MS / 1000} 秒)` : '已暫停'}
+              </button>
+              {isFetching && <span className="spinner" />}
             </div>
           </div>
         </div>
@@ -99,27 +125,32 @@ export default function StockDetail() {
         <div className="stat-grid" style={{ marginTop: 16 }}>
           <div>
             <div className="stat-label">開盤</div>
-            <div className="stat-value">{fmtPrice(latest?.open ?? null)}</div>
+            <div className="stat-value">{fmtPrice(open)}</div>
           </div>
           <div>
             <div className="stat-label">最高</div>
-            <div className="stat-value up">{fmtPrice(latest?.high ?? null)}</div>
+            <div className="stat-value up">{fmtPrice(high)}</div>
           </div>
           <div>
             <div className="stat-label">最低</div>
-            <div className="stat-value down">{fmtPrice(latest?.low ?? null)}</div>
+            <div className="stat-value down">{fmtPrice(low)}</div>
           </div>
           <div>
             <div className="stat-label">成交量(張)</div>
-            <div className="stat-value">{fmtLots(latest?.capacity ?? null)}</div>
+            {/* MIS already reports 張; the daily bar reports 股. */}
+            <div className="stat-value">
+              {intraday
+                ? fmtInt(quote!.accumulate_trade_volume)
+                : fmtLots(lastClose?.capacity ?? null)}
+            </div>
           </div>
           <div>
             <div className="stat-label">交易日</div>
             <div className="stat-value">{rows.length}</div>
           </div>
           <div>
-            <div className="stat-label">最新日期</div>
-            <div className="stat-value">{latest?.date ?? '--'}</div>
+            <div className="stat-label">{intraday ? '報價時間' : '最新日期'}</div>
+            <div className="stat-value">{stamp}</div>
           </div>
         </div>
       </section>
