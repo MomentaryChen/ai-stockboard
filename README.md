@@ -202,7 +202,7 @@ twstock 版在兩萬組裡**沒有一次回傳 Don't touch**，而且與 grs 版
 ## 大盤（加權指數）
 
 首頁 `/` 是大盤看板：即時指數、K 線與均線、四大買賣點、近 10 日。個股頁在 `/stock/:sid`，即時報價在 `/realtime`。
-即時的部分需要登入（見〈[即時報價需要登入](#即時報價需要登入)〉），K 線與分析則不用。
+即時的部分需要登入（見〈[Realtime quotes require sign-in](#realtime-quotes-require-sign-in)〉），K 線與分析則不用。
 
 大盤在後端就是一個 `sid` = **`t00`**，走的是跟個股完全相同的路由：
 
@@ -448,36 +448,45 @@ curl localhost:8000/api/watchlist -H "Authorization: Bearer $ACCESS_TOKEN"
 
 ---
 
-## 即時報價需要登入
+## Realtime quotes require sign-in
 
-`/api/realtime` 是唯一擋在登入後面的行情端點。歷史、搜尋與分析都答得出快取裡的資料，
-但報價不新鮮就沒有意義，所以每一次呼叫都會真的打到 TWSE MIS，花掉**全站共用**的額度——
-來源限制是每個來源 IP 每 5 秒 3 次，而每一個開著的看板每 10 秒就吃掉一次。
-把它綁在帳號上，這份額度才追得回是誰用的。
+`/api/realtime` is the only market-data route behind a sign-in. History, search
+and the rule analysis all answer out of the PostgreSQL cache, but a quote is
+worthless unless it is fresh, so every call genuinely reaches TWSE MIS and spends
+part of a budget the **whole service shares** -- the upstream limit is 3 requests
+per 5 seconds per source IP, and every open board burns one every 10 seconds.
+Requiring an account is what keeps that budget attributable.
 
-未登入的人不會被踢出任何頁面：
+Nobody is thrown out of a page:
 
-| 頁面 | 未登入看得到 | 登入後多了什麼 |
+| Page | Signed out | What signing in adds |
 |---|---|---|
-| 大盤 `/` | 最近一個交易日的收盤指數、K 線與均線、四大買賣點、近 10 日 | 盤中即時指數，每 10 秒更新 |
-| 個股 `/stock/:sid` | 同上，加基本資料 | 盤中即時價、成交量、報價時間 |
-| 即時報價 `/realtime` | 一張說明用途的登入／註冊卡片 | 自選股即時看板與委買委賣五檔 |
+| 大盤 `/` | Last trading day's close, K-line and moving averages, 四大買賣點, last 10 days | Intraday index level, refreshed every 10s |
+| 個股 `/stock/:sid` | Same, plus the instrument's basics | Intraday price, volume, quote timestamp |
+| 即時報價 `/realtime` | A card explaining what the page offers, with sign-in / register | The watchlist board and bid/ask depth |
 
-前端配合的三個點：
+Three things on the frontend make that work:
 
-- `useLiveQuote` 未登入時不發請求（`enabled`），畫面自動落回原本就有的「最後收盤」路徑——
-  那條路徑本來就是為週末寫的，不是為了這個功能新加的。
-- 盤中／收盤那顆 tag 改看 `intraday`（畫面上真正是哪一種數字），不再看 `isMarketOpen()`。
-  否則未登入者在交易時段會看到標著「盤中」的昨日收盤。
-- `SignInPrompt` 兩種樣式：整頁版給 `/realtime`，行內版取代大盤／個股的「自動更新」按鈕。
-  兩者都把當前路徑放進 router state，登入或註冊完會直接回到原頁。
+- `useLiveQuote` issues no request while signed out (`enabled`), so the view falls
+  back to the last-close path that already existed -- written for weekends, not
+  added for this feature.
+- The 盤中 / 收盤 badge reads `intraday` (what the numbers on screen actually are)
+  rather than `isMarketOpen()`. Without this, a signed-out visitor during market
+  hours would see yesterday's close labelled 盤中.
+- `SignInPrompt` has two variants: full-page for `/realtime`, inline in place of
+  the 自動更新 toggle on 大盤 / 個股. Both put the current path into router state,
+  so signing in or registering returns to the page the visitor started on.
 
-沒帶 token 或 token 過期時，後端擋的是 **401 而不是 403**，`app/deps.py` 有寫原因：
-前端攔截器只在 401 換發 token，403 則不重試——一個每 10 秒輪詢的請求踩到這點會很難看。
+With no token, or an expired one, the server answers **401 rather than 403** --
+`app/deps.py` records why: the frontend interceptor refreshes on 401 and does not
+retry on 403, and a request that repeats every 10 seconds cannot afford to be
+signed out mid-poll.
 
-`/api/realtime` 用的是 `get_current_user`，所以也繼承了它的 403：帳號正握著 ADMIN 發的
-臨時密碼時回 `Password reset required`。實務上前端不會走到——`<PasswordGate>` 包在整個
-路由表外面，那種帳號會被壓在 `/change-password`，大盤與個股頁根本不會 render，也就不會輪詢。
+`/api/realtime` takes `get_current_user`, so it also inherits that dependency's
+403: `Password reset required`, for an account still holding an ADMIN-generated
+password. The frontend never reaches it -- `<PasswordGate>` wraps the whole route
+table, pinning such an account to `/change-password`, so the 大盤 and 個股 pages
+never render and nothing polls.
 
 ---
 
