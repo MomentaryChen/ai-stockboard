@@ -4,7 +4,7 @@ import { useAuth } from '../auth/AuthContext'
 
 /** Sits in the topbar next to the health indicator. */
 export default function UserMenu() {
-  const { status, user, isAdmin, logout } = useAuth()
+  const { status, user, isAdmin, mustChangePassword, logout } = useAuth()
   const navigate = useNavigate()
 
   if (status === 'loading') return <span className="spinner" />
@@ -24,7 +24,9 @@ export default function UserMenu() {
 
   return (
     <div className="row" style={{ gap: 8 }}>
-      {isAdmin && (
+      {/* Hidden mid-reset: <PasswordGate> is already holding them on the
+          change-password page, so an admin link would only be a dead end. */}
+      {isAdmin && !mustChangePassword && (
         <>
           <Link to="/admin/users" className="btn btn-sm">
             使用者管理
@@ -33,6 +35,11 @@ export default function UserMenu() {
             名冊同步
           </Link>
         </>
+      )}
+      {!mustChangePassword && (
+        <Link to="/change-password" className="btn btn-sm">
+          變更密碼
+        </Link>
       )}
       <span className="dim" title={user?.email}>
         {user?.username}

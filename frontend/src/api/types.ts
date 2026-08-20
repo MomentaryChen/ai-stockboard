@@ -121,6 +121,13 @@ export interface User {
   phone: string | null
   role: Role
   is_active: boolean
+  /**
+   * Set between an ADMIN password reset and the user choosing their own
+   * password. While true the API allows only GET /api/auth/me and
+   * POST /api/auth/me/password -- everything else answers 403 -- and the UI
+   * holds them on /change-password.
+   */
+  must_change_password: boolean
   created_at: string
 }
 
@@ -136,6 +143,17 @@ export interface TokenResponse {
 export interface UserListResponse {
   total: number
   users: User[]
+}
+
+/** The one response in the API that carries a secret. */
+export interface PasswordResetResponse {
+  user: User
+  /**
+   * The generated password, in the clear and exactly once: the server stores
+   * only its hash and cannot produce it again. Show it, let the admin copy it,
+   * and never persist it anywhere.
+   */
+  temp_password: string
 }
 
 export interface WatchlistResponse {

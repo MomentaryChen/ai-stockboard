@@ -55,6 +55,27 @@ def hash_password(raw: str) -> str:
     return bcrypt.hashpw(raw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
+# Deliberately not the full alphabet: this password is read off a screen and
+# typed by hand, so the pairs that look alike in most fonts (0/O, 1/l/I) are
+# gone, and so are the symbols that move around on non-US keyboard layouts.
+# 51 usable characters over 14 positions is ~79 bits, far past what the
+# short-lived credential this produces needs.
+_TEMP_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+TEMP_PASSWORD_LENGTH = 14
+
+
+def generate_temp_password() -> str:
+    """A one-off password for an ADMIN-initiated reset.
+
+    `secrets.choice`, not `random`: this is a credential. The result always
+    satisfies `password_problem`, so a reset can never be rejected by the same
+    validation that guards a user-chosen password.
+    """
+    return "".join(
+        secrets.choice(_TEMP_PASSWORD_ALPHABET) for _ in range(TEMP_PASSWORD_LENGTH)
+    )
+
+
 _dummy_hash: str | None = None
 
 

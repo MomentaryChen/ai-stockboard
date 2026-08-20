@@ -186,6 +186,10 @@ class UserOut(BaseModel):
     phone: str | None
     role: Role
     is_active: bool
+    # True between an ADMIN password reset and the user choosing their own
+    # password. While set, the API allows only /api/auth/me and
+    # /api/auth/me/password, and the UI keeps them on the change-password page.
+    must_change_password: bool
     created_at: datetime.datetime
 
 
@@ -232,6 +236,18 @@ class UserListResponse(BaseModel):
 class UserUpdateRequest(BaseModel):
     role: Role | None = None
     is_active: bool | None = None
+
+
+class PasswordResetResponse(BaseModel):
+    """The outcome of an ADMIN-initiated reset.
+
+    `temp_password` is the only time the generated password exists outside the
+    bcrypt hash -- it is not stored and cannot be read back, so the admin has
+    to relay it before leaving the page.
+    """
+
+    user: UserOut
+    temp_password: str
 
 
 class WatchlistResponse(BaseModel):

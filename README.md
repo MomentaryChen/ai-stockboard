@@ -118,9 +118,10 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | POST | `/api/auth/refresh` | 換發 token（會輪替 refresh token） |
 | POST | `/api/auth/logout` | 撤銷一組 refresh token |
 | GET / PATCH | `/api/auth/me` | 讀取／更新自己的資料 |
-| POST | `/api/auth/me/password` | 改密碼，並登出其他所有裝置 |
+| POST | `/api/auth/me/password` | 改密碼，登出其他所有裝置，並回一組新 token |
 | GET | `/api/users?q=&limit=&offset=` | 使用者列表（ADMIN） |
 | GET / PATCH / DELETE | `/api/users/{user_id}` | 檢視／改角色與狀態／刪除（ADMIN） |
+| POST | `/api/users/{user_id}/password-reset` | 重設密碼，回傳一次性臨時密碼（ADMIN） |
 | GET / PUT | `/api/watchlist` | 自選股，整批讀寫（需登入） |
 | POST | `/api/stocks/sync?force=false` | 手動同步上市櫃名冊（**ADMIN**） |
 | GET | `/api/stocks/sync/runs?limit=50` | 名冊同步的執行紀錄（**ADMIN**） |
@@ -397,6 +398,32 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 - 帳號已存在 → **不會覆寫密碼**（否則 `.env` 等於一個永久的密碼重設後門），
   但如果被降權或停用了會還原成啟用中的 ADMIN——這是刻意留的救援路徑
 
+### 管理員重設密碼
+
+使用者忘記密碼時，由 ADMIN 到 `/admin/users` 按「重設密碼」（或打
+`POST /api/users/{user_id}/password-reset`）。服務**沒有寄信功能**，所以整個流程是這樣的：
+
+1. 系統產生一組 14 位的隨機臨時密碼，只把 bcrypt hash 存進資料庫。
+2. **明碼只在該次 response 裡出現一次**，畫面上顯示給 ADMIN 自行轉交。
+   關掉就再也查不到——server 沒有留副本，弄丟只能再重設一次。
+   字元集刻意拿掉了 `0/O`、`1/l/I` 這些看起來像的字，方便對著螢幕手動輸入。
+3. 該帳號的 refresh token **全部撤銷**，舊的登入狀態立刻失效。
+4. 該帳號被標記 `must_change_password`，進入**受限模式**：
+   除了 `GET /api/auth/me` 與 `POST /api/auth/me/password`，其他 API 一律回 403
+   `Password reset required`；前端則被 `<PasswordGate>` 固定在 `/change-password`。
+5. 使用者用臨時密碼登入後設定自己的新密碼，旗標才會解除。
+
+換句話說，臨時密碼**只能拿來換一組新密碼**，不能拿來瀏覽帳號——即使它經過了聊天室
+或 email 這種不安全的管道。改密碼時仍然要輸入「目前密碼」（也就是那組臨時密碼），
+強制與自願兩種情境走同一條路徑。
+
+ADMIN 不能重設自己的密碼（會被擋成 400），要改自己的密碼請走
+`POST /api/auth/me/password`。
+
+`POST /api/auth/me/password` 成功後會**回傳一組新的 token**。改密碼會撤銷該帳號
+所有的 refresh token（包含當下這台），所以 server 必須重新發一組給剛剛證明自己知道
+新密碼的這個 session；否則使用者會在 access token 過期（最多 30 分鐘）後莫名被登出。
+
 `JWT_SECRET` 沒設時，server 仍然會啟動，改用一把隨程序產生的隨機密鑰並記一筆 WARNING。
 代價是**每次重啟所有人的 access token 失效**（refresh token 存在資料庫，客戶端會自動換發，使用者無感），
 而且**不能跑多個 uvicorn worker**（各自的密鑰不同，會互相拒絕）。正式環境請設定：
@@ -445,8 +472,12 @@ curl localhost:8000/api/watchlist -H "Authorization: Bearer $ACCESS_TOKEN"
 - `SignInPrompt` 兩種樣式：整頁版給 `/realtime`，行內版取代大盤／個股的「自動更新」按鈕。
   兩者都把當前路徑放進 router state，登入或註冊完會直接回到原頁。
 
-後端擋的是 **401 而不是 403**，`app/deps.py` 有寫原因：前端攔截器只在 401 換發 token，
-403 會直接把人登出——一個每 10 秒輪詢的請求踩到這點會很難看。
+沒帶 token 或 token 過期時，後端擋的是 **401 而不是 403**，`app/deps.py` 有寫原因：
+前端攔截器只在 401 換發 token，403 則不重試——一個每 10 秒輪詢的請求踩到這點會很難看。
+
+`/api/realtime` 用的是 `get_current_user`，所以也繼承了它的 403：帳號正握著 ADMIN 發的
+臨時密碼時回 `Password reset required`。實務上前端不會走到——`<PasswordGate>` 包在整個
+路由表外面，那種帳號會被壓在 `/change-password`，大盤與個股頁根本不會 render，也就不會輪詢。
 
 ---
 
@@ -469,8 +500,12 @@ curl localhost:8000/api/watchlist -H "Authorization: Bearer $ACCESS_TOKEN"
 - 同一套規則現在也跑在大盤 `t00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
   指數的「量」是全市場成交股數，性質與單一個股的量能不同。
 - grs 與 twstock 都沒有為四大買賣點提供書目出處，可驗證的「標準」只到 grs 這份參考實作為止。
-- 資料表用 `Base.metadata.create_all` 在啟動時建立。它只建立**不存在的表**，永遠不會 ALTER 既有的表——
-  `app_user` 之類已經有資料的 schema 要改欄位，只能手動下 SQL 或導入 Alembic。
+- 資料表用 `Base.metadata.create_all` 在啟動時建立。它只建立**不存在的表**，永遠不會 ALTER 既有的表。
+  既有的表要加欄位，改在 `server/app/schema_patches.py` 補一行冪等的
+  `add column if not exists`，每次啟動都會跑一次。那裡只放**加欄位**——
+  改型別、改名、刪欄位都不適合無人值守地對著正在跑的資料庫執行，需要時仍應導入 Alembic。
+- 重設密碼產生的臨時密碼**只顯示一次**，且只能靠 ADMIN 自己轉交。沒有寄信、沒有簡訊，
+  也沒有「忘記密碼」的自助流程——使用者一定要找得到管理員。
 - **Token 存在 localStorage**，任何 XSS 都讀得到。專案沒有 cookie/CSRF 基礎建設，
   nginx 與 Vite proxy 都已原樣轉發 `Authorization`，所以先採 Bearer；access token 的短效期限制了外洩的影響範圍。
 - **登出後既有的 access token 仍然有效到過期為止**（最多 30 分鐘）。這是無狀態 token 的固有取捨；
