@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import get_authenticated_user, get_current_user
 from app.models import AppUser
 from app.schemas import (
     LoginRequest,
@@ -98,7 +98,10 @@ def logout(payload: RefreshRequest, db: Session = Depends(get_db)) -> None:
 
 
 @router.get("/me", response_model=UserOut)
-def read_me(user: AppUser = Depends(get_current_user)) -> UserOut:
+def read_me(user: AppUser = Depends(get_authenticated_user)) -> UserOut:
+    # get_authenticated_user, not get_current_user: an account sitting on an
+    # ADMIN-issued temporary password has to be able to read itself, or the
+    # client cannot discover that `must_change_password` is what is blocking it.
     return auth_service.to_user_out(user)
 
 
@@ -120,12 +123,24 @@ def update_me(
     return auth_service.to_user_out(updated)
 
 
-@router.post("/me/password", status_code=204)
+@router.post("/me/password", response_model=TokenResponse)
 def change_password(
     payload: PasswordChangeRequest,
-    user: AppUser = Depends(get_current_user),
+    user: AppUser = Depends(get_authenticated_user),
     db: Session = Depends(get_db),
-) -> None:
+) -> TokenResponse:
+    """Set a new password. The only way out of a forced reset.
+
+    Takes `get_authenticated_user` so it stays reachable while
+    `must_change_password` is set -- gating it behind `get_current_user` would
+    lock the account out of the one action that unlocks it.
+
+    The current password is still required, which an ADMIN-issued temporary one
+    satisfies: the user was told what it is. That keeps a single code path for
+    both the forced and the voluntary case, and means a temporary password left
+    open on a colleague's screen cannot be swapped for a permanent one by
+    somebody who never knew it.
+    """
     if not auth_service.authenticate(db, user.username, payload.current_password):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
 
@@ -134,5 +149,14 @@ def change_password(
     except auth_service.InvalidInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Every other device holding a refresh token for this account loses it.
+    # Changing a password ends every session the account has, including this
+    # one -- there is no way to tell "the caller's refresh token" apart from a
+    # stolen copy of it. The caller is then handed a fresh pair, so the device
+    # that just proved it knows the new password stays signed in while all the
+    # others are dropped. Returning tokens is what makes the forced-reset flow
+    # survivable: without it the user would be signed out minutes after
+    # choosing their password, when the access token expired with no live
+    # refresh token behind it.
     auth_service.revoke_all_for_user(db, user.id)
+    access_token, refresh_token, expires_in = auth_service.issue_tokens(db, user)
+    return _token_response(user, access_token, refresh_token, expires_in)

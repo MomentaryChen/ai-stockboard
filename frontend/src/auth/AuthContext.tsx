@@ -37,6 +37,12 @@ interface AuthValue {
   status: AuthStatus
   user: User | null
   isAdmin: boolean
+  /**
+   * The account is holding a password an ADMIN generated for it. Every API
+   * call but `me` and `changePassword` answers 403 until it is replaced, so
+   * <PasswordGate> pins the user to /change-password while this is true.
+   */
+  mustChangePassword: boolean
   login: (identifier: string, password: string) => Promise<void>
   register: (input: {
     username: string
@@ -44,6 +50,7 @@ interface AuthValue {
     password: string
     phone?: string
   }) => Promise<void>
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -122,14 +129,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await queryClient.invalidateQueries({ queryKey: ['watchlist'] })
   }, [queryClient])
 
+  /**
+   * Same as afterSignIn, but a no-op for an account that still has to change
+   * its password: /api/watchlist answers 403 until it does, so running the
+   * merge now would just fail. The local copy is left untouched and picked up
+   * by changePassword() once the account is usable.
+   */
+  const afterSignInUnlessLocked = useCallback(
+    async (signedIn: User) => {
+      if (signedIn.must_change_password) return
+      await afterSignIn()
+    },
+    [afterSignIn],
+  )
+
   const login = useCallback(
     async (identifier: string, password: string) => {
       const tokens = await api.login(identifier, password)
       tokenStore.set(tokens.access_token, tokens.refresh_token)
       queryClient.setQueryData(['me'], tokens.user)
-      await afterSignIn()
+      await afterSignInUnlessLocked(tokens.user)
     },
-    [afterSignIn, queryClient],
+    [afterSignInUnlessLocked, queryClient],
   )
 
   const register = useCallback(
@@ -142,7 +163,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const tokens = await api.register(input)
       tokenStore.set(tokens.access_token, tokens.refresh_token)
       queryClient.setQueryData(['me'], tokens.user)
-      await afterSignIn()
+      await afterSignInUnlessLocked(tokens.user)
+    },
+    [afterSignInUnlessLocked, queryClient],
+  )
+
+  /**
+   * Set a new password and adopt the session the server hands back.
+   *
+   * Storing the new tokens is not optional: the change revoked every refresh
+   * token the account had, this one included, so keeping the old pair would
+   * sign the user out the moment the access token expired.
+   *
+   * The user in that response is authoritative for `must_change_password` --
+   * it only ever drops on the server, and trusting a local flip would unlock
+   * the UI while every request still came back 403. The watchlist merge runs
+   * here because this is the first moment it can succeed for an account that
+   * signed in under a reset.
+   */
+  const changePassword = useCallback(
+    async (currentPassword: string, newPassword: string) => {
+      const tokens = await api.changePassword(currentPassword, newPassword)
+      tokenStore.set(tokens.access_token, tokens.refresh_token)
+      queryClient.setQueryData(['me'], tokens.user)
+      if (!tokens.user.must_change_password) await afterSignIn()
     },
     [afterSignIn, queryClient],
   )
@@ -167,11 +211,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       user: status === 'authenticated' ? (user ?? null) : null,
       isAdmin: status === 'authenticated' && user?.role === 'ADMIN',
+      mustChangePassword:
+        status === 'authenticated' && user?.must_change_password === true,
       login,
       register,
+      changePassword,
       logout,
     }),
-    [status, user, login, register, logout],
+    [status, user, login, register, changePassword, logout],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

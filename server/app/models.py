@@ -205,6 +205,15 @@ class AppUser(Base):
         Boolean, default=True, server_default=text("true")
     )
 
+    # Set when an ADMIN resets the password to a generated one, cleared the
+    # moment the user picks their own. While it is true the account may only
+    # read its own profile and change its password -- `deps.get_current_user`
+    # refuses everything else -- so a temporary password handed over in chat
+    # cannot be used to browse the account.
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

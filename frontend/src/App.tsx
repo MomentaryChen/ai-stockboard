@@ -2,10 +2,12 @@ import { Link, Route, Routes, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from './api/client'
+import PasswordGate from './components/PasswordGate'
 import RequireAuth from './components/RequireAuth'
 import UserMenu from './components/UserMenu'
 import AdminStockCodes from './pages/AdminStockCodes'
 import AdminUsers from './pages/AdminUsers'
+import ChangePassword from './pages/ChangePassword'
 import Login from './pages/Login'
 import MarketDashboard from './pages/MarketDashboard'
 import Register from './pages/Register'
@@ -58,31 +60,44 @@ export default function App() {
       </header>
 
       <main className="main">
-        <Routes>
-          {/* 台股大盤 is the landing view; individual stocks hang off it. */}
-          <Route path="/" element={<MarketDashboard />} />
-          <Route path="/stock/:sid" element={<StockDetail />} />
-          <Route path="/realtime" element={<RealtimeBoard />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route
-            path="/admin/users"
-            element={
-              <RequireAuth adminOnly>
-                <AdminUsers />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/admin/stock-codes"
-            element={
-              <RequireAuth adminOnly>
-                <AdminStockCodes />
-              </RequireAuth>
-            }
-          />
-          <Route path="*" element={<div className="center-note">找不到這個頁面</div>} />
-        </Routes>
+        {/* Outside <Routes> so it covers the public market views too: an
+            account holding an ADMIN-generated password has nothing it may do
+            until it picks its own. */}
+        <PasswordGate>
+          <Routes>
+            {/* 台股大盤 is the landing view; individual stocks hang off it. */}
+            <Route path="/" element={<MarketDashboard />} />
+            <Route path="/stock/:sid" element={<StockDetail />} />
+            <Route path="/realtime" element={<RealtimeBoard />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route
+              path="/change-password"
+              element={
+                <RequireAuth>
+                  <ChangePassword />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/admin/users"
+              element={
+                <RequireAuth adminOnly>
+                  <AdminUsers />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/admin/stock-codes"
+              element={
+                <RequireAuth adminOnly>
+                  <AdminStockCodes />
+                </RequireAuth>
+              }
+            />
+            <Route path="*" element={<div className="center-note">找不到這個頁面</div>} />
+          </Routes>
+        </PasswordGate>
       </main>
     </div>
   )
