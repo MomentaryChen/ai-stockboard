@@ -2,7 +2,12 @@ import { Link, Route, Routes, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from './api/client'
+import RequireAuth from './components/RequireAuth'
+import UserMenu from './components/UserMenu'
+import AdminUsers from './pages/AdminUsers'
+import Login from './pages/Login'
 import MarketDashboard from './pages/MarketDashboard'
+import Register from './pages/Register'
 import StockDetail from './pages/StockDetail'
 import RealtimeBoard from './pages/RealtimeBoard'
 
@@ -47,6 +52,7 @@ export default function App() {
         </nav>
         <div className="topbar-right">
           <HealthIndicator />
+          <UserMenu />
         </div>
       </header>
 
@@ -56,6 +62,16 @@ export default function App() {
           <Route path="/" element={<MarketDashboard />} />
           <Route path="/stock/:sid" element={<StockDetail />} />
           <Route path="/realtime" element={<RealtimeBoard />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route
+            path="/admin/users"
+            element={
+              <RequireAuth adminOnly>
+                <AdminUsers />
+              </RequireAuth>
+            }
+          />
           <Route path="*" element={<div className="center-note">找不到這個頁面</div>} />
         </Routes>
       </main>

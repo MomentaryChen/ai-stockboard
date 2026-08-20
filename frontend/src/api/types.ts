@@ -107,3 +107,38 @@ export interface HealthResponse {
   database: string
   stock_codes_loaded: number
 }
+
+// ---------------------------------------------------------------------------
+// Accounts, tokens and watchlists
+// ---------------------------------------------------------------------------
+
+export type Role = 'ADMIN' | 'USER'
+
+export interface User {
+  id: number
+  username: string
+  email: string
+  phone: string | null
+  role: Role
+  is_active: boolean
+  created_at: string
+}
+
+export interface TokenResponse {
+  access_token: string
+  refresh_token: string
+  token_type: 'bearer'
+  /** Seconds the access token stays valid. */
+  expires_in: number
+  user: User
+}
+
+export interface UserListResponse {
+  total: number
+  users: User[]
+}
+
+export interface WatchlistResponse {
+  count: number
+  sids: string[]
+}

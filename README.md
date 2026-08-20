@@ -113,6 +113,15 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/stocks/{sid}/history?months=6&force=false` | 歷史日成交 |
 | GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點 |
 | GET | `/api/realtime?sids=2330,0050` | 即時報價（最多 20 檔） |
+| POST | `/api/auth/register` | 註冊，直接回一組 token |
+| POST | `/api/auth/login` | 登入，帳號或 Email 皆可 |
+| POST | `/api/auth/refresh` | 換發 token（會輪替 refresh token） |
+| POST | `/api/auth/logout` | 撤銷一組 refresh token |
+| GET / PATCH | `/api/auth/me` | 讀取／更新自己的資料 |
+| POST | `/api/auth/me/password` | 改密碼，並登出其他所有裝置 |
+| GET | `/api/users?q=&limit=&offset=` | 使用者列表（ADMIN） |
+| GET / PATCH / DELETE | `/api/users/{user_id}` | 檢視／改角色與狀態／刪除（ADMIN） |
+| GET / PUT | `/api/watchlist` | 自選股，整批讀寫（需登入） |
 | POST | `/api/stocks/sync?force=false` | 手動同步上市櫃名冊（**ADMIN**） |
 
 `{sid}` 可以是個股代碼，也可以是大盤 `t00`。AI 分析預定放在 `/api/stocks/{sid}/analysis/ai`，與傳統分析平行。
@@ -326,8 +335,59 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `CORS_ORIGINS` | `http://localhost:5173,...` | 允許的來源（走 nginx 時同源，用不到） |
 | `CURRENT_MONTH_TTL_SECONDS` | `900` | 當月資料快取秒數 |
 | `THROTTLE_MAX_CALLS` / `THROTTLE_WINDOW_SECONDS` | `3` / `5.5` | 上游速率限制 |
+| `JWT_SECRET` | （未設，啟動時隨機產生） | access token 的簽章密鑰，見下方「帳號與權限」 |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` / `REFRESH_TOKEN_EXPIRE_DAYS` | `30` / `7` | 兩種 token 的有效期 |
+| `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin` / （未設） / （未設） | 啟動時建立的第一個管理員，email 與密碼都設了才生效 |
 | `STOCK_CODE_SYNC_ENABLED` | `true` | 關掉就不再更新上市櫃名冊，API 照常但學不到新掛牌 |
 | `STOCK_CODE_SYNC_INTERVAL_HOURS` | `24` | 名冊同步間隔 |
+
+---
+
+## 帳號與權限
+
+帳號（username）、Email、密碼為必填，手機選填。角色只有 `ADMIN` 與 `USER` 兩種，
+現有的行情 API（`/api/health`、`/api/stocks/*`、`/api/realtime`）維持公開不需登入。
+
+### Token
+
+以 access + refresh 兩段式交換：
+
+- **Access token** 是 JWT，預設 30 分鐘，只帶 `sub`（使用者 id）。
+  角色**不放進 token**，`get_current_user` 每次都讀資料庫那一列——因此 ADMIN 把某人降權或停用時
+  **下一個 request 就生效**，不必等 token 過期。
+- **Refresh token** 是不透明隨機字串，資料庫只存 SHA-256 雜湊，預設 7 天。
+  每次 `/api/auth/refresh` 都會**輪替**：撤銷舊的、發新的一組。
+- 拿**已經輪替掉的** refresh token 再打一次，視為外洩，該使用者**所有** session 一次撤銷。
+  前端因此必須把 refresh 收斂成單一請求（`frontend/src/api/client.ts` 的 `refreshPromise`），
+  否則多個 API 同時過期會互相踩到，把使用者隨機登出。
+
+### 第一個管理員
+
+`deployment/.env` 設好 `ADMIN_EMAIL` 與 `ADMIN_PASSWORD`，server 啟動時就會建立。
+可重複啟動：
+
+- 帳號不存在 → 建立為 ADMIN
+- 帳號已存在 → **不會覆寫密碼**（否則 `.env` 等於一個永久的密碼重設後門），
+  但如果被降權或停用了會還原成啟用中的 ADMIN——這是刻意留的救援路徑
+
+`JWT_SECRET` 沒設時，server 仍然會啟動，改用一把隨程序產生的隨機密鑰並記一筆 WARNING。
+代價是**每次重啟所有人的 access token 失效**（refresh token 存在資料庫，客戶端會自動換發，使用者無感），
+而且**不能跑多個 uvicorn worker**（各自的密鑰不同，會互相拒絕）。正式環境請設定：
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+### 自選股
+
+登入後自選股存在資料庫（`watchlist_item`，最多 20 檔）；未登入則沿用 localStorage。
+第一次登入時會把 localStorage 那份**聯集**進帳號，然後清掉本機那份——
+不清的話，在同一台瀏覽器換帳號登入會把前一個人的清單帶進去。
+
+```bash
+curl -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' -d '{"identifier":"admin@example.com","password":"..."}'
+curl localhost:8000/api/watchlist -H "Authorization: Bearer $ACCESS_TOKEN"
+```
 
 ---
 
@@ -348,7 +408,14 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 - 同一套規則現在也跑在大盤 `t00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
   指數的「量」是全市場成交股數，性質與單一個股的量能不同。
 - grs 與 twstock 都沒有為四大買賣點提供書目出處，可驗證的「標準」只到 grs 這份參考實作為止。
-- 資料表用 `Base.metadata.create_all` 在啟動時建立。schema 目前穩定，日後要改欄位再導入 Alembic。
+- 資料表用 `Base.metadata.create_all` 在啟動時建立。它只建立**不存在的表**，永遠不會 ALTER 既有的表——
+  `app_user` 之類已經有資料的 schema 要改欄位，只能手動下 SQL 或導入 Alembic。
+- **Token 存在 localStorage**，任何 XSS 都讀得到。專案沒有 cookie/CSRF 基礎建設，
+  nginx 與 Vite proxy 都已原樣轉發 `Authorization`，所以先採 Bearer；access token 的短效期限制了外洩的影響範圍。
+- **登出後既有的 access token 仍然有效到過期為止**（最多 30 分鐘）。這是無狀態 token 的固有取捨；
+  refresh token 會立刻撤銷，所以 session 無法續期。
+- 使用者資料表名為 `app_user` 而不是 `user`——`user` 是 PostgreSQL 保留字，
+  而且 `select * from user` **不會報錯**，它回傳的是目前的連線帳號。手寫 SQL 時請用 `app_user`。
 - 前端用 **pnpm**（`packageManager` 欄位鎖 11.0.8，靠 corepack 生效）。pnpm 11 預設擋掉依賴的 install script，
   `frontend/pnpm-workspace.yaml` 的 `allowBuilds` 放行 esbuild —— 沒有它 `vite build` 會缺平台 binary。
 - 前端 Recharts 停在 2.x（3.x 有 breaking changes）。K 線是 range bar + 自訂 shape，見 `frontend/src/components/Candlestick.tsx`。
@@ -360,6 +427,7 @@ cd deployment
 docker compose exec db psql -U stockboard -d stockboard \
   -c "select sid, count(*), min(date), max(date) from daily_price group by sid;"
 docker compose exec db psql -U stockboard -d stockboard -c "select * from fetch_log order by sid, year, month;"
+docker compose exec db psql -U stockboard -d stockboard -c "select id, username, email, role, is_active from app_user order by id;"
 ```
 
 清掉快取重來：

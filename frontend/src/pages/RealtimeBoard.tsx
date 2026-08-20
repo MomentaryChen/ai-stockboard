@@ -1,32 +1,28 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../api/client'
 import RealtimeCard from '../components/RealtimeCard'
 import StockSearch from '../components/StockSearch'
-
-const STORAGE_KEY = 'ai-stockboard.watchlist'
-const DEFAULT_WATCHLIST = ['2330', '2317', '0050']
-const POLL_MS = 10_000
-
-function loadWatchlist(): string[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return DEFAULT_WATCHLIST
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_WATCHLIST
-  } catch {
-    return DEFAULT_WATCHLIST
-  }
-}
+import { POLL_MS } from '../hooks/useLiveQuote'
+import { useWatchlist } from '../hooks/useWatchlist'
+import { isMarketOpen } from '../utils/market'
+import { MAX_WATCHLIST } from '../watchlistStorage'
 
 export default function RealtimeBoard() {
-  const [watchlist, setWatchlist] = useState<string[]>(loadWatchlist)
-  const [live, setLive] = useState(true)
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(watchlist))
-  }, [watchlist])
+  // localStorage while signed out, the database once signed in -- either way a
+  // plain string[], so the poll below is unaffected by which one is in play.
+  const {
+    sids: watchlist,
+    add,
+    remove,
+    isFull,
+    isLoading: watchlistLoading,
+    error: watchlistError,
+  } = useWatchlist()
+  // Same rule the 大盤 and 個股 boards follow: outside the session a poll only
+  // re-fetches the last tick, so it starts paused. The button still turns it on.
+  const [live, setLive] = useState(isMarketOpen)
 
   const { data, error, isFetching, dataUpdatedAt, refetch } = useQuery({
     queryKey: ['realtime', watchlist],
@@ -35,16 +31,6 @@ export default function RealtimeBoard() {
     refetchInterval: live ? POLL_MS : false,
     staleTime: 0,
   })
-
-  function add(code: string) {
-    setWatchlist((current) =>
-      current.includes(code) ? current : [...current, code].slice(0, 20),
-    )
-  }
-
-  function remove(code: string) {
-    setWatchlist((current) => current.filter((c) => c !== code))
-  }
 
   const errorEntries = Object.entries(data?.errors ?? {})
 
@@ -86,6 +72,18 @@ export default function RealtimeBoard() {
         <div className="banner banner-error">載入失敗：{(error as Error).message}</div>
       )}
 
+      {watchlistError && (
+        <div className="banner banner-error">
+          自選股儲存失敗：{watchlistError.message}
+        </div>
+      )}
+
+      {isFull && (
+        <div className="banner banner-warn">
+          自選股已達上限 {MAX_WATCHLIST} 檔，要再加入請先移除幾檔。
+        </div>
+      )}
+
       {errorEntries.length > 0 && (
         <div className="banner banner-warn">
           {errorEntries.map(([code, message]) => (
@@ -100,7 +98,15 @@ export default function RealtimeBoard() {
       )}
 
       {watchlist.length === 0 ? (
-        <div className="center-note">自選股是空的，用上方搜尋框加入股票</div>
+        // Gated on the load finishing, or the empty state flashes while the
+        // signed-in list is still on its way.
+        <div className="center-note">
+          {watchlistLoading ? (
+            <span className="spinner" />
+          ) : (
+            '自選股是空的，用上方搜尋框加入股票'
+          )}
+        </div>
       ) : (
         <div className="quote-grid">
           {(data?.quotes ?? []).map((quote) => (
