@@ -9,16 +9,50 @@ and the daily close already lands in `daily_price` via the history service.
 """
 
 import logging
+import time
 
-import twstock
 from twstock import realtime as tw_realtime
+from twstock.proxy import get_proxies, get_session
 
 from app.schemas import RealtimeQuote, RealtimeResponse
+from app.services import codes as codes_service
+from app.services import market_index
 from app.throttle import twse_throttle
 
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
+
+
+def _channel(sid: str) -> str:
+    """MIS channel name for a quote.
+
+    twstock's own helper derives the tse_/otc_ prefix from its bundled listing,
+    which has no row for an index and so mislabels 大盤 as OTC. Indices carry
+    their channel in the registry; everything else is decided by the exchange
+    recorded in `stock_code`. An unknown sid never reaches here -- get_quotes
+    filters it out first -- so the otc default is only a fallback.
+    """
+    meta = market_index.get(sid)
+    if meta is not None:
+        return meta.channel
+    info = codes_service.get_stock(sid)
+    prefix = "tse" if info is not None and info.data_source == "twse" else "otc"
+    return f"{prefix}_{sid}.tw"
+
+
+def _fetch_raw(sids: list[str]) -> dict:
+    """twstock.realtime.get_raw, but with our channel mapping."""
+    session = get_session()
+    session.get(tw_realtime.SESSION_URL, proxies=get_proxies())
+    url = tw_realtime.STOCKINFO_URL.format(
+        stock_id="|".join(_channel(s) for s in sids),
+        time=int(time.time()) * 1000,
+    )
+    try:
+        return session.get(url, proxies=get_proxies()).json()
+    except ValueError:
+        return {"rtmessage": "json decode error", "rtcode": "5000"}
 
 
 def _to_float(value) -> float | None:
@@ -48,7 +82,9 @@ def _int_list(values) -> list[int]:
 
 
 def _build_quote(entry: dict) -> RealtimeQuote:
-    formatted = tw_realtime._format_stock_info(entry)
+    # Index payloads omit "nf" (full name) entirely and twstock's formatter
+    # subscripts it directly, so fill the gap before handing the entry over.
+    formatted = tw_realtime._format_stock_info({"nf": None, **entry})
     info = formatted["info"]
     rt = formatted["realtime"]
 
@@ -83,8 +119,13 @@ def _build_quote(entry: dict) -> RealtimeQuote:
 
 
 def get_quotes(sids: list[str]) -> RealtimeResponse:
-    known = [s for s in sids if s in twstock.codes]
-    errors = {s: "Unknown stock ID" for s in sids if s not in twstock.codes}
+    def _known(sid: str) -> bool:
+        # Resolves indices and delisted codes too -- MIS simply returns no
+        # entry for the latter, which becomes a per-code error below.
+        return codes_service.get_stock(sid) is not None
+
+    known = [s for s in sids if _known(s)]
+    errors = {s: "Unknown stock ID" for s in sids if not _known(s)}
 
     if not known:
         return RealtimeResponse(
@@ -95,7 +136,7 @@ def get_quotes(sids: list[str]) -> RealtimeResponse:
     for attempt in range(MAX_ATTEMPTS):
         twse_throttle.acquire()
         try:
-            data = tw_realtime.get_raw(known)
+            data = _fetch_raw(known)
         except Exception:
             logger.warning("realtime fetch failed attempt=%d", attempt + 1, exc_info=True)
             continue

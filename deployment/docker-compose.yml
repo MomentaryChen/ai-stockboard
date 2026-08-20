@@ -1,5 +1,5 @@
-# Compose reads deployment/.env automatically, so the same file configures both
-# this container and the API server (see server/app/config.py).
+# Compose reads deployment/.env automatically, so the same file configures the
+# containers below and the API server run outside Docker (see server/app/config.py).
 name: ai-stockboard
 
 services:
@@ -22,6 +22,41 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  server:
+    build:
+      # Repository root: the API needs ../vendor/twstock alongside server/.
+      context: ..
+      dockerfile: server/Dockerfile
+    image: ai-stockboard-server
+    container_name: ai-stockboard-server
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Inside the compose network PostgreSQL is db:5432 -- the published host
+      # port above does not apply here.
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      TZ: ${TZ:-Asia/Taipei}
+    ports:
+      - "${SERVER_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+    image: ai-stockboard-frontend
+    container_name: ai-stockboard-frontend
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Taipei}
+    ports:
+      - "${FRONTEND_PORT:-8100}:80"
+    depends_on:
+      server:
+        condition: service_healthy
 
 volumes:
   stockboard-pgdata:

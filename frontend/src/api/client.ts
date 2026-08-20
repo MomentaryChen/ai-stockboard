@@ -1,4 +1,5 @@
 import type {
+  RuleSet,
   TraditionalAnalysisResponse,
   HealthResponse,
   HistoryResponse,
@@ -22,6 +23,10 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** 台股大盤（發行量加權股價指數）. The API exposes it as an ordinary sid, so
+ *  history / analysis / realtime all take the same routes a stock does. */
+export const MARKET_INDEX_SID = 't00'
+
 export const api = {
   health: () => request<HealthResponse>('/api/health'),
 
@@ -37,9 +42,9 @@ export const api = {
     request<HistoryResponse>(`/api/stocks/${sid}/history?months=${months}`),
 
   /** Rule-based technical analysis. An AI counterpart will sit next to this. */
-  getTraditionalAnalysis: (sid: string, months: number) =>
+  getTraditionalAnalysis: (sid: string, months: number, ruleSet: RuleSet = 'grs') =>
     request<TraditionalAnalysisResponse>(
-      `/api/stocks/${sid}/analysis/traditional?months=${months}`,
+      `/api/stocks/${sid}/analysis/traditional?months=${months}&rule_set=${ruleSet}`,
     ),
 
   getRealtime: (sids: string[]) =>

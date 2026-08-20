@@ -5,6 +5,8 @@ analysis will be added as a sibling route so both can be requested for the same
 stock and compared.
 """
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -25,6 +27,13 @@ MIN_MONTHS = 4
 def get_traditional_analysis(
     sid: str,
     months: int = Query(6, ge=1, le=24),
+    rule_set: Literal["grs", "twstock"] = Query(
+        traditional.DEFAULT_RULE_SET,
+        description=(
+            "四大買賣點規則版本。grs = 修正 twstock 兩處移植缺陷後的參考行為（預設）；"
+            "twstock = 套件原樣，供對照"
+        ),
+    ),
     db: Session = Depends(get_db),
 ) -> TraditionalAnalysisResponse:
     info = codes_service.get_stock(sid)
@@ -43,10 +52,11 @@ def get_traditional_analysis(
     return TraditionalAnalysisResponse(
         sid=sid,
         name=info.name,
+        rule_set=rule_set,
         as_of=stock.date[-1],
         sample_size=len(stock.price),
         latest_close=stock.price[-1],
         moving_averages=traditional.latest_moving_averages(stock),
         ma_series=traditional.ma_series(stock),
-        best_four_point=traditional.best_four_point(stock),
+        best_four_point=traditional.best_four_point(stock, rule_set),
     )

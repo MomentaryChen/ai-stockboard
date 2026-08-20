@@ -1,7 +1,8 @@
-import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Link, Route, Routes, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from './api/client'
+import MarketDashboard from './pages/MarketDashboard'
 import StockDetail from './pages/StockDetail'
 import RealtimeBoard from './pages/RealtimeBoard'
 
@@ -33,6 +34,9 @@ export default function App() {
           <span>ai</span>-stockboard 台股看板
         </div>
         <nav className="nav">
+          <Link to="/" className={pathname === '/' ? 'active' : ''}>
+            大盤
+          </Link>
           {/* Any /stock/:sid keeps the tab lit, not just the default 2330. */}
           <Link to="/stock/2330" className={pathname.startsWith('/stock') ? 'active' : ''}>
             個股分析
@@ -48,7 +52,8 @@ export default function App() {
 
       <main className="main">
         <Routes>
-          <Route path="/" element={<Navigate to="/stock/2330" replace />} />
+          {/* 台股大盤 is the landing view; individual stocks hang off it. */}
+          <Route path="/" element={<MarketDashboard />} />
           <Route path="/stock/:sid" element={<StockDetail />} />
           <Route path="/realtime" element={<RealtimeBoard />} />
           <Route path="*" element={<div className="center-note">找不到這個頁面</div>} />

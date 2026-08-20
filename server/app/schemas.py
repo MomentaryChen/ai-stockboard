@@ -3,7 +3,7 @@
 import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 
 class StockInfo(BaseModel):
@@ -15,6 +15,9 @@ class StockInfo(BaseModel):
     isin: str
     start: str  # 上市日
     data_source: Literal["twse", "tpex"]
+    # False once the exchange stops listing the code. History, analysis and
+    # watchlists still resolve it; search stops offering it.
+    is_active: bool = True
 
 
 class SearchResponse(BaseModel):
@@ -64,6 +67,9 @@ class TraditionalAnalysisResponse(BaseModel):
 
     sid: str
     name: str
+    # Which 四大買賣點 variant produced `best_four_point`: "grs" is the corrected
+    # reference behaviour, "twstock" is the library's own (defective) port.
+    rule_set: Literal["grs", "twstock"]
     as_of: datetime.date
     sample_size: int
     latest_close: float | None
@@ -83,7 +89,8 @@ class MaSeriesPoint(BaseModel):
 class RealtimeQuote(BaseModel):
     code: str
     name: str
-    fullname: str
+    # MIS leaves this null for indices, which have no "full name" field.
+    fullname: str | None = None
     time: str
     timestamp: float
     open: float | None
@@ -112,3 +119,91 @@ class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     database: str
     stock_codes_loaded: int
+    # None until `stock_code` has been reconciled with the exchanges at least
+    # once -- i.e. the listing on offer is still twstock's bundled snapshot.
+    stock_codes_synced_at: datetime.datetime | None = None
+
+
+class CodeSyncResponse(BaseModel):
+    """Outcome of one `stock_code` reconciliation run."""
+
+    # skipped == the stored listing was still inside the sync interval.
+    status: Literal["synced", "skipped", "failed"]
+    synced_at: datetime.datetime | None
+    active: int  # instruments the exchanges currently list
+    inserted: int
+    updated: int
+    delisted: int  # rows retired because the registry no longer carries them
+    pruned: int = 0  # expired warrants deleted after their retention window
+    message: str | None = None
+
+
+# --------------------------------------------------------------------------
+# Accounts, tokens and watchlists
+# --------------------------------------------------------------------------
+
+Role = Literal["ADMIN", "USER"]
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    email: str
+    phone: str | None
+    role: Role
+    is_active: bool
+    created_at: datetime.datetime
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    email: EmailStr
+    password: str
+    phone: str | None = None
+
+
+class LoginRequest(BaseModel):
+    # Accepts either the username or the email -- the UI labels it 帳號或 Email.
+    identifier: str
+    password: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_in: int  # seconds the access token stays valid
+    user: UserOut
+
+
+class ProfileUpdateRequest(BaseModel):
+    email: EmailStr | None = None
+    phone: str | None = None
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class UserListResponse(BaseModel):
+    total: int
+    users: list[UserOut]
+
+
+class UserUpdateRequest(BaseModel):
+    role: Role | None = None
+    is_active: bool | None = None
+
+
+class WatchlistResponse(BaseModel):
+    count: int
+    sids: list[str]
+
+
+class WatchlistUpdateRequest(BaseModel):
+    sids: list[str]

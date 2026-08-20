@@ -1,5 +1,8 @@
 export type DataSource = 'twse' | 'tpex'
 
+/** 四大買賣點規則版本. 'grs' 是修正過的參考行為，'twstock' 是套件原樣（供對照）。 */
+export type RuleSet = 'grs' | 'twstock'
+
 export interface StockInfo {
   code: string
   name: string
@@ -9,6 +12,8 @@ export interface StockInfo {
   isin: string
   start: string
   data_source: DataSource
+  /** false once the exchange stops listing the code; it stays chartable. */
+  is_active: boolean
 }
 
 export interface SearchResponse {
@@ -60,6 +65,7 @@ export interface BestFourPointResult {
 export interface TraditionalAnalysisResponse {
   sid: string
   name: string
+  rule_set: RuleSet
   as_of: string
   sample_size: number
   latest_close: number | null

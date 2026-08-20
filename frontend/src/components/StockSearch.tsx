@@ -100,6 +100,9 @@ export default function StockSearch({
               <span className="code">{stock.code}</span>
               <span className="name">{stock.name}</span>
               <span className="meta">
+                {/* Only reachable by typing the code in full -- the API keeps
+                    delisted instruments out of prefix and name matches. */}
+                {!stock.is_active && '已下市 · '}
                 {stock.market} · {stock.group || stock.type}
               </span>
             </button>

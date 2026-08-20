@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 
-import { api } from '../api/client'
+import { MARKET_INDEX_SID, api } from '../api/client'
 import type { RuleSet } from '../api/types'
 import BestFourPointCard from '../components/BestFourPointCard'
 import MaPanel from '../components/MaPanel'
 import PriceChart, { buildChartRows } from '../components/PriceChart'
 import StockSearch from '../components/StockSearch'
 import VolumeChart from '../components/VolumeChart'
-import { direction, fmtCompact, fmtLots, fmtPrice, fmtSigned } from '../utils/format'
+import { direction, fmtCompact, fmtIndex, fmtLots, fmtSigned } from '../utils/format'
+import { isMarketOpen } from '../utils/market'
 
 const RANGES = [
   { label: '1個月', months: 1 },
@@ -19,9 +20,11 @@ const RANGES = [
 ]
 
 const MA_OPTIONS = ['ma5', 'ma10', 'ma20', 'ma60']
+const POLL_MS = 10_000
 
-export default function StockDetail() {
-  const { sid = '2330' } = useParams()
+/** The landing page: 台股大盤 (TAIEX) -- intraday level, history, and the same
+ *  rule-based analysis an individual stock gets. */
+export default function MarketDashboard() {
   const navigate = useNavigate()
 
   const [months, setMonths] = useState(3)
@@ -29,15 +32,25 @@ export default function StockDetail() {
   const [visibleMas, setVisibleMas] = useState<string[]>(['ma5', 'ma20'])
   // Defaults to the corrected rules; 'twstock' is there to compare against.
   const [ruleSet, setRuleSet] = useState<RuleSet>('grs')
+  // Polling off-session would only re-fetch the same closing level, so start
+  // live only while the exchange is open. The user can still switch it on.
+  const [live, setLive] = useState(isMarketOpen)
 
   const history = useQuery({
-    queryKey: ['history', sid, months],
-    queryFn: () => api.getHistory(sid, months),
+    queryKey: ['history', MARKET_INDEX_SID, months],
+    queryFn: () => api.getHistory(MARKET_INDEX_SID, months),
   })
 
   const analysis = useQuery({
-    queryKey: ['analysis', 'traditional', sid, months, ruleSet],
-    queryFn: () => api.getTraditionalAnalysis(sid, months, ruleSet),
+    queryKey: ['analysis', 'traditional', MARKET_INDEX_SID, months, ruleSet],
+    queryFn: () => api.getTraditionalAnalysis(MARKET_INDEX_SID, months, ruleSet),
+  })
+
+  const realtime = useQuery({
+    queryKey: ['realtime', [MARKET_INDEX_SID]],
+    queryFn: () => api.getRealtime([MARKET_INDEX_SID]),
+    refetchInterval: live ? POLL_MS : false,
+    staleTime: 0,
   })
 
   const rows = useMemo(
@@ -45,13 +58,31 @@ export default function StockDetail() {
     [history.data, analysis.data],
   )
 
-  const latest = rows.at(-1)
-  const previous = rows.at(-2)
+  const lastClose = rows.at(-1)
+  const quote = realtime.data?.quotes.find((q) => q.code === MARKET_INDEX_SID)
+  const marketOpen = isMarketOpen()
+
+  // MIS keeps serving the last tick long after the close, so "is there a quote"
+  // is not the same question as "is the market open". Show the live level while
+  // the session runs, and also in the gap after 13:30 before TWSE publishes the
+  // day's report -- until then `lastClose` is still yesterday.
+  const quoteDay = quote?.time?.slice(0, 10) ?? null
+  const intraday =
+    quote?.latest_trade_price != null &&
+    (marketOpen || (quoteDay !== null && quoteDay > (lastClose?.date ?? '')))
+  const level = intraday ? quote!.latest_trade_price : (lastClose?.close ?? null)
+  const change = intraday ? quote!.change : (lastClose?.change ?? null)
   const changePct =
-    latest && previous && previous.close
-      ? ((latest.close - previous.close) / previous.close) * 100
-      : null
-  const dir = direction(latest?.change ?? null)
+    intraday && quote!.change_percent != null
+      ? quote!.change_percent
+      : lastClose && lastClose.change !== null && lastClose.close - lastClose.change !== 0
+        ? (lastClose.change / (lastClose.close - lastClose.change)) * 100
+        : null
+
+  const dir = direction(change)
+  const open = intraday ? quote!.open : (lastClose?.open ?? null)
+  const high = intraday ? quote!.high : (lastClose?.high ?? null)
+  const low = intraday ? quote!.low : (lastClose?.low ?? null)
 
   function toggleMa(key: string) {
     setVisibleMas((current) =>
@@ -64,7 +95,10 @@ export default function StockDetail() {
   return (
     <div className="stack">
       <div className="row wrap" style={{ gap: 16 }}>
-        <StockSearch onSelect={(stock) => navigate(`/stock/${stock.code}`)} />
+        <StockSearch
+          onSelect={(stock) => navigate(`/stock/${stock.code}`)}
+          placeholder="查個股，例如 2330"
+        />
       </div>
 
       {error && (
@@ -80,18 +114,31 @@ export default function StockDetail() {
       <section className="card">
         <div className="row-between wrap">
           <div className="stock-head">
-            <span className="sid">{sid}</span>
-            <span className="sname">{history.data?.name ?? analysis.data?.name ?? ''}</span>
-            {history.data && <span className="tag">{history.data.source.toUpperCase()}</span>}
+            <span className="sname" style={{ fontSize: 22, color: 'var(--text)' }}>
+              加權指數
+            </span>
+            <span className="tag">{marketOpen ? '盤中' : '收盤'}</span>
+            <span className="dim">發行量加權股價指數 · TAIEX</span>
           </div>
 
           <div className="row wrap" style={{ gap: 16 }}>
             <div>
-              <span className={`price-now ${dir}`}>{fmtPrice(latest?.close ?? null)}</span>{' '}
+              <span className={`price-now ${dir}`}>{fmtIndex(level)}</span>{' '}
               <span className={`price-change ${dir}`}>
-                {fmtSigned(latest?.change ?? null)}
+                {fmtSigned(change)}
                 {changePct !== null ? ` (${fmtSigned(changePct)}%)` : ''}
               </span>
+            </div>
+
+            <div className="row wrap">
+              <button
+                type="button"
+                className={`btn btn-sm ${live ? 'active' : ''}`}
+                onClick={() => setLive((v) => !v)}
+              >
+                {live ? `自動更新中 (每 ${POLL_MS / 1000} 秒)` : '已暫停'}
+              </button>
+              {realtime.isFetching && <span className="spinner" />}
             </div>
           </div>
         </div>
@@ -99,29 +146,39 @@ export default function StockDetail() {
         <div className="stat-grid" style={{ marginTop: 16 }}>
           <div>
             <div className="stat-label">開盤</div>
-            <div className="stat-value">{fmtPrice(latest?.open ?? null)}</div>
+            <div className="stat-value">{fmtIndex(open)}</div>
           </div>
           <div>
             <div className="stat-label">最高</div>
-            <div className="stat-value up">{fmtPrice(latest?.high ?? null)}</div>
+            <div className="stat-value up">{fmtIndex(high)}</div>
           </div>
           <div>
             <div className="stat-label">最低</div>
-            <div className="stat-value down">{fmtPrice(latest?.low ?? null)}</div>
+            <div className="stat-value down">{fmtIndex(low)}</div>
+          </div>
+          <div>
+            <div className="stat-label">成交金額</div>
+            <div className="stat-value">
+              {fmtCompact(history.data?.data.at(-1)?.turnover ?? null)}
+            </div>
           </div>
           <div>
             <div className="stat-label">成交量(張)</div>
-            <div className="stat-value">{fmtLots(latest?.capacity ?? null)}</div>
+            <div className="stat-value">{fmtLots(lastClose?.capacity ?? null)}</div>
           </div>
           <div>
-            <div className="stat-label">交易日</div>
-            <div className="stat-value">{rows.length}</div>
-          </div>
-          <div>
-            <div className="stat-label">最新日期</div>
-            <div className="stat-value">{latest?.date ?? '--'}</div>
+            <div className="stat-label">{marketOpen ? '報價時間' : '最新收盤'}</div>
+            <div className="stat-value">
+              {marketOpen && quote ? quote.time.slice(11) : (lastClose?.date ?? '--')}
+            </div>
           </div>
         </div>
+
+        {!marketOpen && (
+          <p className="dim" style={{ margin: '12px 0 0' }}>
+            非交易時段（台股 09:00–13:30）顯示最近一個交易日的收盤，成交金額與成交量為當日結算值。
+          </p>
+        )}
       </section>
 
       <div className="grid-detail">
@@ -204,7 +261,7 @@ export default function StockDetail() {
         <div className="stack">
           {analysis.data && (
             <>
-              {/* Labelled explicitly so AI-assisted analysis can sit beside it. */}
+              {/* The same rule-based engine the stock page uses, run on the index. */}
               <div className="section-label">傳統分析</div>
               <BestFourPointCard
                 result={analysis.data.best_four_point}
@@ -226,7 +283,7 @@ export default function StockDetail() {
               <thead>
                 <tr>
                   <th>日期</th>
-                  <th>收盤</th>
+                  <th>收盤指數</th>
                   <th>漲跌</th>
                   <th>成交金額</th>
                 </tr>
@@ -240,7 +297,7 @@ export default function StockDetail() {
                     return (
                       <tr key={row.date}>
                         <td>{row.date.slice(5)}</td>
-                        <td>{fmtPrice(row.close)}</td>
+                        <td>{fmtIndex(row.close)}</td>
                         <td className={direction(row.change)}>{fmtSigned(row.change)}</td>
                         <td>{fmtCompact(point?.turnover ?? null)}</td>
                       </tr>

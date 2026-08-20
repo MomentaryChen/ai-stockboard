@@ -1,0 +1,5 @@
+# pnpm 11 blocks dependency install scripts unless they are approved here
+# (`pnpm approve-builds` writes this map). esbuild's postinstall links the
+# platform binary that `vite build` runs, so it has to be allowed.
+allowBuilds:
+  esbuild: true
