@@ -1,22 +1,20 @@
 import type { BestFourPointResult, RuleSet } from '../api/types'
+import {
+  translateBfpLabel,
+  translateBfpReason,
+  useI18n,
+  type MessageKey,
+} from '../i18n'
 
-const SIGNAL_HINT: Record<BestFourPointResult['signal'], string> = {
-  buy: '符合買進條件',
-  sell: '符合賣出條件',
-  hold: '目前無明確訊號',
+const SIGNAL_HINT: Record<BestFourPointResult['signal'], MessageKey> = {
+  buy: 'bfp.hintBuy',
+  sell: 'bfp.hintSell',
+  hold: 'bfp.hintHold',
 }
 
-const RULE_SETS: Array<{ key: RuleSet; label: string; title: string }> = [
-  {
-    key: 'grs',
-    label: '修正版',
-    title: '四大買賣點的參考行為：乖離轉折關卡生效，「量縮價不跌／價跌」與昨收比較',
-  },
-  {
-    key: 'twstock',
-    label: 'twstock',
-    title: 'twstock 1.5.1 原樣：乖離關卡失效，「量縮價不跌／價跌」誤與昨開比較',
-  },
+const RULE_SETS: Array<{ key: RuleSet; label: MessageKey; title: MessageKey }> = [
+  { key: 'grs', label: 'bfp.ruleGrs', title: 'bfp.ruleGrsTitle' },
+  { key: 'twstock', label: 'bfp.ruleTwstock', title: 'bfp.ruleTwstockTitle' },
 ]
 
 /** Verdict from the traditional (rule-based) analysis engine.
@@ -37,6 +35,8 @@ export default function BestFourPointCard({
   ruleSet?: RuleSet
   onRuleSetChange?: (next: RuleSet) => void
 }) {
+  const { t } = useI18n()
+
   const holdWhy =
     result.signal === 'hold' && result.label === "Don't touch" && result.reasons.length > 0
 
@@ -44,7 +44,7 @@ export default function BestFourPointCard({
     <section className="card">
       <div className="row-between wrap" style={{ marginBottom: 12 }}>
         <h2 className="card-title" style={{ margin: 0 }}>
-          四大買賣點
+          {t('bfp.title')}
         </h2>
 
         {ruleSet && onRuleSetChange && (
@@ -53,36 +53,40 @@ export default function BestFourPointCard({
               <button
                 key={key}
                 type="button"
-                title={title}
+                title={t(title)}
                 className={`btn btn-sm ${ruleSet === key ? 'active' : ''}`}
                 onClick={() => onRuleSetChange(key)}
               >
-                {label}
+                {t(label)}
               </button>
             ))}
           </div>
         )}
       </div>
 
-      <div className={`signal signal-${result.signal}`}>{result.label}</div>
+      {/* 'Buy' / 'Sell' / "Don't touch" already arrive in English; only the
+          not-enough-data verdict is Chinese on the wire. */}
+      <div className={`signal signal-${result.signal}`}>
+        {translateBfpLabel(result.label, t)}
+      </div>
 
       <p className="dim" style={{ margin: '10px 0 0' }}>
-        {holdWhy ? '未達買進或賣出門檻' : SIGNAL_HINT[result.signal]}
-        {asOf ? ` · 資料截至 ${asOf}` : ''}
-        {sampleSize ? ` · ${sampleSize} 個交易日` : ''}
+        {holdWhy ? t('bfp.hintHoldThreshold') : t(SIGNAL_HINT[result.signal])}
+        {asOf ? ` · ${t('bfp.asOf', { date: asOf })}` : ''}
+        {sampleSize ? ` · ${t('bfp.sampleSize', { count: sampleSize })}` : ''}
       </p>
 
       {result.reasons.length > 0 && (
         <ul className="reason-list">
           {result.reasons.map((reason) => (
-            <li key={reason}>{reason}</li>
+            <li key={reason}>{translateBfpReason(reason, t)}</li>
           ))}
         </ul>
       )}
 
       {ruleSet === 'twstock' && (
         <p className="dim" style={{ margin: '10px 0 0' }}>
-          twstock 1.5.1 的移植缺陷讓乖離轉折關卡失效，訊號會明顯偏多，僅供對照。
+          {t('bfp.twstockWarning')}
         </p>
       )}
     </section>

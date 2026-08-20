@@ -3,11 +3,13 @@ import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 
 import { useAuth } from '../auth/AuthContext'
+import { useI18n } from '../i18n'
 
 export default function Login() {
   const { status, login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const { t } = useI18n()
 
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
@@ -25,7 +27,7 @@ export default function Login() {
   return (
     <div className="auth-page">
       <section className="card auth-card">
-        <h2 className="card-title">登入</h2>
+        <h2 className="card-title">{t('login.title')}</h2>
 
         <form
           className="form-stack"
@@ -35,7 +37,7 @@ export default function Login() {
           }}
         >
           <div className="field">
-            <label htmlFor="identifier">帳號或 Email</label>
+            <label htmlFor="identifier">{t('login.identifier')}</label>
             <input
               id="identifier"
               className="text-input"
@@ -47,7 +49,7 @@ export default function Login() {
           </div>
 
           <div className="field">
-            <label htmlFor="password">密碼</label>
+            <label htmlFor="password">{t('login.password')}</label>
             <input
               id="password"
               className="text-input"
@@ -61,7 +63,7 @@ export default function Login() {
 
           {submit.isError && (
             <div className="banner banner-error">
-              登入失敗：{(submit.error as Error).message}
+              {t('login.failed', { message: (submit.error as Error).message })}
             </div>
           )}
 
@@ -70,12 +72,13 @@ export default function Login() {
             className="btn btn-primary btn-block"
             disabled={submit.isPending}
           >
-            {submit.isPending ? '登入中…' : '登入'}
+            {submit.isPending ? t('login.submitting') : t('login.submit')}
           </button>
         </form>
 
         <p className="dim" style={{ marginTop: 14 }}>
-          還沒有帳號？<Link to="/register">註冊一個</Link>
+          {t('login.noAccount')}{' '}
+          <Link to="/register">{t('login.registerLink')}</Link>
         </p>
       </section>
     </div>

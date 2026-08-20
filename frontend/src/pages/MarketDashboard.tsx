@@ -11,21 +11,23 @@ import SignInPrompt from '../components/SignInPrompt'
 import StockSearch from '../components/StockSearch'
 import VolumeChart from '../components/VolumeChart'
 import { POLL_MS, useLiveQuote } from '../hooks/useLiveQuote'
+import { useI18n, type MessageKey } from '../i18n'
 import { direction, fmtCompact, fmtIndex, fmtLots, fmtSigned } from '../utils/format'
 
-const RANGES = [
-  { label: '1個月', months: 1 },
-  { label: '3個月', months: 3 },
-  { label: '6個月', months: 6 },
-  { label: '1年', months: 12 },
+const RANGES: Array<{ label: MessageKey; months: number }> = [
+  { label: 'range.1m', months: 1 },
+  { label: 'range.3m', months: 3 },
+  { label: 'range.6m', months: 6 },
+  { label: 'range.12m', months: 12 },
 ]
 
 const MA_OPTIONS = ['ma5', 'ma10', 'ma20', 'ma60']
 
-/** The landing page: 台股大盤 (TAIEX) -- intraday level, history, and the same
+/** The landing page: the TAIEX -- intraday level, history, and the same
  *  rule-based analysis an individual stock gets. */
 export default function MarketDashboard() {
   const navigate = useNavigate()
+  const { locale, t } = useI18n()
 
   const [months, setMonths] = useState(3)
   const [mode, setMode] = useState<'candle' | 'line'>('candle')
@@ -52,7 +54,7 @@ export default function MarketDashboard() {
   const {
     marketOpen,
     locked,
-    sessionLabel,
+    session,
     intraday,
     price: level,
     change,
@@ -81,17 +83,15 @@ export default function MarketDashboard() {
       <div className="row wrap" style={{ gap: 16 }}>
         <StockSearch
           onSelect={(stock) => navigate(`/stock/${stock.code}`)}
-          placeholder="查個股，例如 2330"
+          placeholder={t('search.placeholderStock')}
         />
       </div>
 
       {error && (
         <div className="banner banner-error">
-          載入失敗：{(error as Error).message}
+          {t('error.loadFailed', { message: (error as Error).message })}
           <br />
-          <span className="dim">
-            若訊息與資料庫有關，請先在 deployment/ 目錄執行 docker compose up -d 啟動 PostgreSQL。
-          </span>
+          <span className="dim">{t('error.dbHint')}</span>
         </div>
       )}
 
@@ -99,10 +99,12 @@ export default function MarketDashboard() {
         <div className="row-between wrap">
           <div className="stock-head">
             <span className="sname" style={{ fontSize: 22, color: 'var(--text)' }}>
-              加權指數
+              {t('market.index')}
             </span>
-            <span className="tag">{sessionLabel}</span>
-            <span className="dim">發行量加權股價指數 · TAIEX</span>
+            <span className="tag">
+              {session === 'open' ? t('badge.marketOpen') : t('badge.marketClosed')}
+            </span>
+            <span className="dim">{t('market.indexSubtitle')}</span>
           </div>
 
           <div className="row wrap" style={{ gap: 16 }}>
@@ -117,7 +119,7 @@ export default function MarketDashboard() {
             {/* Signed out there is nothing to poll, so the toggle gives way to
                 the invitation rather than sitting there dead. */}
             {locked ? (
-              <SignInPrompt compact title="登入看即時指數" />
+              <SignInPrompt compact title={t('signIn.marketTitle')} />
             ) : (
               <div className="row wrap">
                 <button
@@ -125,7 +127,7 @@ export default function MarketDashboard() {
                   className={`btn btn-sm ${live ? 'active' : ''}`}
                   onClick={() => setLive((v) => !v)}
                 >
-                  {live ? `自動更新中 (每 ${POLL_MS / 1000} 秒)` : '已暫停'}
+                  {live ? t('live.on', { seconds: POLL_MS / 1000 }) : t('live.off')}
                 </button>
                 {isFetching && <span className="spinner" />}
               </div>
@@ -135,41 +137,43 @@ export default function MarketDashboard() {
 
         <div className="stat-grid" style={{ marginTop: 16 }}>
           <div>
-            <div className="stat-label">開盤</div>
+            <div className="stat-label">{t('stat.open')}</div>
             <div className="stat-value">{fmtIndex(open)}</div>
           </div>
           <div>
-            <div className="stat-label">最高</div>
+            <div className="stat-label">{t('stat.high')}</div>
             <div className="stat-value up">{fmtIndex(high)}</div>
           </div>
           <div>
-            <div className="stat-label">最低</div>
+            <div className="stat-label">{t('stat.low')}</div>
             <div className="stat-value down">{fmtIndex(low)}</div>
           </div>
           <div>
-            <div className="stat-label">成交金額</div>
+            <div className="stat-label">{t('stat.turnover')}</div>
             <div className="stat-value">
-              {fmtCompact(history.data?.data.at(-1)?.turnover ?? null)}
+              {fmtCompact(history.data?.data.at(-1)?.turnover ?? null, locale)}
             </div>
           </div>
           <div>
-            <div className="stat-label">成交量(張)</div>
+            <div className="stat-label">{t('stat.volumeLots')}</div>
             <div className="stat-value">{fmtLots(lastClose?.capacity ?? null)}</div>
           </div>
           <div>
-            <div className="stat-label">{intraday ? '報價時間' : '最新收盤'}</div>
+            <div className="stat-label">
+              {intraday ? t('stat.quoteTime') : t('stat.lastClose')}
+            </div>
             <div className="stat-value">{stamp}</div>
           </div>
         </div>
 
         {locked ? (
           <p className="dim" style={{ margin: '12px 0 0' }}>
-            以上為最近一個交易日的收盤資料。登入後可看盤中即時指數，每 {POLL_MS / 1000} 秒自動更新。
+            {t('signIn.marketLockedNote', { seconds: POLL_MS / 1000 })}
           </p>
         ) : (
           !marketOpen && (
             <p className="dim" style={{ margin: '12px 0 0' }}>
-              非交易時段（台股 09:00–13:30）顯示最近一個交易日的收盤，成交金額與成交量為當日結算值。
+              {t('market.offHoursNote')}
             </p>
           )
         )}
@@ -186,7 +190,7 @@ export default function MarketDashboard() {
                   className={`btn btn-sm ${months === range.months ? 'active' : ''}`}
                   onClick={() => setMonths(range.months)}
                 >
-                  {range.label}
+                  {t(range.label)}
                 </button>
               ))}
             </div>
@@ -198,14 +202,14 @@ export default function MarketDashboard() {
                   className={`btn btn-sm ${mode === 'candle' ? 'active' : ''}`}
                   onClick={() => setMode('candle')}
                 >
-                  K線
+                  {t('chart.candle')}
                 </button>
                 <button
                   type="button"
                   className={`btn btn-sm ${mode === 'line' ? 'active' : ''}`}
                   onClick={() => setMode('line')}
                 >
-                  收盤線
+                  {t('chart.line')}
                 </button>
               </div>
 
@@ -228,13 +232,11 @@ export default function MarketDashboard() {
             <div className="center-note">
               <div className="row" style={{ justifyContent: 'center' }}>
                 <span className="spinner" />
-                <span style={{ marginLeft: 10 }}>
-                  首次查詢需向 TWSE 逐月抓取，並受每 5 秒 3 次的速率限制，請稍候…
-                </span>
+                <span style={{ marginLeft: 10 }}>{t('chart.firstFetchNote')}</span>
               </div>
             </div>
           ) : rows.length === 0 ? (
-            <div className="center-note">沒有資料</div>
+            <div className="center-note">{t('common.noData')}</div>
           ) : (
             <>
               <PriceChart rows={rows} mode={mode} visibleMas={visibleMas} />
@@ -244,10 +246,16 @@ export default function MarketDashboard() {
 
           {history.data && (
             <p className="dim" style={{ marginTop: 10 }}>
-              本次向來源抓取 {history.data.fetched_months.length} 個月
-              {history.data.fetched_months.length > 0 &&
-                `（${history.data.fetched_months.join(', ')}）`}
-              ，由 PostgreSQL 快取提供 {history.data.cached_months.length} 個月
+              {t('history.fetchNote', {
+                fetched: history.data.fetched_months.length,
+                cached: history.data.cached_months.length,
+                detail:
+                  history.data.fetched_months.length > 0
+                    ? t('history.fetchDetail', {
+                        months: history.data.fetched_months.join(', '),
+                      })
+                    : '',
+              })}
             </p>
           )}
         </section>
@@ -256,7 +264,7 @@ export default function MarketDashboard() {
           {analysis.data && (
             <>
               {/* The same rule-based engine the stock page uses, run on the index. */}
-              <div className="section-label">傳統分析</div>
+              <div className="section-label">{t('section.traditional')}</div>
               <BestFourPointCard
                 result={analysis.data.best_four_point}
                 asOf={analysis.data.as_of}
@@ -272,14 +280,14 @@ export default function MarketDashboard() {
           )}
 
           <section className="card">
-            <h2 className="card-title">近 10 日</h2>
+            <h2 className="card-title">{t('table.last10')}</h2>
             <table className="data">
               <thead>
                 <tr>
-                  <th>日期</th>
-                  <th>收盤指數</th>
-                  <th>漲跌</th>
-                  <th>成交金額</th>
+                  <th>{t('table.date')}</th>
+                  <th>{t('table.closeIndex')}</th>
+                  <th>{t('table.change')}</th>
+                  <th>{t('table.turnover')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -293,7 +301,7 @@ export default function MarketDashboard() {
                         <td>{row.date.slice(5)}</td>
                         <td>{fmtIndex(row.close)}</td>
                         <td className={direction(row.change)}>{fmtSigned(row.change)}</td>
-                        <td>{fmtCompact(point?.turnover ?? null)}</td>
+                        <td>{fmtCompact(point?.turnover ?? null, locale)}</td>
                       </tr>
                     )
                   })}

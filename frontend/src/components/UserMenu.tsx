@@ -1,11 +1,13 @@
 import { Link, useNavigate } from 'react-router-dom'
 
 import { useAuth } from '../auth/AuthContext'
+import { useI18n } from '../i18n'
 
 /** Sits in the topbar next to the health indicator. */
 export default function UserMenu() {
   const { status, user, isAdmin, mustChangePassword, logout } = useAuth()
   const navigate = useNavigate()
+  const { t } = useI18n()
 
   if (status === 'loading') return <span className="spinner" />
 
@@ -13,10 +15,10 @@ export default function UserMenu() {
     return (
       <div className="row" style={{ gap: 8 }}>
         <Link to="/login" className="btn btn-sm">
-          登入
+          {t('menu.login')}
         </Link>
         <Link to="/register" className="btn btn-sm">
-          註冊
+          {t('menu.register')}
         </Link>
       </div>
     )
@@ -29,19 +31,19 @@ export default function UserMenu() {
       {isAdmin && !mustChangePassword && (
         <>
           <Link to="/admin/users" className="btn btn-sm">
-            使用者管理
+            {t('menu.adminUsers')}
           </Link>
           <Link to="/admin/jobs" className="btn btn-sm">
-            排程作業
+            {t('menu.adminJobs')}
           </Link>
           <Link to="/admin/stock-codes" className="btn btn-sm">
-            名冊同步
+            {t('menu.adminStockCodes')}
           </Link>
         </>
       )}
       {!mustChangePassword && (
         <Link to="/change-password" className="btn btn-sm">
-          變更密碼
+          {t('menu.changePassword')}
         </Link>
       )}
       <span className="dim" title={user?.email}>
@@ -55,7 +57,7 @@ export default function UserMenu() {
           navigate('/')
         }}
       >
-        登出
+        {t('menu.logout')}
       </button>
     </div>
   )

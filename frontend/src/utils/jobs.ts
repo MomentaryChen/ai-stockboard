@@ -2,23 +2,36 @@
  *
  *  Kept in one place because the overview, the detail page and the listing-sync
  *  page all render the same statuses and schedules, and three copies of the
- *  colour rule is how "成功" ends up green in one of them and red in another.
+ *  colour rule is how "success" ends up green in one of them and red in another.
+ *
+ *  Everything that produces a sentence takes `t` rather than reading a catalogue
+ *  itself: these are plain functions, not components, so they have no context to
+ *  read -- and passing it in keeps them pure and testable.
  */
 
 import { ApiError } from '../api/client'
 import type { Job, JobStatus, JobTrigger } from '../api/types'
+import type { MessageKey, Translate } from '../i18n'
 
-export const STATUS_LABEL: Record<JobStatus, string> = {
-  success: '成功',
+const STATUS_KEY: Record<JobStatus, MessageKey> = {
+  success: 'jobs.statusSuccess',
   // Not a failure: the job woke up and correctly found nothing to do.
-  skipped: '略過',
-  failed: '失敗',
+  skipped: 'jobs.statusSkipped',
+  failed: 'jobs.statusFailed',
 }
 
-export const TRIGGER_LABEL: Record<JobTrigger, string> = {
-  startup: '啟動',
-  schedule: '排程',
-  manual: '手動',
+const TRIGGER_KEY: Record<JobTrigger, MessageKey> = {
+  startup: 'jobs.triggerStartup',
+  schedule: 'jobs.triggerSchedule',
+  manual: 'jobs.triggerManual',
+}
+
+export function statusLabel(status: JobStatus, t: Translate): string {
+  return t(STATUS_KEY[status])
+}
+
+export function triggerLabel(trigger: JobTrigger, t: Translate): string {
+  return t(TRIGGER_KEY[trigger])
 }
 
 /** Reuses the price colours: red for trouble, green for a clean run. */
@@ -28,41 +41,50 @@ export function statusClass(status: JobStatus): string {
   return 'dim'
 }
 
-export function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleString('zh-TW', { hour12: false })
+export function fmtTime(iso: string, intlTag: string): string {
+  return new Date(iso).toLocaleString(intlTag, { hour12: false })
 }
 
-/** '3 分鐘前' / '2 小時前'. Past tense -- for anything already recorded. */
-export function sinceLabel(iso: string | null | undefined, empty = '從未執行'): string {
-  if (!iso) return empty
+/** '3 minutes ago' / '2 hours ago'. Past tense -- for anything already recorded. */
+export function sinceLabel(
+  iso: string | null | undefined,
+  t: Translate,
+  empty: MessageKey = 'jobs.neverRun',
+): string {
+  if (!iso) return t(empty)
   const minutes = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000))
-  if (minutes < 1) return '剛剛'
-  if (minutes < 60) return `${minutes} 分鐘前`
+  if (minutes < 1) return t('jobs.justNow')
+  if (minutes < 60) return t('jobs.minutesAgo', { count: minutes })
   const hours = Math.round(minutes / 60)
-  if (hours < 48) return `${hours} 小時前`
-  return `${Math.round(hours / 24)} 天前`
+  if (hours < 48) return t('jobs.hoursAgo', { count: hours })
+  return t('jobs.daysAgo', { count: Math.round(hours / 24) })
 }
 
-/** '約 3 分鐘後'. A due time in the past reads as 即將執行, not '-2 分鐘後' --
- *  the thread may be mid-tick, or the run may be waiting on its lock. */
-export function untilLabel(iso: string | null): string {
-  if (!iso) return '已停用'
+/** 'in about 3 minutes'. A due time in the past reads as "due now", not
+ *  "-2 minutes" -- the thread may be mid-tick, or the run may be waiting on
+ *  its lock. */
+export function untilLabel(iso: string | null, t: Translate): string {
+  if (!iso) return t('jobs.scheduleOff')
   const minutes = Math.round((Date.parse(iso) - Date.now()) / 60_000)
-  if (minutes <= 0) return '即將執行'
-  if (minutes < 60) return `約 ${minutes} 分鐘後`
+  if (minutes <= 0) return t('jobs.dueNow')
+  if (minutes < 60) return t('jobs.inMinutes', { count: minutes })
   const hours = Math.round(minutes / 60)
-  if (hours < 48) return `約 ${hours} 小時後`
-  return `約 ${Math.round(hours / 24)} 天後`
+  if (hours < 48) return t('jobs.inHours', { count: hours })
+  return t('jobs.inDays', { count: Math.round(hours / 24) })
 }
 
-/** '每 6 小時' / '每天 04:10 (Asia/Taipei)' / '已停用'. */
-export function scheduleLabel(job: Job): string {
+/** 'every 6 hours' / 'daily at 04:10 (Asia/Taipei)' / 'Disabled'. */
+export function scheduleLabel(job: Job, t: Translate): string {
   const { enabled, kind, interval_minutes, daily_at, timezone } = job.schedule
-  if (!enabled) return '已停用'
-  if (kind === 'daily') return `每天 ${daily_at} (${timezone})`
-  if (interval_minutes % 1440 === 0) return `每 ${interval_minutes / 1440} 天`
-  if (interval_minutes % 60 === 0) return `每 ${interval_minutes / 60} 小時`
-  return `每 ${interval_minutes} 分鐘`
+  if (!enabled) return t('jobs.scheduleOff')
+  if (kind === 'daily') return t('jobs.dailyAt', { time: daily_at, timezone })
+  if (interval_minutes % 1440 === 0) {
+    return t('jobs.everyDays', { count: interval_minutes / 1440 })
+  }
+  if (interval_minutes % 60 === 0) {
+    return t('jobs.everyHours', { count: interval_minutes / 60 })
+  }
+  return t('jobs.everyMinutes', { count: interval_minutes })
 }
 
 /** A job the operator should look at: switched on, but nothing has worked for
@@ -80,18 +102,19 @@ export function isStale(job: Job): boolean {
   return Date.now() - Date.parse(job.last_success_at) > cycleMs * 2
 }
 
-/** What to show when 立即執行 is refused.
+/** What to show when "run now" is refused.
  *
  *  The server answers in English (CLAUDE.md: error strings are engineering
  *  communication), but a banner is product copy, and the two states an operator
- *  hits by accident deserve a sentence that tells them what to do next. Anything
- *  else -- a 400 naming the interval limits, an upstream failure -- is shown
- *  verbatim, because paraphrasing it would drop the detail that makes it useful.
+ *  hits by accident deserve a sentence that tells them what to do next -- in
+ *  their own language. Anything else -- a 400 naming the interval limits, an
+ *  upstream failure -- is shown verbatim, because paraphrasing it would drop the
+ *  detail that makes it useful.
  */
-export function runErrorMessage(error: unknown): string {
+export function runErrorMessage(error: unknown, t: Translate): string {
   if (error instanceof ApiError) {
-    if (error.status === 409) return '這個工作正在執行中，等它跑完再試'
-    if (error.status === 429) return '剛剛才手動執行過，請稍後再試（避免對上游打太兇）'
+    if (error.status === 409) return t('jobs.errorRunning')
+    if (error.status === 429) return t('jobs.errorCooldown')
   }
   return (error as Error).message
 }
