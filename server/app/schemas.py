@@ -49,6 +49,32 @@ class HistoryResponse(BaseModel):
     data: list[DailyPricePoint]
 
 
+class DividendEventOut(BaseModel):
+    ex_date: datetime.date
+    kind: str  # 息 / 權 / 權息
+    cash_dividend: float | None
+    stock_dividend: float | None
+    deduction: float | None  # 權值+息值, the opening gap on the ex-date
+    close_before: float | None
+    reference_price: float | None
+    upcoming: bool
+
+
+class DividendResponse(BaseModel):
+    sid: str
+    name: str
+    source: Literal["twse", "tpex"]
+    # history = yearly TWSE archive; recent = TPEX current window + calendar;
+    # none = indices, which do not pay dividends.
+    coverage: Literal["history", "recent", "none"]
+    years: int
+    count: int
+    ttm_cash: float | None
+    latest_close: float | None
+    yield_percent: float | None
+    events: list[DividendEventOut]
+
+
 class MovingAverages(BaseModel):
     ma5: float | None
     ma10: float | None
