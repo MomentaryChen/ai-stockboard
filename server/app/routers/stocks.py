@@ -1,14 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db
 from app.deps import require_admin
 from app.models import AppUser
-from app.schemas import CodeSyncResponse, SearchResponse, StockInfo
+from app.schemas import (
+    CodeSyncResponse,
+    SearchResponse,
+    StockInfo,
+    SyncRun,
+    SyncRunsResponse,
+)
 from app.services import code_sync
 from app.services import codes as codes_service
 
 router = APIRouter(prefix="/api/stocks", tags=["stocks"])
+
+settings = get_settings()
 
 
 # Declared before /{sid} so "search" is not swallowed by the path parameter.
@@ -48,6 +57,49 @@ def sync_stock_codes(
         delisted=report.delisted,
         pruned=report.pruned,
         message=report.message,
+    )
+
+
+@router.get("/sync/runs", response_model=SyncRunsResponse)
+def list_sync_runs(
+    limit: int = Query(50, ge=1, le=200, description="最多回傳幾筆執行紀錄"),
+    _admin: AppUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> SyncRunsResponse:
+    """The batch job's audit trail, newest first.
+
+    Reports `enabled` and `interval_hours` alongside the rows because a silent
+    log is ambiguous on its own: a job that is switched off looks exactly like
+    one that has crashed.
+    """
+    total, rows = code_sync.list_runs(db, limit=limit)
+    return SyncRunsResponse(
+        enabled=settings.stock_code_sync_enabled,
+        interval_hours=settings.stock_code_sync_interval_hours,
+        last_success_at=code_sync.last_success_at(db),
+        synced_at=code_sync.last_synced_at(db),
+        active=codes_service.code_count(),
+        total=total,
+        runs=[
+            SyncRun(
+                id=row.id,
+                started_at=row.started_at,
+                finished_at=row.finished_at,
+                duration_seconds=round(
+                    (row.finished_at - row.started_at).total_seconds(), 1
+                ),
+                status=row.status,
+                trigger=row.trigger,
+                sources=[s for s in row.sources.split(",") if s],
+                active=row.active,
+                inserted=row.inserted,
+                updated=row.updated,
+                delisted=row.delisted,
+                pruned=row.pruned,
+                message=row.message,
+            )
+            for row in rows
+        ],
     )
 
 

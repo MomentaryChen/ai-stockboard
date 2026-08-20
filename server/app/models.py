@@ -1,7 +1,9 @@
 """Database tables.
 
 `stock_code` mirrors the exchanges' ISIN registry -- every instrument they
-list, and the gate every other lookup passes through.
+list, and the gate every other lookup passes through. `stock_code_sync_run`
+is that mirror's audit trail: one row per reconciliation attempt, which is the
+only way to tell a healthy nightly job from one that has been failing quietly.
 `daily_price` holds one row per (stock, trading day) -- the market history this
 service owns, and what every analysis engine reads from.
 `fetch_log` records which (stock, year, month) buckets have already been pulled
@@ -39,6 +41,11 @@ from app.db import Base
 # than waiting out the interval, and /api/health reports "never synced" rather
 # than a date that would imply the listing is current.
 SEED_SYNCED_AT = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+
+# How many sync attempts `stock_code_sync_run` keeps. Enough to cover a couple
+# of months of a daily job plus any manual runs, and small enough that the
+# admin view never needs pagination.
+MAX_SYNC_RUNS_KEPT = 200
 
 
 class StockCode(Base):
@@ -85,6 +92,44 @@ class StockCode(Base):
         # the same set to work out what to retire.
         Index("ix_stock_code_active", "is_active"),
     )
+
+
+class StockCodeSyncRun(Base):
+    """One `stock_code` reconciliation attempt, successful or not.
+
+    Without this the batch job is invisible: a scrape that has been failing for
+    a fortnight looks exactly like one that had nothing to do, because both
+    leave `stock_code` untouched. Skipped runs are recorded too -- they are the
+    heartbeat that says the scheduler is still alive.
+
+    Trimmed to the most recent `MAX_SYNC_RUNS_KEPT` rows on every write, so it
+    stays a rolling window rather than a table nobody ever prunes.
+    """
+
+    __tablename__ = "stock_code_sync_run"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    started_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True))
+
+    status: Mapped[str] = mapped_column(String(16))  # synced / skipped / failed
+    trigger: Mapped[str] = mapped_column(String(16))  # startup / schedule / manual
+
+    # Which markets answered this time. A run that saw only one of them writes
+    # what it got but retires nothing, and this is how you tell that apart from
+    # a clean run afterwards.
+    sources: Mapped[str] = mapped_column(String(32), default="")
+
+    active: Mapped[int] = mapped_column(Integer, default=0)
+    inserted: Mapped[int] = mapped_column(Integer, default=0)
+    updated: Mapped[int] = mapped_column(Integer, default=0)
+    delisted: Mapped[int] = mapped_column(Integer, default=0)
+    pruned: Mapped[int] = mapped_column(Integer, default=0)
+
+    message: Mapped[str | None] = mapped_column(String(255))
+
+    __table_args__ = (Index("ix_stock_code_sync_run_started", "started_at"),)
 
 
 class DailyPrice(Base):

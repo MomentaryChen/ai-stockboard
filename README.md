@@ -123,6 +123,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET / PATCH / DELETE | `/api/users/{user_id}` | 檢視／改角色與狀態／刪除（ADMIN） |
 | GET / PUT | `/api/watchlist` | 自選股，整批讀寫（需登入） |
 | POST | `/api/stocks/sync?force=false` | 手動同步上市櫃名冊（**ADMIN**） |
+| GET | `/api/stocks/sync/runs?limit=50` | 名冊同步的執行紀錄（**ADMIN**） |
 
 `{sid}` 可以是個股代碼，也可以是大盤 `t00`。AI 分析預定放在 `/api/stocks/{sid}/analysis/ai`，與傳統分析平行。
 
@@ -244,6 +245,29 @@ twstock 把上市櫃名冊做成兩個 CSV 打包在套件裡，更新方式是 
 | retire | 名冊上消失的代碼標記 `is_active=false`，**不刪** —— `daily_price` 與 `watchlist_item` 還指著它，下市公司的歷史也還有價值 |
 | prune | 唯獨權證例外：一次同步就退役 29,062 檔，沒人看過期權證的線圖，過保留期（30 天）直接刪，表跟記憶體才有界 |
 
+### 怎麼知道這個 batch job 有沒有正常跑
+
+每一次嘗試 —— 包含「因為還新鮮所以略過」和「失敗」—— 都會寫進 `stock_code_sync_run`。
+這是必要的：同步失敗兩個禮拜跟同步「沒事可做」，對 `stock_code` 來說都是**沒有任何改變**，
+光看名冊本身分不出來。
+
+管理者登入後從右上角 **名冊同步** 進 `/admin/stock-codes`，可以看到：
+
+- 可查詢標的數、最後一次成功同步、排程間隔（或「已關閉」）
+- 每次執行的表格：開始時間、來源（啟動／排程／手動）、結果、耗時、新增／更新／下市／清除筆數、訊息
+- **立即同步** 按鈕（送 `force=true`，忽略間隔），跑完會順手讓 health 與搜尋快取失效
+
+三種狀態各代表什麼：
+
+| 結果 | 意思 |
+|---|---|
+| `已同步` | 真的抓了名冊並寫入 |
+| `已同步 (部分)` | 只有一個市場回應，寫了拿到的部分，但**刻意沒有退役任何代碼** |
+| `略過` | 排程醒來時名冊還在間隔內 —— 這是「批次工作還活著」的心跳 |
+| `失敗` | 兩個市場都連不上，既有資料原封不動 |
+
+超過兩個間隔沒有成功紀錄時，頁面上會出現警示橫幅。紀錄只保留最近 200 次。
+
 幾個刻意的決定：
 
 - **同步跑在背景 daemon thread**。首次抓取要 40 秒以上（上市那頁是 8MB HTML），
@@ -339,7 +363,7 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `ACCESS_TOKEN_EXPIRE_MINUTES` / `REFRESH_TOKEN_EXPIRE_DAYS` | `30` / `7` | 兩種 token 的有效期 |
 | `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin` / （未設） / （未設） | 啟動時建立的第一個管理員，email 與密碼都設了才生效 |
 | `STOCK_CODE_SYNC_ENABLED` | `true` | 關掉就不再更新上市櫃名冊，API 照常但學不到新掛牌 |
-| `STOCK_CODE_SYNC_INTERVAL_HOURS` | `24` | 名冊同步間隔 |
+| `STOCK_CODE_SYNC_INTERVAL_HOURS` | `24` | 名冊同步間隔；`/admin/stock-codes` 會顯示這個值 |
 
 ---
 
@@ -402,7 +426,8 @@ curl localhost:8000/api/watchlist -H "Authorization: Bearer $ACCESS_TOKEN"
   日線還是前一天，此時改用 MIS 的最後成交值，避免看板倒退一天。
 - 目前只接了加權指數。櫃買指數（`o00`）的即時頻道可用，但歷史報表端點不同，尚未接。
 - 上市櫃名冊每 24 小時才對一次。當天早上剛掛牌的標的最久要等一天才查得到，
-  急用可打 `POST /api/stocks/sync?force=true`。
+  急用可到 `/admin/stock-codes` 按「立即同步」（或打 `POST /api/stocks/sync?force=true`）。
+- 同步紀錄只保留最近 200 筆，且存在資料庫裡；沒有對外送告警，要靠人進管理頁看。
 - 四大買賣點只讀成交量、開盤、收盤三個欄位，且只比較最新一根與前一根 K 棒，沒有趨勢或部位概念；
   籌碼面（法人買賣超、融資融券）完全不在裡面。
 - 同一套規則現在也跑在大盤 `t00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——

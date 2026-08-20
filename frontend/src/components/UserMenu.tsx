@@ -25,9 +25,14 @@ export default function UserMenu() {
   return (
     <div className="row" style={{ gap: 8 }}>
       {isAdmin && (
-        <Link to="/admin/users" className="btn btn-sm">
-          使用者管理
-        </Link>
+        <>
+          <Link to="/admin/users" className="btn btn-sm">
+            使用者管理
+          </Link>
+          <Link to="/admin/stock-codes" className="btn btn-sm">
+            名冊同步
+          </Link>
+        </>
       )}
       <span className="dim" title={user?.email}>
         {user?.username}

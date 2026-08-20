@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from './api/client'
 import RequireAuth from './components/RequireAuth'
 import UserMenu from './components/UserMenu'
+import AdminStockCodes from './pages/AdminStockCodes'
 import AdminUsers from './pages/AdminUsers'
 import Login from './pages/Login'
 import MarketDashboard from './pages/MarketDashboard'
@@ -69,6 +70,14 @@ export default function App() {
             element={
               <RequireAuth adminOnly>
                 <AdminUsers />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/stock-codes"
+            element={
+              <RequireAuth adminOnly>
+                <AdminStockCodes />
               </RequireAuth>
             }
           />

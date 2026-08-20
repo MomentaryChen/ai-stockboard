@@ -1,5 +1,6 @@
 import { tokenStore } from './tokenStore'
 import type {
+  CodeSyncResponse,
   Role,
   RuleSet,
   TokenResponse,
@@ -9,6 +10,7 @@ import type {
   RealtimeResponse,
   SearchResponse,
   StockInfo,
+  SyncRunsResponse,
   User,
   UserListResponse,
   WatchlistResponse,
@@ -202,6 +204,23 @@ export const api = {
 
   deleteUser: (userId: number) =>
     request<void>(`/api/users/${userId}`, { method: 'DELETE', auth: true }),
+
+  // --- listed-instrument table (ADMIN only) ---
+
+  /** The batch job's audit trail plus whether the scheduler is even on. */
+  listSyncRuns: (limit = 50) =>
+    request<SyncRunsResponse>(`/api/stocks/sync/runs?limit=${limit}`, {
+      auth: true,
+    }),
+
+  /** Reconcile now. `force` skips the freshness check, which is the whole
+   *  point of pressing a button, so it is the default here. Blocks for the
+   *  length of the scrape -- roughly 40 seconds. */
+  syncStockCodes: (force = true) =>
+    request<CodeSyncResponse>(`/api/stocks/sync?force=${force}`, {
+      method: 'POST',
+      auth: true,
+    }),
 
   // --- watchlist (signed in) ---
 

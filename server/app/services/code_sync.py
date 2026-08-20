@@ -25,6 +25,11 @@ So the listing lives in PostgreSQL and this module owns it:
                deleted once the retention window has passed. That is what keeps
                both the table and the in-memory listing bounded.
 
+Every attempt -- including the ones that skip because the listing is still
+fresh, and the ones that fail -- lands in `stock_code_sync_run`. That table is
+the only way to distinguish a job with nothing to do from one that has been
+failing quietly for a fortnight, since both leave `stock_code` untouched.
+
 Deliberately not coordinated across replicas. The freshness check means a
 restart costs nothing, and the worst a second replica can do is fetch the same
 two pages once a day and write the same rows -- the upsert is idempotent, and
@@ -46,7 +51,7 @@ from twstock.proxy import get_proxies, get_session
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import SEED_SYNCED_AT, StockCode
+from app.models import MAX_SYNC_RUNS_KEPT, SEED_SYNCED_AT, StockCode, StockCodeSyncRun
 from app.services import codes as codes_service
 from app.throttle import twse_throttle
 
@@ -104,6 +109,13 @@ class SyncReport:
     delisted: int
     pruned: int = 0
     message: str | None = None
+
+
+# Where a run came from, recorded so the admin view can tell the nightly job
+# apart from someone pressing the button.
+TRIGGER_STARTUP = "startup"
+TRIGGER_SCHEDULE = "schedule"
+TRIGGER_MANUAL = "manual"
 
 
 def _now() -> datetime.datetime:
@@ -268,6 +280,67 @@ def _retire(db: Session, run_at: datetime.datetime) -> int:
     return result.rowcount or 0
 
 
+def _record_run(
+    db: Session,
+    *,
+    started_at: datetime.datetime,
+    trigger: str,
+    report: SyncReport,
+    sources: list[str],
+) -> None:
+    """Append this attempt to the audit trail and trim the trail.
+
+    Committed by the caller alongside whatever the run wrote, so the log and the
+    listing can never disagree about what happened.
+    """
+    db.add(
+        StockCodeSyncRun(
+            started_at=started_at,
+            finished_at=_now(),
+            status=report.status,
+            trigger=trigger,
+            sources=",".join(sources)[:32],
+            active=report.active,
+            inserted=report.inserted,
+            updated=report.updated,
+            delisted=report.delisted,
+            pruned=report.pruned,
+            message=report.message[:255] if report.message else None,
+        )
+    )
+    db.flush()  # the row needs an id before it can be counted out of the window
+
+    # Keep the newest MAX_SYNC_RUNS_KEPT. Comparing on the id of the oldest
+    # survivor is one statement, and ids are monotonic here.
+    cutoff = db.execute(
+        select(StockCodeSyncRun.id)
+        .order_by(StockCodeSyncRun.id.desc())
+        .offset(MAX_SYNC_RUNS_KEPT)
+        .limit(1)
+    ).scalar()
+    if cutoff is not None:
+        db.execute(delete(StockCodeSyncRun).where(StockCodeSyncRun.id <= cutoff))
+
+
+def list_runs(db: Session, limit: int = 50) -> tuple[int, list[StockCodeSyncRun]]:
+    """Most recent attempts first."""
+    total = db.execute(select(func.count()).select_from(StockCodeSyncRun)).scalar_one()
+    rows = db.execute(
+        select(StockCodeSyncRun).order_by(StockCodeSyncRun.started_at.desc()).limit(limit)
+    ).scalars()
+    return total, list(rows)
+
+
+def last_success_at(db: Session) -> datetime.datetime | None:
+    """Start time of the newest run that actually wrote a listing."""
+    value = db.execute(
+        select(func.max(StockCodeSyncRun.started_at)).where(
+            StockCodeSyncRun.status == "synced"
+        )
+    ).scalar()
+    return _as_utc(value) if value is not None else None
+
+
 def _prune_expired_warrants(db: Session, now: datetime.datetime) -> int:
     """Delete warrants retired longer ago than the retention window."""
     cutoff = now - datetime.timedelta(days=RETIRED_WARRANT_RETENTION_DAYS)
@@ -302,8 +375,17 @@ def last_synced_at(db: Session) -> datetime.datetime | None:
 # --------------------------------------------------------------------------
 
 
-def run(db: Session, force: bool = False) -> SyncReport:
-    """Seed if empty, then reconcile with the registry unless it is still fresh."""
+def run(
+    db: Session, force: bool = False, trigger: str = TRIGGER_MANUAL
+) -> SyncReport:
+    """Seed if empty, then reconcile with the registry unless it is still fresh.
+
+    Every exit path records a row in `stock_code_sync_run` before returning, so
+    the audit trail has no holes -- a failure that wrote nothing is exactly the
+    case you most need to see afterwards.
+    """
+    started_at = _now()
+
     if _count(db) == 0:
         seeded = _write(db, _bundled_rows(), SEED_SYNCED_AT)
         db.commit()
@@ -314,7 +396,7 @@ def run(db: Session, force: bool = False) -> SyncReport:
     if not force and last is not None:
         age = (_now() - last).total_seconds()
         if age < settings.stock_code_sync_interval_hours * 3600:
-            return SyncReport(
+            report = SyncReport(
                 status="skipped",
                 synced_at=last,
                 active=_count(db, active_only=True),
@@ -323,14 +405,21 @@ def run(db: Session, force: bool = False) -> SyncReport:
                 delisted=0,
                 message=f"Listing was reconciled {int(age // 60)} minutes ago",
             )
+            _record_run(
+                db, started_at=started_at, trigger=trigger, report=report, sources=[]
+            )
+            db.commit()
+            return report
 
     run_at = _now()
     rows: list[dict] = []
+    seen_sources: list[str] = []
     missing: list[str] = []
     for source in ISIN_URLS:
         market_rows = _fetch(source)
         if market_rows:
             rows.extend(market_rows)
+            seen_sources.append(source)
         else:
             missing.append(source)
             logger.error(
@@ -338,7 +427,7 @@ def run(db: Session, force: bool = False) -> SyncReport:
             )
 
     if not rows:
-        return SyncReport(
+        report = SyncReport(
             status="failed",
             synced_at=last,
             active=_count(db, active_only=True),
@@ -347,6 +436,11 @@ def run(db: Session, force: bool = False) -> SyncReport:
             delisted=0,
             message="Could not reach the ISIN registry",
         )
+        _record_run(
+            db, started_at=started_at, trigger=trigger, report=report, sources=[]
+        )
+        db.commit()
+        return report
 
     before = _count(db)
     written = _write(db, rows, run_at)
@@ -357,9 +451,6 @@ def run(db: Session, force: bool = False) -> SyncReport:
     # would otherwise delist every code belonging to the market that failed.
     delisted = _retire(db, run_at) if not missing else 0
     pruned = _prune_expired_warrants(db, run_at)
-
-    db.commit()
-    codes_service.invalidate()
 
     message = None
     if missing:
@@ -377,6 +468,15 @@ def run(db: Session, force: bool = False) -> SyncReport:
         pruned=pruned,
         message=message,
     )
+    _record_run(
+        db,
+        started_at=started_at,
+        trigger=trigger,
+        report=report,
+        sources=seen_sources,
+    )
+    db.commit()
+    codes_service.invalidate()
     logger.info(
         "stock_code synced: active=%d inserted=%d updated=%d delisted=%d pruned=%d%s",
         report.active,
@@ -391,11 +491,12 @@ def run(db: Session, force: bool = False) -> SyncReport:
 
 def _loop() -> None:
     interval = max(settings.stock_code_sync_interval_hours, 1) * 3600
+    trigger = TRIGGER_STARTUP
     while True:
         delay = interval
         try:
             with SessionLocal() as db:
-                report = run(db)
+                report = run(db, trigger=trigger)
             if report.status == "failed":
                 delay = RETRY_SECONDS
                 logger.warning(
@@ -406,6 +507,7 @@ def _loop() -> None:
         except Exception:
             delay = RETRY_SECONDS
             logger.exception("stock_code sync errored -- retrying in %d s", delay)
+        trigger = TRIGGER_SCHEDULE
         time.sleep(delay)
 
 

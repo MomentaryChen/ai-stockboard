@@ -138,6 +138,40 @@ class CodeSyncResponse(BaseModel):
     message: str | None = None
 
 
+class SyncRun(BaseModel):
+    """One recorded attempt at reconciling `stock_code`."""
+
+    id: int
+    started_at: datetime.datetime
+    finished_at: datetime.datetime
+    duration_seconds: float
+    status: Literal["synced", "skipped", "failed"]
+    trigger: Literal["startup", "schedule", "manual"]
+    sources: list[str]  # markets that answered: twse / tpex
+    active: int
+    inserted: int
+    updated: int
+    delisted: int
+    pruned: int
+    message: str | None
+
+
+class SyncRunsResponse(BaseModel):
+    """The batch job's health, as the admin view needs it."""
+
+    # Whether the scheduler is running at all, and how often. Without these a
+    # long gap between runs is ambiguous: broken, or simply switched off?
+    enabled: bool
+    interval_hours: int
+    last_success_at: datetime.datetime | None
+    # None when `stock_code` has never been reconciled -- the listing on offer
+    # is still twstock's bundled snapshot.
+    synced_at: datetime.datetime | None
+    active: int
+    total: int  # attempts on record, which the rolling window caps
+    runs: list[SyncRun]
+
+
 # --------------------------------------------------------------------------
 # Accounts, tokens and watchlists
 # --------------------------------------------------------------------------

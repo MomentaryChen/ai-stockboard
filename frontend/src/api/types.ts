@@ -142,3 +142,47 @@ export interface WatchlistResponse {
   count: number
   sids: string[]
 }
+
+/** --- 上市櫃名冊同步（ADMIN） --- */
+
+export type SyncStatus = 'synced' | 'skipped' | 'failed'
+export type SyncTrigger = 'startup' | 'schedule' | 'manual'
+
+export interface CodeSyncResponse {
+  status: SyncStatus
+  synced_at: string | null
+  active: number
+  inserted: number
+  updated: number
+  delisted: number
+  pruned: number
+  message: string | null
+}
+
+export interface SyncRun {
+  id: number
+  started_at: string
+  finished_at: string
+  duration_seconds: number
+  status: SyncStatus
+  trigger: SyncTrigger
+  /** markets that answered: 'twse' / 'tpex'. One of two means a partial run. */
+  sources: string[]
+  active: number
+  inserted: number
+  updated: number
+  delisted: number
+  pruned: number
+  message: string | null
+}
+
+export interface SyncRunsResponse {
+  enabled: boolean
+  interval_hours: number
+  last_success_at: string | null
+  /** null while the listing is still twstock's bundled snapshot. */
+  synced_at: string | null
+  active: number
+  total: number
+  runs: SyncRun[]
+}
