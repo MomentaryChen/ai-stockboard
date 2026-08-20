@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app import models  # noqa: F401  -- registers tables on Base.metadata
+from app import schema_patches
 from app.config import get_settings
 from app.db import Base, SessionLocal, engine
 from app.routers import analysis, auth, history, realtime, stocks, users, watchlist
@@ -35,6 +36,9 @@ FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
+        # create_all never ALTERs an existing table, so columns added after a
+        # table shipped are applied separately. No-op on a fresh database.
+        schema_patches.apply(engine)
         logger.info("Database tables ready")
     except Exception:
         # Let the app boot so /api/health can report *why* the DB is unreachable.

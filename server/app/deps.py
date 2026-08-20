@@ -12,6 +12,17 @@ The 401/403 split is load-bearing, because the frontend interceptor refreshes on
 
 Never answer an expired token with 403, or the browser signs the user out
 instead of quietly renewing their session.
+
+There are two authenticated dependencies, and the difference is load-bearing:
+
+  * `get_authenticated_user` establishes *who* is calling and nothing more.
+  * `get_current_user` adds the check that the account is in a usable state --
+    today that means it is not sitting on an ADMIN-issued temporary password.
+
+Everything takes `get_current_user`. Exactly two routes take the bare one, and
+they are the two that let a user out of that state: `GET /api/auth/me`, so the
+client can discover *why* it is blocked, and `POST /api/auth/me/password`, so it
+can stop being blocked. Adding a third is almost certainly a mistake.
 """
 
 from fastapi import Depends, HTTPException
@@ -30,8 +41,13 @@ bearer_scheme = HTTPBearer(auto_error=False, description="Bearer <access_token>"
 
 _UNAUTHENTICATED = {"WWW-Authenticate": "Bearer"}
 
+# The frontend narrows on this exact string to redirect to the change-password
+# page, so it is part of the contract -- do not reword it without updating
+# frontend/src/api/client.ts.
+PASSWORD_RESET_REQUIRED = "Password reset required"
 
-def get_current_user(
+
+def get_authenticated_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> AppUser:
@@ -57,6 +73,19 @@ def get_current_user(
         )
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled")
+    return user
+
+
+def get_current_user(user: AppUser = Depends(get_authenticated_user)) -> AppUser:
+    """An authenticated user who is also allowed to use the rest of the API.
+
+    403 rather than 401: the token is perfectly valid, so a refresh would not
+    help and the client must not treat this as an expired session. It is the
+    same status the disabled-account case returns, and the frontend already
+    stops instead of retrying on 403.
+    """
+    if user.must_change_password:
+        raise HTTPException(status_code=403, detail=PASSWORD_RESET_REQUIRED)
     return user
 
 

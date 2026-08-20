@@ -3,23 +3,7 @@ import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 
 import { useAuth } from '../auth/AuthContext'
-
-const MIN_PASSWORD_LENGTH = 8
-// bcrypt hashes at most the first 72 bytes, and the server rejects anything
-// longer rather than truncating it silently. A Chinese character is 3 bytes,
-// so this is reachable with 25 of them -- check it here for a faster answer.
-const MAX_PASSWORD_BYTES = 72
-
-function passwordProblem(password: string, confirm: string): string | null {
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return `密碼至少要 ${MIN_PASSWORD_LENGTH} 個字元`
-  }
-  if (new TextEncoder().encode(password).length > MAX_PASSWORD_BYTES) {
-    return `密碼不可超過 ${MAX_PASSWORD_BYTES} 位元組（中文約 24 字）`
-  }
-  if (password !== confirm) return '兩次輸入的密碼不一致'
-  return null
-}
+import { MIN_PASSWORD_LENGTH, passwordProblem } from '../utils/password'
 
 export default function Register() {
   const { status, register } = useAuth()

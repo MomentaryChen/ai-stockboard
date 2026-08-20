@@ -353,3 +353,18 @@ table.data tbody tr:hover { background: var(--bg-input); }
 table.data td select, table.data td .btn { font-size: 12px; }
 table.data td:nth-child(2), table.data td:nth-child(3) { text-align: left; }
 table.data th:nth-child(2), table.data th:nth-child(3) { text-align: left; }
+
+/* The generated password from an ADMIN reset. Monospace with wide tracking so
+   it can be read off the screen and typed by hand without misreading a run of
+   similar glyphs -- security.py already drops the 0/O and 1/l/I pairs. */
+.temp-password {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
+  letter-spacing: 0.12em;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  user-select: all;
+}

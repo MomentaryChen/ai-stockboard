@@ -74,6 +74,7 @@ def to_user_out(user: AppUser) -> UserOut:
         phone=user.phone,
         role=user.role,
         is_active=user.is_active,
+        must_change_password=user.must_change_password,
         created_at=user.created_at,
     )
 
@@ -174,10 +175,17 @@ def authenticate(db: Session, identifier: str, password: str) -> AppUser | None:
 
 
 def set_password(db: Session, user: AppUser, new_password: str) -> None:
+    """Set a password the user chose themselves.
+
+    Clearing `must_change_password` here rather than at the call site is what
+    lifts the restricted mode an ADMIN reset puts the account into -- there is
+    no other way out of it, so the two must not be able to drift apart.
+    """
     problem = security.password_problem(new_password)
     if problem:
         raise InvalidInputError(problem)
     user.password_hash = security.hash_password(new_password)
+    user.must_change_password = False
     db.commit()
 
 
@@ -251,6 +259,39 @@ def update_user(
     if losing_admin or is_active is False:
         revoke_all_for_user(db, user.id)
     return user
+
+
+def admin_reset_password(db: Session, user: AppUser) -> str:
+    """Replace a user's password with a generated one and return it *once*.
+
+    The plaintext is the return value and is never stored, logged or
+    retrievable afterwards -- only its bcrypt hash goes to the database, same
+    as any other password. If the admin loses it before handing it over, the
+    only remedy is another reset.
+
+    Two things happen alongside the new hash, and both matter:
+
+      * every refresh token is revoked, so a session opened with the old
+        password (or by whoever prompted the reset) dies immediately rather
+        than surviving on rotation for another week.
+      * `must_change_password` is raised, which puts the account in the
+        restricted mode `deps.get_current_user` enforces: it can read its own
+        profile and set a new password, nothing else. Without it a password
+        that travelled through chat or email would be a working credential for
+        as long as the user left it alone.
+
+    There is no email delivery in this service, so handing the plaintext back
+    to the caller is the whole transport. It is why the route is ADMIN-only and
+    why the flag above is not optional.
+    """
+    temp_password = security.generate_temp_password()
+    user.password_hash = security.hash_password(temp_password)
+    user.must_change_password = True
+    db.commit()
+
+    revoke_all_for_user(db, user.id)
+    logger.info("ADMIN reset the password for user_id=%s", user.id)
+    return temp_password
 
 
 def delete_user(db: Session, user: AppUser) -> None:

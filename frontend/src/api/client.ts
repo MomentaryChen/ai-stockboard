@@ -1,6 +1,7 @@
 import { tokenStore } from './tokenStore'
 import type {
   CodeSyncResponse,
+  PasswordResetResponse,
   Role,
   RuleSet,
   TokenResponse,
@@ -30,6 +31,22 @@ export class ApiError extends Error {
     this.name = 'ApiError'
     this.status = status
   }
+}
+
+/** The 403 detail the server sends while `must_change_password` is set.
+ *
+ *  Matches deps.PASSWORD_RESET_REQUIRED on the server; changing one without
+ *  the other silently turns the redirect into a dead end.
+ */
+export const PASSWORD_RESET_REQUIRED = 'Password reset required'
+
+/** True for the 403 that means "set a new password", not "you may not do this". */
+export function isPasswordResetRequired(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    error.message === PASSWORD_RESET_REQUIRED
+  )
 }
 
 interface RequestOptions {
@@ -184,8 +201,12 @@ export const api = {
   updateMe: (body: { email?: string; phone?: string }) =>
     request<User>('/api/auth/me', { method: 'PATCH', body, auth: true }),
 
+  /** Set a new password. Returns a fresh token pair -- changing a password
+   *  revokes every session the account has, including the caller's, so the
+   *  response has to re-establish this one or the user is signed out as soon
+   *  as the current access token expires. Store both tokens. */
   changePassword: (currentPassword: string, newPassword: string) =>
-    request<void>('/api/auth/me/password', {
+    request<TokenResponse>('/api/auth/me/password', {
       method: 'POST',
       body: { current_password: currentPassword, new_password: newPassword },
       auth: true,
@@ -201,6 +222,18 @@ export const api = {
 
   updateUser: (userId: number, body: { role?: Role; is_active?: boolean }) =>
     request<User>(`/api/users/${userId}`, { method: 'PATCH', body, auth: true }),
+
+  /** Generate a password for a user who cannot sign in.
+   *
+   *  The plaintext comes back once and is never retrievable again -- the
+   *  server keeps only the bcrypt hash. Whatever renders this must show it
+   *  until the admin dismisses it, and must not stash it anywhere.
+   */
+  resetUserPassword: (userId: number) =>
+    request<PasswordResetResponse>(`/api/users/${userId}/password-reset`, {
+      method: 'POST',
+      auth: true,
+    }),
 
   deleteUser: (userId: number) =>
     request<void>(`/api/users/${userId}`, { method: 'DELETE', auth: true }),
