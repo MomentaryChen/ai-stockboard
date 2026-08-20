@@ -25,10 +25,11 @@ So the listing lives in PostgreSQL and this module owns it:
                deleted once the retention window has passed. That is what keeps
                both the table and the in-memory listing bounded.
 
-Every attempt -- including the ones that skip because the listing is still
-fresh, and the ones that fail -- lands in `stock_code_sync_run`. That table is
-the only way to distinguish a job with nothing to do from one that has been
-failing quietly for a fortnight, since both leave `stock_code` untouched.
+Scheduling, the run log and the manual trigger all live one layer up in
+`app/services/jobs/` -- this module owns *what a reconciliation does*, and
+`jobs.registry` owns *when it happens*. Every attempt, including the ones that
+skip because the listing is still fresh and the ones that fail, is recorded in
+`job_run` by the runner that called it.
 
 Deliberately not coordinated across replicas. The freshness check means a
 restart costs nothing, and the worst a second replica can do is fetch the same
@@ -38,8 +39,6 @@ a lock held across a 25-second scrape would cost more than it saves.
 
 import datetime
 import logging
-import threading
-import time
 from dataclasses import dataclass
 
 import twstock
@@ -49,14 +48,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from twstock.proxy import get_proxies, get_session
 
-from app.config import get_settings
-from app.db import SessionLocal
-from app.models import MAX_SYNC_RUNS_KEPT, SEED_SYNCED_AT, StockCode, StockCodeSyncRun
+from app.models import SEED_SYNCED_AT, StockCode
 from app.services import codes as codes_service
 from app.throttle import twse_throttle
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 ISIN_URLS = {
     "twse": "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2",  # 上市
@@ -70,10 +66,6 @@ MAX_ATTEMPTS = 3
 # One INSERT per chunk. 44k rows in a single statement is a multi-megabyte
 # query that psycopg has to build in memory first.
 CHUNK_SIZE = 2000
-
-# A failed run retries on this shorter cadence instead of waiting out the full
-# interval -- otherwise one unreachable registry costs a whole day.
-RETRY_SECONDS = 600
 
 # How long a retired warrant is kept before being deleted outright. The delay is
 # the safety margin: a run that wrongly retired half the market has this long to
@@ -101,6 +93,8 @@ _UPDATABLE = (
 
 @dataclass(frozen=True)
 class SyncReport:
+    # "skipped" means the stored listing was still inside the sync interval,
+    # so nothing was fetched. The jobs layer records it as a heartbeat.
     status: str  # synced | skipped | failed
     synced_at: datetime.datetime | None
     active: int
@@ -110,12 +104,15 @@ class SyncReport:
     pruned: int = 0
     message: str | None = None
 
-
-# Where a run came from, recorded so the admin view can tell the nightly job
-# apart from someone pressing the button.
-TRIGGER_STARTUP = "startup"
-TRIGGER_SCHEDULE = "schedule"
-TRIGGER_MANUAL = "manual"
+    def as_stats(self) -> dict[str, int]:
+        """The counters `job_run.stats` stores for this job."""
+        return {
+            "active": self.active,
+            "inserted": self.inserted,
+            "updated": self.updated,
+            "delisted": self.delisted,
+            "pruned": self.pruned,
+        }
 
 
 def _now() -> datetime.datetime:
@@ -280,67 +277,6 @@ def _retire(db: Session, run_at: datetime.datetime) -> int:
     return result.rowcount or 0
 
 
-def _record_run(
-    db: Session,
-    *,
-    started_at: datetime.datetime,
-    trigger: str,
-    report: SyncReport,
-    sources: list[str],
-) -> None:
-    """Append this attempt to the audit trail and trim the trail.
-
-    Committed by the caller alongside whatever the run wrote, so the log and the
-    listing can never disagree about what happened.
-    """
-    db.add(
-        StockCodeSyncRun(
-            started_at=started_at,
-            finished_at=_now(),
-            status=report.status,
-            trigger=trigger,
-            sources=",".join(sources)[:32],
-            active=report.active,
-            inserted=report.inserted,
-            updated=report.updated,
-            delisted=report.delisted,
-            pruned=report.pruned,
-            message=report.message[:255] if report.message else None,
-        )
-    )
-    db.flush()  # the row needs an id before it can be counted out of the window
-
-    # Keep the newest MAX_SYNC_RUNS_KEPT. Comparing on the id of the oldest
-    # survivor is one statement, and ids are monotonic here.
-    cutoff = db.execute(
-        select(StockCodeSyncRun.id)
-        .order_by(StockCodeSyncRun.id.desc())
-        .offset(MAX_SYNC_RUNS_KEPT)
-        .limit(1)
-    ).scalar()
-    if cutoff is not None:
-        db.execute(delete(StockCodeSyncRun).where(StockCodeSyncRun.id <= cutoff))
-
-
-def list_runs(db: Session, limit: int = 50) -> tuple[int, list[StockCodeSyncRun]]:
-    """Most recent attempts first."""
-    total = db.execute(select(func.count()).select_from(StockCodeSyncRun)).scalar_one()
-    rows = db.execute(
-        select(StockCodeSyncRun).order_by(StockCodeSyncRun.started_at.desc()).limit(limit)
-    ).scalars()
-    return total, list(rows)
-
-
-def last_success_at(db: Session) -> datetime.datetime | None:
-    """Start time of the newest run that actually wrote a listing."""
-    value = db.execute(
-        select(func.max(StockCodeSyncRun.started_at)).where(
-            StockCodeSyncRun.status == "synced"
-        )
-    ).scalar()
-    return _as_utc(value) if value is not None else None
-
-
 def _prune_expired_warrants(db: Session, now: datetime.datetime) -> int:
     """Delete warrants retired longer ago than the retention window."""
     cutoff = now - datetime.timedelta(days=RETIRED_WARRANT_RETENTION_DAYS)
@@ -376,16 +312,23 @@ def last_synced_at(db: Session) -> datetime.datetime | None:
 
 
 def run(
-    db: Session, force: bool = False, trigger: str = TRIGGER_MANUAL
+    db: Session,
+    *,
+    force: bool = False,
+    min_age_seconds: float | None = None,
 ) -> SyncReport:
     """Seed if empty, then reconcile with the registry unless it is still fresh.
 
-    Every exit path records a row in `stock_code_sync_run` before returning, so
-    the audit trail has no holes -- a failure that wrote nothing is exactly the
-    case you most need to see afterwards.
-    """
-    started_at = _now()
+    `min_age_seconds` is how recently the listing must have been reconciled for
+    this attempt to be worth skipping -- the caller passes the job's configured
+    interval, so shortening the schedule in the admin UI immediately shortens
+    the window a run is allowed to skip in. `force` ignores it entirely, which
+    is what the manual button does.
 
+    Never records anything itself: the caller in `app/services/jobs/runner.py`
+    writes the `job_run` row around this, so a run that raises is logged as
+    thoroughly as one that returns.
+    """
     if _count(db) == 0:
         seeded = _write(db, _bundled_rows(), SEED_SYNCED_AT)
         db.commit()
@@ -393,10 +336,10 @@ def run(
         logger.info("Seeded stock_code with %d rows from twstock's snapshot", seeded)
 
     last = last_synced_at(db)
-    if not force and last is not None:
+    if not force and min_age_seconds is not None and last is not None:
         age = (_now() - last).total_seconds()
-        if age < settings.stock_code_sync_interval_hours * 3600:
-            report = SyncReport(
+        if age < min_age_seconds:
+            return SyncReport(
                 status="skipped",
                 synced_at=last,
                 active=_count(db, active_only=True),
@@ -405,11 +348,6 @@ def run(
                 delisted=0,
                 message=f"Listing was reconciled {int(age // 60)} minutes ago",
             )
-            _record_run(
-                db, started_at=started_at, trigger=trigger, report=report, sources=[]
-            )
-            db.commit()
-            return report
 
     run_at = _now()
     rows: list[dict] = []
@@ -427,7 +365,7 @@ def run(
             )
 
     if not rows:
-        report = SyncReport(
+        return SyncReport(
             status="failed",
             synced_at=last,
             active=_count(db, active_only=True),
@@ -436,11 +374,6 @@ def run(
             delisted=0,
             message="Could not reach the ISIN registry",
         )
-        _record_run(
-            db, started_at=started_at, trigger=trigger, report=report, sources=[]
-        )
-        db.commit()
-        return report
 
     before = _count(db)
     written = _write(db, rows, run_at)
@@ -454,9 +387,7 @@ def run(
 
     message = None
     if missing:
-        message = (
-            f"Partial: {', '.join(missing)} unavailable, so nothing was retired"
-        )
+        message = f"Partial: {', '.join(missing)} unavailable, so nothing was retired"
 
     report = SyncReport(
         status="synced",
@@ -467,13 +398,6 @@ def run(
         delisted=delisted,
         pruned=pruned,
         message=message,
-    )
-    _record_run(
-        db,
-        started_at=started_at,
-        trigger=trigger,
-        report=report,
-        sources=seen_sources,
     )
     db.commit()
     codes_service.invalidate()
@@ -487,45 +411,3 @@ def run(
         f" ({message})" if message else "",
     )
     return report
-
-
-def _loop() -> None:
-    interval = max(settings.stock_code_sync_interval_hours, 1) * 3600
-    trigger = TRIGGER_STARTUP
-    while True:
-        delay = interval
-        try:
-            with SessionLocal() as db:
-                report = run(db, trigger=trigger)
-            if report.status == "failed":
-                delay = RETRY_SECONDS
-                logger.warning(
-                    "stock_code sync failed (%s) -- retrying in %d s",
-                    report.message,
-                    delay,
-                )
-        except Exception:
-            delay = RETRY_SECONDS
-            logger.exception("stock_code sync errored -- retrying in %d s", delay)
-        trigger = TRIGGER_SCHEDULE
-        time.sleep(delay)
-
-
-def start_scheduler() -> None:
-    """Run the sync in the background, now and every interval after.
-
-    A daemon thread rather than an async task: everything below it -- requests,
-    psycopg, the rate limiter -- is blocking, and the first run scrapes for the
-    better part of a minute, which must not hold up startup or the container
-    healthcheck.
-    """
-    if not settings.stock_code_sync_enabled:
-        logger.warning(
-            "STOCK_CODE_SYNC_ENABLED is off -- stock_code will not learn about new listings"
-        )
-        return
-
-    threading.Thread(target=_loop, name="stock-code-sync", daemon=True).start()
-    logger.info(
-        "stock_code sync scheduled every %d h", settings.stock_code_sync_interval_hours
-    )

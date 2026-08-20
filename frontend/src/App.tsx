@@ -5,6 +5,8 @@ import { api } from './api/client'
 import PasswordGate from './components/PasswordGate'
 import RequireAuth from './components/RequireAuth'
 import UserMenu from './components/UserMenu'
+import AdminJobDetail from './pages/AdminJobDetail'
+import AdminJobs from './pages/AdminJobs'
 import AdminStockCodes from './pages/AdminStockCodes'
 import AdminUsers from './pages/AdminUsers'
 import ChangePassword from './pages/ChangePassword'
@@ -84,6 +86,22 @@ export default function App() {
               element={
                 <RequireAuth adminOnly>
                   <AdminUsers />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/admin/jobs"
+              element={
+                <RequireAuth adminOnly>
+                  <AdminJobs />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/admin/jobs/:jobId"
+              element={
+                <RequireAuth adminOnly>
+                  <AdminJobDetail />
                 </RequireAuth>
               }
             />

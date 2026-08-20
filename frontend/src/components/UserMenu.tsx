@@ -31,6 +31,9 @@ export default function UserMenu() {
           <Link to="/admin/users" className="btn btn-sm">
             使用者管理
           </Link>
+          <Link to="/admin/jobs" className="btn btn-sm">
+            排程作業
+          </Link>
           <Link to="/admin/stock-codes" className="btn btn-sm">
             名冊同步
           </Link>

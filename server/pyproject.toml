@@ -18,6 +18,10 @@ dependencies = [
     # Auth: JWT encode/decode, password hashing, and EmailStr validation.
     "pyjwt>=2.10",
     "bcrypt>=4.1",
+    # zoneinfo's database. The stdlib module reads the *system* tzdb, which a
+    # slim image may not carry and Windows never does -- and SCHEDULER_TIMEZONE
+    # decides when the "每天 03:00" jobs actually fire.
+    "tzdata>=2024.1",
 ]
 
 [tool.uv.sources]

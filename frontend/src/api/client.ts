@@ -1,6 +1,10 @@
 import { tokenStore } from './tokenStore'
 import type {
-  CodeSyncResponse,
+  Job,
+  JobListResponse,
+  JobRunsResponse,
+  JobScheduleUpdate,
+  JobTriggerResponse,
   PasswordResetResponse,
   Role,
   RuleSet,
@@ -12,7 +16,6 @@ import type {
   RealtimeResponse,
   SearchResponse,
   StockInfo,
-  SyncRunsResponse,
   User,
   UserListResponse,
   WatchlistResponse,
@@ -242,19 +245,32 @@ export const api = {
   deleteUser: (userId: number) =>
     request<void>(`/api/users/${userId}`, { method: 'DELETE', auth: true }),
 
-  // --- listed-instrument table (ADMIN only) ---
+  // --- background jobs (ADMIN only) ---
 
-  /** The batch job's audit trail plus whether the scheduler is even on. */
-  listSyncRuns: (limit = 50) =>
-    request<SyncRunsResponse>(`/api/stocks/sync/runs?limit=${limit}`, {
+  /** Every job at once: schedule, last run, next run. Backs /admin/jobs. */
+  listJobs: () => request<JobListResponse>('/api/jobs', { auth: true }),
+
+  /** One job's audit trail, newest first, with the job itself for context. */
+  listJobRuns: (jobId: string, limit = 50) =>
+    request<JobRunsResponse>(`/api/jobs/${jobId}/runs?limit=${limit}`, {
       auth: true,
     }),
 
-  /** Reconcile now. `force` skips the freshness check, which is the whole
-   *  point of pressing a button, so it is the default here. Blocks for the
-   *  length of the scrape -- roughly 40 seconds. */
-  syncStockCodes: (force = true) =>
-    request<CodeSyncResponse>(`/api/stocks/sync?force=${force}`, {
+  /** Change when a job fires. Unset fields keep their current value; the
+   *  server refuses anything outside that job's own min/max. */
+  updateJobSchedule: (jobId: string, body: JobScheduleUpdate) =>
+    request<Job>(`/api/jobs/${jobId}/schedule`, {
+      method: 'PATCH',
+      body,
+      auth: true,
+    }),
+
+  /** Run a job now. Answers 202 as soon as it has *started* -- the work
+   *  happens server-side and the caller polls the run log, because the
+   *  listing sync alone takes ~40 s and this page lists several jobs.
+   *  409 while that job is already running, 429 inside its cooldown. */
+  runJob: (jobId: string) =>
+    request<JobTriggerResponse>(`/api/jobs/${jobId}/run`, {
       method: 'POST',
       auth: true,
     }),

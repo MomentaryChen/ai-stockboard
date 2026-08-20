@@ -1,23 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
 from app.db import get_db
 from app.deps import require_admin
 from app.models import AppUser
-from app.schemas import (
-    CodeSyncResponse,
-    SearchResponse,
-    StockInfo,
-    SyncRun,
-    SyncRunsResponse,
-)
+from app.schemas import CodeSyncResponse, SearchResponse, StockInfo
 from app.services import code_sync
 from app.services import codes as codes_service
+from app.services.jobs import registry, runner
 
 router = APIRouter(prefix="/api/stocks", tags=["stocks"])
-
-settings = get_settings()
 
 
 # Declared before /{sid} so "search" is not swallowed by the path parameter.
@@ -33,73 +25,52 @@ def search_stocks(
     return SearchResponse(query=q, total=total, results=results)
 
 
-@router.post("/sync", response_model=CodeSyncResponse)
+@router.post("/sync", response_model=CodeSyncResponse, deprecated=True)
 def sync_stock_codes(
     force: bool = Query(
-        False, description="忽略同步間隔，立即向交易所 ISIN 名冊重抓"
+        True, description="忽略同步間隔，立即向交易所 ISIN 名冊重抓"
     ),
-    _admin: AppUser = Depends(require_admin),
+    admin: AppUser = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> CodeSyncResponse:
-    """Reconcile `stock_code` with the exchanges' registry, now.
+    """Reconcile `stock_code` with the exchanges' registry, and wait for it.
 
-    The scheduler in app/services/code_sync.py already does this daily; this is
-    the manual lever for the day a company lists and someone needs it visible
-    before tomorrow. It blocks for as long as the scrape takes (~30 s).
+    Superseded by `POST /api/jobs/stock_code_sync/run`, which the admin UI uses:
+    that one returns as soon as the run has started, which is what a page
+    listing several jobs needs. This route is kept because it is the one
+    documented for curl, and a script wants the outcome in the response rather
+    than a second call to fetch it.
+
+    Runs through the same runner as everything else, so the concurrency lock,
+    the cooldown and the audit trail all apply -- it blocks for as long as the
+    scrape takes (~40 s).
     """
-    report = code_sync.run(db, force=force)
+    job = registry.get(registry.STOCK_CODE_SYNC)
+    try:
+        runner.check_manual_allowed(job)
+        record = runner.run_job(
+            job, trigger=runner.TRIGGER_MANUAL, actor=admin.username, force=force
+        )
+    except runner.JobBusyError as exc:
+        raise HTTPException(status_code=409, detail="This job is already running") from exc
+    except runner.CooldownError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+
+    stats = record.stats or {}
     return CodeSyncResponse(
-        status=report.status,
-        synced_at=report.synced_at,
-        active=report.active,
-        inserted=report.inserted,
-        updated=report.updated,
-        delisted=report.delisted,
-        pruned=report.pruned,
-        message=report.message,
-    )
-
-
-@router.get("/sync/runs", response_model=SyncRunsResponse)
-def list_sync_runs(
-    limit: int = Query(50, ge=1, le=200, description="最多回傳幾筆執行紀錄"),
-    _admin: AppUser = Depends(require_admin),
-    db: Session = Depends(get_db),
-) -> SyncRunsResponse:
-    """The batch job's audit trail, newest first.
-
-    Reports `enabled` and `interval_hours` alongside the rows because a silent
-    log is ambiguous on its own: a job that is switched off looks exactly like
-    one that has crashed.
-    """
-    total, rows = code_sync.list_runs(db, limit=limit)
-    return SyncRunsResponse(
-        enabled=settings.stock_code_sync_enabled,
-        interval_hours=settings.stock_code_sync_interval_hours,
-        last_success_at=code_sync.last_success_at(db),
+        # The job tables say "success"; this response has always said "synced".
+        status="synced" if record.status == "success" else record.status,
         synced_at=code_sync.last_synced_at(db),
-        active=codes_service.code_count(),
-        total=total,
-        runs=[
-            SyncRun(
-                id=row.id,
-                started_at=row.started_at,
-                finished_at=row.finished_at,
-                duration_seconds=round(
-                    (row.finished_at - row.started_at).total_seconds(), 1
-                ),
-                status=row.status,
-                trigger=row.trigger,
-                sources=[s for s in row.sources.split(",") if s],
-                active=row.active,
-                inserted=row.inserted,
-                updated=row.updated,
-                delisted=row.delisted,
-                pruned=row.pruned,
-                message=row.message,
-            )
-            for row in rows
-        ],
+        active=stats.get("active", 0),
+        inserted=stats.get("inserted", 0),
+        updated=stats.get("updated", 0),
+        delisted=stats.get("delisted", 0),
+        pruned=stats.get("pruned", 0),
+        message=record.message,
     )
 
 

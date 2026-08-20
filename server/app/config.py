@@ -39,11 +39,25 @@ class Settings(BaseSettings):
     throttle_max_calls: int = 3
     throttle_window_seconds: float = 5.5
 
+    # --- Background jobs ---
+    # Master switch for the scheduler thread pool. Off means no job ever fires
+    # on its own; admins can still trigger them by hand from /admin/jobs. Use
+    # it when running several replicas, so only one of them holds the jobs.
+    jobs_scheduler_enabled: bool = True
+    # Wall-clock timezone that "每天 03:00" is interpreted in. The container
+    # sets TZ from the same .env, so the two agree by default.
+    scheduler_timezone: str = "Asia/Taipei"
+
     # --- Listed-instrument table ---
     # `stock_code` is reconciled with the exchanges' ISIN registry on startup
-    # and every interval after that. Disabling the sync leaves whatever the
-    # table already holds in place -- the API keeps working, it just stops
-    # learning about new listings.
+    # and on the schedule below. Disabling the sync leaves whatever the table
+    # already holds in place -- the API keeps working, it just stops learning
+    # about new listings.
+    #
+    # These two are *first-boot defaults only*. Once an admin edits the
+    # schedule at /admin/jobs the `job_schedule` row wins, because a change
+    # made in the UI has to survive a restart and nothing in the process can
+    # write back to an env var.
     stock_code_sync_enabled: bool = True
     stock_code_sync_interval_hours: int = 24
 
