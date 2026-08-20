@@ -7,6 +7,10 @@
  * "is the market open" -- and it was copied between the two pages. Formatting
  * stays with the callers, because an index reads as 44,933.74 and a stock as
  * 512.00.
+ *
+ * Quotes are signed-in only. Anonymous visitors keep the whole page -- charts,
+ * moving averages, 四大買賣點 -- and simply read the last close instead of the
+ * live tick, which is the fallback this hook already had for weekends.
  */
 
 import { useState } from 'react'
@@ -14,6 +18,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../api/client'
 import type { RealtimeQuote } from '../api/types'
+import { useAuth } from '../auth/AuthContext'
 import { isMarketOpen } from '../utils/market'
 
 export const POLL_MS = 10_000
@@ -30,8 +35,13 @@ export interface ClosingBar {
 
 export interface LiveQuote {
   quote: RealtimeQuote | undefined
-  /** Taiwan regular session, right now. Drives the 盤中 / 收盤 badge. */
+  /** Taiwan regular session, right now. */
   marketOpen: boolean
+  /** No account, so no quote: show the close and invite them to sign in. */
+  locked: boolean
+  /** What the numbers on screen actually are. Drives the 盤中 / 收盤 badge --
+   *  a locked page during market hours is still showing a close. */
+  sessionLabel: '盤中' | '收盤'
   /** Whether the numbers below came from the quote rather than the daily bar. */
   intraday: boolean
   price: number | null
@@ -48,6 +58,13 @@ export interface LiveQuote {
 }
 
 export function useLiveQuote(sid: string, lastClose: ClosingBar | undefined): LiveQuote {
+  const { status } = useAuth()
+  const authenticated = status === 'authenticated'
+  // 'loading' is not 'anonymous': on a hard refresh the session is still being
+  // restored, and prompting there would flash a sign-in box at somebody who is
+  // already signed in.
+  const locked = status === 'anonymous'
+
   // Polling off-session would only re-fetch the same last tick, so start live
   // only while the exchange is open. The user can still switch it on.
   const [live, setLive] = useState(isMarketOpen)
@@ -58,6 +75,7 @@ export function useLiveQuote(sid: string, lastClose: ClosingBar | undefined): Li
   const realtime = useQuery({
     queryKey: ['realtime', [sid]],
     queryFn: () => api.getRealtime([sid]),
+    enabled: authenticated,
     refetchInterval: live ? POLL_MS : false,
     staleTime: 0,
   })
@@ -83,6 +101,8 @@ export function useLiveQuote(sid: string, lastClose: ClosingBar | undefined): Li
   return {
     quote,
     marketOpen,
+    locked,
+    sessionLabel: intraday ? '盤中' : '收盤',
     intraday,
     price: intraday ? quote!.latest_trade_price : (lastClose?.close ?? null),
     change: intraday ? quote!.change : (lastClose?.change ?? null),

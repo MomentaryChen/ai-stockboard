@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
 import RealtimeCard from '../components/RealtimeCard'
+import SignInPrompt from '../components/SignInPrompt'
 import StockSearch from '../components/StockSearch'
 import { POLL_MS } from '../hooks/useLiveQuote'
 import { useWatchlist } from '../hooks/useWatchlist'
@@ -10,6 +12,9 @@ import { isMarketOpen } from '../utils/market'
 import { MAX_WATCHLIST } from '../watchlistStorage'
 
 export default function RealtimeBoard() {
+  const { status } = useAuth()
+  const authenticated = status === 'authenticated'
+
   // localStorage while signed out, the database once signed in -- either way a
   // plain string[], so the poll below is unaffected by which one is in play.
   const {
@@ -27,12 +32,41 @@ export default function RealtimeBoard() {
   const { data, error, isFetching, dataUpdatedAt, refetch } = useQuery({
     queryKey: ['realtime', watchlist],
     queryFn: () => api.getRealtime(watchlist),
-    enabled: watchlist.length > 0,
+    enabled: authenticated && watchlist.length > 0,
     refetchInterval: live ? POLL_MS : false,
     staleTime: 0,
   })
 
   const errorEntries = Object.entries(data?.errors ?? {})
+
+  // Restoring a session on a hard refresh -- see the note in RequireAuth: a
+  // prompt rendered here would flash at somebody who is already signed in.
+  if (status === 'loading') {
+    return (
+      <div className="center-note">
+        <span className="spinner" />
+      </div>
+    )
+  }
+
+  if (!authenticated) {
+    return (
+      <SignInPrompt title="即時報價需要登入">
+        <p className="prompt-lead">
+          自選股即時看板會每 {POLL_MS / 1000} 秒向證交所取一次最新成交價、漲跌與委買委賣五檔。
+          報價每次都要向來源取數，額度是全站共用的，所以這一頁保留給有帳號的使用者。
+        </p>
+        <ul className="reason-list">
+          <li>最多 {MAX_WATCHLIST} 檔自選股的盤中報價，每 {POLL_MS / 1000} 秒自動更新</li>
+          <li>委買、委賣五檔與單量、總量</li>
+          <li>自選股存在帳號裡，換裝置、換瀏覽器都還在</li>
+        </ul>
+        <p className="dim" style={{ marginTop: 12 }}>
+          大盤與個股的歷史 K 線、均線與四大買賣點不需要登入，隨時都能看。
+        </p>
+      </SignInPrompt>
+    )
+  }
 
   return (
     <div className="stack">

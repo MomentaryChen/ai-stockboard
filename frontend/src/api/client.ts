@@ -134,7 +134,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 export const MARKET_INDEX_SID = 't00'
 
 export const api = {
-  // --- market data: public, no token is ever attached ---
+  // --- market data: public apart from getRealtime, which is signed-in only ---
 
   health: () => request<HealthResponse>('/api/health'),
 
@@ -155,8 +155,10 @@ export const api = {
       `/api/stocks/${sid}/analysis/traditional?months=${months}&rule_set=${ruleSet}`,
     ),
 
+  /** Signed in only -- the one market-data route that is not public. `auth`
+   *  also buys the refresh-and-retry, which a 10-second poll needs. */
   getRealtime: (sids: string[]) =>
-    request<RealtimeResponse>(`/api/realtime?sids=${sids.join(',')}`),
+    request<RealtimeResponse>(`/api/realtime?sids=${sids.join(',')}`, { auth: true }),
 
   // --- accounts ---
 

@@ -353,3 +353,31 @@ table.data tbody tr:hover { background: var(--bg-input); }
 table.data td select, table.data td .btn { font-size: 12px; }
 table.data td:nth-child(2), table.data td:nth-child(3) { text-align: left; }
 table.data th:nth-child(2), table.data th:nth-child(3) { text-align: left; }
+
+/* ---------- sign-in prompt (即時報價 is signed-in only) ---------- */
+
+/* Sits in the nav pill itself, so the tab says what it costs before the click.
+   Inherits colour so it stays legible on the accent-filled .active state. */
+.nav-lock {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.65;
+  vertical-align: 1px;
+}
+
+/* The full-page variant: narrower than the boards it replaces, because it is
+   prose rather than a grid of quotes. */
+.signin-prompt {
+  max-width: 560px;
+  margin: 40px auto 0;
+}
+.signin-prompt .card-title { margin-top: 10px; }
+.prompt-lead { color: var(--text-muted); margin: 10px 0 0; line-height: 1.65; }
+.signin-prompt .reason-list { margin-top: 12px; }
+
+/* The inline variant, standing in for the 自動更新 toggle on 大盤 / 個股. */
+.signin-inline { gap: 8px; }

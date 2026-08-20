@@ -112,7 +112,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/stocks/{sid}` | 個股基本資料 |
 | GET | `/api/stocks/{sid}/history?months=6&force=false` | 歷史日成交 |
 | GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點 |
-| GET | `/api/realtime?sids=2330,0050` | 即時報價（最多 20 檔） |
+| GET | `/api/realtime?sids=2330,0050` | 即時報價，最多 20 檔（**需登入**） |
 | POST | `/api/auth/register` | 註冊，直接回一組 token |
 | POST | `/api/auth/login` | 登入，帳號或 Email 皆可 |
 | POST | `/api/auth/refresh` | 換發 token（會輪替 refresh token） |
@@ -132,7 +132,9 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 ```bash
 curl 'http://localhost:8000/api/stocks/2330/history?months=3'
 curl 'http://localhost:8000/api/stocks/2330/analysis/traditional'
-curl 'http://localhost:8000/api/realtime?sids=2330,6488'
+
+# 即時報價要帶 access token，其餘行情端點不用
+curl 'http://localhost:8000/api/realtime?sids=2330,6488' -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
 ---
@@ -199,6 +201,7 @@ twstock 版在兩萬組裡**沒有一次回傳 Don't touch**，而且與 grs 版
 ## 大盤（加權指數）
 
 首頁 `/` 是大盤看板：即時指數、K 線與均線、四大買賣點、近 10 日。個股頁在 `/stock/:sid`，即時報價在 `/realtime`。
+即時的部分需要登入（見〈[即時報價需要登入](#即時報價需要登入)〉），K 線與分析則不用。
 
 大盤在後端就是一個 `sid` = **`t00`**，走的是跟個股完全相同的路由：
 
@@ -206,7 +209,7 @@ twstock 版在兩萬組裡**沒有一次回傳 Don't touch**，而且與 grs 版
 curl 'http://localhost:8000/api/stocks/t00'
 curl 'http://localhost:8000/api/stocks/t00/history?months=3'
 curl 'http://localhost:8000/api/stocks/t00/analysis/traditional'
-curl 'http://localhost:8000/api/realtime?sids=t00'
+curl 'http://localhost:8000/api/realtime?sids=t00' -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
 做得到這件事是因為 `server/app/services/market_index.py` 補上了 twstock 沒有的兩塊：
@@ -370,7 +373,7 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 ## 帳號與權限
 
 帳號（username）、Email、密碼為必填，手機選填。角色只有 `ADMIN` 與 `USER` 兩種，
-現有的行情 API（`/api/health`、`/api/stocks/*`、`/api/realtime`）維持公開不需登入。
+行情 API 中 `/api/health` 與 `/api/stocks/*` 維持公開，只有 `/api/realtime` 需要登入。
 
 ### Token
 
@@ -408,6 +411,9 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 第一次登入時會把 localStorage 那份**聯集**進帳號，然後清掉本機那份——
 不清的話，在同一台瀏覽器換帳號登入會把前一個人的清單帶進去。
 
+`/realtime` 改成需要登入之後，未登入已經沒有介面可以編輯自選股，
+localStorage 那條路留著是為了把**這個改動之前**存下來的清單接進帳號，`useWatchlist` 的兩套儲存不需要動。
+
 ```bash
 curl -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' -d '{"identifier":"admin@example.com","password":"..."}'
 curl localhost:8000/api/watchlist -H "Authorization: Bearer $ACCESS_TOKEN"
@@ -415,8 +421,38 @@ curl localhost:8000/api/watchlist -H "Authorization: Bearer $ACCESS_TOKEN"
 
 ---
 
+## 即時報價需要登入
+
+`/api/realtime` 是唯一擋在登入後面的行情端點。歷史、搜尋與分析都答得出快取裡的資料，
+但報價不新鮮就沒有意義，所以每一次呼叫都會真的打到 TWSE MIS，花掉**全站共用**的額度——
+來源限制是每個來源 IP 每 5 秒 3 次，而每一個開著的看板每 10 秒就吃掉一次。
+把它綁在帳號上，這份額度才追得回是誰用的。
+
+未登入的人不會被踢出任何頁面：
+
+| 頁面 | 未登入看得到 | 登入後多了什麼 |
+|---|---|---|
+| 大盤 `/` | 最近一個交易日的收盤指數、K 線與均線、四大買賣點、近 10 日 | 盤中即時指數，每 10 秒更新 |
+| 個股 `/stock/:sid` | 同上，加基本資料 | 盤中即時價、成交量、報價時間 |
+| 即時報價 `/realtime` | 一張說明用途的登入／註冊卡片 | 自選股即時看板與委買委賣五檔 |
+
+前端配合的三個點：
+
+- `useLiveQuote` 未登入時不發請求（`enabled`），畫面自動落回原本就有的「最後收盤」路徑——
+  那條路徑本來就是為週末寫的，不是為了這個功能新加的。
+- 盤中／收盤那顆 tag 改看 `intraday`（畫面上真正是哪一種數字），不再看 `isMarketOpen()`。
+  否則未登入者在交易時段會看到標著「盤中」的昨日收盤。
+- `SignInPrompt` 兩種樣式：整頁版給 `/realtime`，行內版取代大盤／個股的「自動更新」按鈕。
+  兩者都把當前路徑放進 router state，登入或註冊完會直接回到原頁。
+
+後端擋的是 **401 而不是 403**，`app/deps.py` 有寫原因：前端攔截器只在 401 換發 token，
+403 會直接把人登出——一個每 10 秒輪詢的請求踩到這點會很難看。
+
+---
+
 ## 已知限制
 
+- **即時報價需要登入**，未登入只看得到最近一個交易日的收盤（頁面不會被擋掉，見上一節）。
 - **即時報價只在交易時段有效**（週一至週五 09:00–13:30）。非交易時段來源會回最後一筆或空值，UI 有提示。
 - **上櫃（TPEX）資料比上市晚一天**發布，屬於來源行為。
 - 首次查詢 1 年區間需要 12 個對外請求，受速率限制約需 **18 秒**；之後走快取。

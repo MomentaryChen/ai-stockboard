@@ -2,6 +2,7 @@ import { Link, Route, Routes, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from './api/client'
+import { useAuth } from './auth/AuthContext'
 import RequireAuth from './components/RequireAuth'
 import UserMenu from './components/UserMenu'
 import AdminStockCodes from './pages/AdminStockCodes'
@@ -32,6 +33,7 @@ function HealthIndicator() {
 
 export default function App() {
   const { pathname } = useLocation()
+  const { status } = useAuth()
 
   return (
     <div className="app">
@@ -47,8 +49,15 @@ export default function App() {
           <Link to="/stock/2330" className={pathname.startsWith('/stock') ? 'active' : ''}>
             個股分析
           </Link>
-          <Link to="/realtime" className={pathname.startsWith('/realtime') ? 'active' : ''}>
+          <Link
+            to="/realtime"
+            className={pathname.startsWith('/realtime') ? 'active' : ''}
+            title={status === 'anonymous' ? '即時報價需要登入' : undefined}
+          >
             即時報價
+            {/* Says so before the click rather than after it. Only once the
+                session is known to be absent -- 'loading' would flash it. */}
+            {status === 'anonymous' && <span className="nav-lock">需登入</span>}
           </Link>
         </nav>
         <div className="topbar-right">
