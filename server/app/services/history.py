@@ -16,7 +16,6 @@ Flow for GET /api/stocks/{sid}/history:
 import datetime
 import logging
 
-import twstock
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -24,6 +23,8 @@ from twstock.stock import TPEXFetcher, TWSEFetcher
 
 from app.config import get_settings
 from app.models import DailyPrice, FetchLog
+from app.services import codes as codes_service
+from app.services import market_index
 from app.throttle import twse_throttle
 
 logger = logging.getLogger(__name__)
@@ -38,10 +39,23 @@ class UnknownStockError(KeyError):
 
 
 def resolve_source(sid: str) -> str:
-    row = twstock.codes.get(sid)
-    if row is None:
+    """Which exchange fetcher this sid reports through.
+
+    Goes through the codes service rather than twstock's bundled table so a
+    freshly listed company resolves here too -- and so indices, which the
+    service already merges in, need no special case.
+    """
+    info = codes_service.get_stock(sid)
+    if info is None:
         raise UnknownStockError(sid)
-    return row.data_source
+    return info.data_source
+
+
+def _fetcher_for(sid: str, source: str):
+    """An index reports through its own TWSE endpoints, not STOCK_DAY."""
+    if market_index.is_index(sid):
+        return market_index.IndexFetcher()
+    return _FETCHERS[source]()
 
 
 def month_range(months: int, today: datetime.date | None = None) -> list[tuple[int, int]]:
@@ -73,7 +87,7 @@ def _is_stale(log: FetchLog, year: int, month: int, now: datetime.datetime) -> b
 
 def _fetch_month(source: str, sid: str, year: int, month: int) -> list:
     """One upstream request per attempt, each gated by the rate limiter."""
-    fetcher = _FETCHERS[source]()
+    fetcher = _fetcher_for(sid, source)
     for attempt in range(MAX_FETCH_ATTEMPTS):
         twse_throttle.acquire()
         try:

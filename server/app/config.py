@@ -39,6 +39,29 @@ class Settings(BaseSettings):
     throttle_max_calls: int = 3
     throttle_window_seconds: float = 5.5
 
+    # --- Listed-instrument table ---
+    # `stock_code` is reconciled with the exchanges' ISIN registry on startup
+    # and every interval after that. Disabling the sync leaves whatever the
+    # table already holds in place -- the API keeps working, it just stops
+    # learning about new listings.
+    stock_code_sync_enabled: bool = True
+    stock_code_sync_interval_hours: int = 24
+
+    # --- Auth / JWT ---
+    # JWT_SECRET deliberately has no usable default: when it is blank,
+    # app/security.py generates an ephemeral per-process secret and logs a
+    # warning, so a misconfigured deployment is loud but never exploitable.
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
+
+    # First ADMIN account, seeded at startup when both email and password are
+    # set. Leaving either blank skips seeding.
+    admin_username: str = "admin"
+    admin_email: str = ""
+    admin_password: str = ""
+
     @property
     def sqlalchemy_url(self) -> str:
         if self.database_url:

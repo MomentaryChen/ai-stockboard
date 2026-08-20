@@ -1,5 +1,8 @@
 export type DataSource = 'twse' | 'tpex'
 
+/** 四大買賣點規則版本. 'grs' 是修正過的參考行為，'twstock' 是套件原樣（供對照）。 */
+export type RuleSet = 'grs' | 'twstock'
+
 export interface StockInfo {
   code: string
   name: string
@@ -9,6 +12,8 @@ export interface StockInfo {
   isin: string
   start: string
   data_source: DataSource
+  /** false once the exchange stops listing the code; it stays chartable. */
+  is_active: boolean
 }
 
 export interface SearchResponse {
@@ -60,6 +65,7 @@ export interface BestFourPointResult {
 export interface TraditionalAnalysisResponse {
   sid: string
   name: string
+  rule_set: RuleSet
   as_of: string
   sample_size: number
   latest_close: number | null
@@ -100,4 +106,83 @@ export interface HealthResponse {
   status: 'ok' | 'degraded'
   database: string
   stock_codes_loaded: number
+}
+
+// ---------------------------------------------------------------------------
+// Accounts, tokens and watchlists
+// ---------------------------------------------------------------------------
+
+export type Role = 'ADMIN' | 'USER'
+
+export interface User {
+  id: number
+  username: string
+  email: string
+  phone: string | null
+  role: Role
+  is_active: boolean
+  created_at: string
+}
+
+export interface TokenResponse {
+  access_token: string
+  refresh_token: string
+  token_type: 'bearer'
+  /** Seconds the access token stays valid. */
+  expires_in: number
+  user: User
+}
+
+export interface UserListResponse {
+  total: number
+  users: User[]
+}
+
+export interface WatchlistResponse {
+  count: number
+  sids: string[]
+}
+
+/** --- 上市櫃名冊同步（ADMIN） --- */
+
+export type SyncStatus = 'synced' | 'skipped' | 'failed'
+export type SyncTrigger = 'startup' | 'schedule' | 'manual'
+
+export interface CodeSyncResponse {
+  status: SyncStatus
+  synced_at: string | null
+  active: number
+  inserted: number
+  updated: number
+  delisted: number
+  pruned: number
+  message: string | null
+}
+
+export interface SyncRun {
+  id: number
+  started_at: string
+  finished_at: string
+  duration_seconds: number
+  status: SyncStatus
+  trigger: SyncTrigger
+  /** markets that answered: 'twse' / 'tpex'. One of two means a partial run. */
+  sources: string[]
+  active: number
+  inserted: number
+  updated: number
+  delisted: number
+  pruned: number
+  message: string | null
+}
+
+export interface SyncRunsResponse {
+  enabled: boolean
+  interval_hours: number
+  last_success_at: string | null
+  /** null while the listing is still twstock's bundled snapshot. */
+  synced_at: string | null
+  active: number
+  total: number
+  runs: SyncRun[]
 }

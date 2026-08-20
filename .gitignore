@@ -21,13 +21,14 @@ build/
 htmlcov/
 
 # ---------------------------------------------------------------------------
-# Node / frontend
+# Node / frontend (pnpm)
 # ---------------------------------------------------------------------------
 node_modules/
 dist/
 dist-ssr/
 *.tsbuildinfo
 .vite/
+.pnpm-store/
 npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*

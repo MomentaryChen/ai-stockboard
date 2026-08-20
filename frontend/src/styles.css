@@ -297,6 +297,7 @@ table.data tbody tr:hover { background: var(--bg-input); }
 }
 .banner-error { background: rgba(240, 70, 74, 0.1); border-color: rgba(240, 70, 74, 0.35); color: #ff9a9c; }
 .banner-warn { background: rgba(230, 160, 30, 0.1); border-color: rgba(230, 160, 30, 0.35); color: #f0c274; }
+.banner-ok { background: rgba(34, 181, 115, 0.1); border-color: rgba(34, 181, 115, 0.35); color: #5fd6a1; }
 
 .center-note { padding: 60px 20px; text-align: center; color: var(--text-dim); }
 
@@ -326,3 +327,29 @@ table.data tbody tr:hover { background: var(--bg-input); }
 }
 .chart-tooltip .t-date { font-weight: 600; margin-bottom: 6px; }
 .chart-tooltip .t-row { display: flex; justify-content: space-between; gap: 16px; }
+
+/* ---------- auth / forms ---------- */
+.auth-page { display: flex; justify-content: center; padding-top: 40px; }
+.auth-card { width: 100%; max-width: 380px; }
+
+.form-stack { display: flex; flex-direction: column; gap: 14px; margin-top: 4px; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.field-hint { font-size: 11px; color: var(--text-dim); }
+
+.text-input:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* The accent-filled look .btn.active already has, but named for intent so a
+   form's primary action does not have to pretend to be a toggle. */
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { color: #fff; filter: brightness(1.12); }
+.btn-block { width: 100%; }
+
+/* Tables of users are text, not numbers, so undo the numeric right-align. */
+table.data td select, table.data td .btn { font-size: 12px; }
+table.data td:nth-child(2), table.data td:nth-child(3) { text-align: left; }
+table.data th:nth-child(2), table.data th:nth-child(3) { text-align: left; }

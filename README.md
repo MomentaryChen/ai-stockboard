@@ -1,6 +1,7 @@
 # ai-stockboard
 
-台股看板服務。查歷史 K 線、即時報價、個股資料，並對個股產生分析結果。
+台股看板服務。預設畫面是**台股大盤**（加權指數）看板，另可查個股歷史 K 線、即時報價與基本資料，
+並對大盤與個股產生同一套分析結果。
 
 分析分成兩種，可以互相對照：
 
@@ -13,9 +14,9 @@
 
 ```
 ai-stockboard/
-├── deployment/          docker-compose.yml + .env（DB 與 server 共用同一份設定）
-├── server/              FastAPI (uv)
-├── frontend/            React 19 + Vite + Recharts
+├── deployment/          docker-compose.yml + .env（DB、server、frontend 共用同一份設定）
+├── server/              FastAPI (uv) + Dockerfile
+├── frontend/            React 19 + Vite + Recharts（pnpm）+ Dockerfile / nginx.conf
 └── vendor/
     └── twstock/         行情資料來源（MIT，含原始 test/）
 ```
@@ -24,13 +25,13 @@ ai-stockboard/
 
 ## 快速開始
 
-需要 **Docker**、**uv**、**Node 18+**。
+需要 **Docker**、**uv**、**Node 22+** 與 **pnpm**（`corepack enable pnpm` 即可）。
 
 ```bash
-# 1. 資料庫
+# 1. 資料庫（開發時只起 db，前後端跑在本機才有 hot reload）
 cd deployment
 cp .env.example .env
-docker compose up -d
+docker compose up -d db
 docker compose ps                     # ai-stockboard-db ... (healthy)
 
 # 2. 後端  http://localhost:8000
@@ -40,18 +41,61 @@ uv run uvicorn app.main:app --reload --port 8000
 
 # 3. 前端  http://localhost:5173
 cd ../frontend
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
-打開 <http://localhost:5173>。API 文件在 <http://localhost:8000/docs>。
+打開 <http://localhost:5173>，進站就是大盤看板。API 文件在 <http://localhost:8000/docs>。
 
 前端 dev server 會把 `/api` proxy 到 `localhost:8000`，開發時不會遇到 CORS。
 
-### 單一服務部署
+---
+
+## 部署
+
+### 全部跑在 Docker
+
+三個服務都由 `deployment/docker-compose.yml` 定義，一行指令起完：
 
 ```bash
-cd frontend && npm run build      # 產生 frontend/dist
+cd deployment
+cp .env.example .env            # 還沒複製過的話
+docker compose up -d --build
+docker compose ps               # db / server / frontend 都要 (healthy)
+```
+
+打開 <http://localhost:8100>，進站就是大盤看板。
+
+| 服務 | 內容 | Host port |
+|---|---|---|
+| `db` | postgres:16-alpine，資料存在 `stockboard-pgdata` volume | `5433` |
+| `server` | FastAPI + uvicorn，`server/Dockerfile` | `8000` |
+| `frontend` | vite build 產物由 nginx 提供，`frontend/Dockerfile` | `8100` |
+
+nginx 把 `/api` 與 `/docs` proxy 到 `server:8000`，瀏覽器全程同源，所以 CORS 不會參與；
+其餘路徑 fallback 到 `index.html` 交給 react-router。啟動順序由 healthcheck 串起來：
+`db` healthy 才起 `server`，`server` healthy 才起 `frontend`。
+
+兩件與 build context 有關的事：
+
+- **server 的 build context 是專案根目錄**（`context: ..` + `dockerfile: server/Dockerfile`），
+  因為 `server/pyproject.toml` 以 editable path 依賴 `../vendor/twstock`，兩棵樹的相對位置要保留。
+- **frontend 的 build context 是 `frontend/`**，多階段建置：`node:22-alpine` 用 corepack 起 pnpm，跑 `pnpm install --frozen-lockfile && pnpm build`，
+  產物 COPY 進 `nginx:1.27-alpine`。最終 image 49 MB，不含 Node。
+
+容器內的 `POSTGRES_HOST` / `POSTGRES_PORT` 由 compose 覆寫成 `db` / `5432`；
+`.env` 裡那組 `localhost:5433` 是給「server 跑在本機」時用的，兩種跑法共用同一份檔案。
+
+改了程式碼要重新建置：
+
+```bash
+docker compose up -d --build server     # 或 frontend
+```
+
+### 單一服務部署（不用 Docker）
+
+```bash
+cd frontend && pnpm build         # 產生 frontend/dist
 cd ../server && uv run uvicorn app.main:app --port 8000
 ```
 
@@ -67,16 +111,180 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/stocks/search?q=&limit=` | 代碼／名稱搜尋 |
 | GET | `/api/stocks/{sid}` | 個股基本資料 |
 | GET | `/api/stocks/{sid}/history?months=6&force=false` | 歷史日成交 |
-| GET | `/api/stocks/{sid}/analysis/traditional?months=6` | 傳統分析：MA5/10/20/60 + 四大買賣點 |
+| GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點 |
 | GET | `/api/realtime?sids=2330,0050` | 即時報價（最多 20 檔） |
+| POST | `/api/auth/register` | 註冊，直接回一組 token |
+| POST | `/api/auth/login` | 登入，帳號或 Email 皆可 |
+| POST | `/api/auth/refresh` | 換發 token（會輪替 refresh token） |
+| POST | `/api/auth/logout` | 撤銷一組 refresh token |
+| GET / PATCH | `/api/auth/me` | 讀取／更新自己的資料 |
+| POST | `/api/auth/me/password` | 改密碼，並登出其他所有裝置 |
+| GET | `/api/users?q=&limit=&offset=` | 使用者列表（ADMIN） |
+| GET / PATCH / DELETE | `/api/users/{user_id}` | 檢視／改角色與狀態／刪除（ADMIN） |
+| GET / PUT | `/api/watchlist` | 自選股，整批讀寫（需登入） |
+| POST | `/api/stocks/sync?force=false` | 手動同步上市櫃名冊（**ADMIN**） |
+| GET | `/api/stocks/sync/runs?limit=50` | 名冊同步的執行紀錄（**ADMIN**） |
 
-AI 分析預定放在 `/api/stocks/{sid}/analysis/ai`，與傳統分析平行。
+`{sid}` 可以是個股代碼，也可以是大盤 `t00`。AI 分析預定放在 `/api/stocks/{sid}/analysis/ai`，與傳統分析平行。
+
+搜尋預設**排除認購(售)權證**（4.2 萬檔，佔全部代碼的 95%），加 `&include_warrants=true` 才會出現。
 
 ```bash
 curl 'http://localhost:8000/api/stocks/2330/history?months=3'
 curl 'http://localhost:8000/api/stocks/2330/analysis/traditional'
 curl 'http://localhost:8000/api/realtime?sids=2330,6488'
 ```
+
+---
+
+## 四大買賣點：兩套規則
+
+`rule_set` 決定用哪個版本，**預設 `grs`**：
+
+```bash
+curl 'http://localhost:8000/api/stocks/2330/analysis/traditional'                    # grs（預設）
+curl 'http://localhost:8000/api/stocks/2330/analysis/traditional?rule_set=twstock'   # 對照
+```
+
+回應會帶 `rule_set` 欄位，前端「四大買賣點」卡片右上角也可以直接切換。
+
+### 為什麼需要兩套
+
+`BestFourPoint` 不是 twstock 原創，是從 [toomore/grs](https://github.com/toomore/grs)
+（`grs/best_buy_or_sell.py`，MIT，Toomore Chiang）移植過來的。逐條比對後發現移植時掉了兩件事：
+
+**一、乖離轉折關卡失效。** grs 的 `bias_ratio()` 結尾有 `[0]`，把 `(bool, 轉折日, 值)` 裡的布林值取出來：
+
+```python
+# grs
+return self.data.check_moving_average_bias_ratio(..., positive_or_negative=...)[0]
+# twstock —— 少了 [0]，回傳整個 tuple
+return self.stock.ma_bias_ratio_pivot(self.stock.ma_bias_ratio(3, 6), position=position)
+```
+
+非空 tuple 恆為真，於是 `if self.mins_bias_ratio() and any(check)` 退化成 `any(check)`，前置條件形同不存在。
+
+**二、「量縮價不跌／價跌」比錯欄位。**
+
+| | grs | twstock |
+|---|---|---|
+| 量縮價不跌 | 今收 > **昨收** | 今收 > **昨開** |
+| 量縮價跌 | 今收 < **昨收** | 今收 < **昨開** |
+
+昨天收長紅時，一根實際下跌的黑 K 會被標成「價不跌」並可能出 Buy。
+
+其餘六條規則與 pivot 演算法本身（`ma_bias_ratio_pivot` vs grs 的 `__cal_ma_bias_ratio_point`）逐行等價，沒有問題。
+
+### 影響有多大
+
+兩萬組隨機價格序列跑下來：
+
+| | 乖離關卡通過 | 出訊號 |
+|---|---|---|
+| `grs`（修正版） | 30.9% | **22.3%** |
+| `twstock`（原樣） | 恆真 | **100%** |
+
+twstock 版在兩萬組裡**沒有一次回傳 Don't touch**，而且與 grs 版可能給出相反結論。
+
+### 修在哪裡
+
+`server/app/services/analysis/traditional.py` 的 `_GrsBestFourPoint`，用繼承覆寫三個方法。
+**`vendor/twstock/` 一行都沒動**——那份是刻意與 PyPI 1.5.1 保持 byte-identical 的快照。
+
+有一個差異刻意保留：grs 的均線四捨五入到小數 6 位，twstock 是 2 位。只在極接近的平手情況下才有差別，
+要對齊得連 `Analytics` 一起 fork，不值得。
+
+---
+
+## 大盤（加權指數）
+
+首頁 `/` 是大盤看板：即時指數、K 線與均線、四大買賣點、近 10 日。個股頁在 `/stock/:sid`，即時報價在 `/realtime`。
+
+大盤在後端就是一個 `sid` = **`t00`**，走的是跟個股完全相同的路由：
+
+```bash
+curl 'http://localhost:8000/api/stocks/t00'
+curl 'http://localhost:8000/api/stocks/t00/history?months=3'
+curl 'http://localhost:8000/api/stocks/t00/analysis/traditional'
+curl 'http://localhost:8000/api/realtime?sids=t00'
+```
+
+做得到這件事是因為 `server/app/services/market_index.py` 補上了 twstock 沒有的兩塊：
+
+- **看起來像一支股票**：`INDICES` 提供 twstock 上市櫃清單裡沒有的那一列，`codes_service` 查得到 `t00`，
+  於是 `/api/stocks/{sid}`、`/history`、`/analysis/traditional` 三個路由一行都不用改。
+  搜尋框打「大盤」「加權」「taiex」也會找到它。
+- **歷史資料自己抓**：指數不在 `STOCK_DAY` 端點裡，改抓 TWSE 的兩份月報表再依日期合併——
+  `MI_5MINS_HIST` 給開高低收（K 線要用），`FMTQIK` 給成交股數／金額／筆數與漲跌點數（四大買賣點的量能條件要用）。
+  合併後回傳 twstock 的 `DATATUPLE`，所以 `daily_price` 的快取、`fetch_log` 的月份記錄、傳統分析全部照舊運作。
+
+即時指數走 TWSE MIS 的 `tse_t00.tw` 頻道。twstock 是用上市櫃清單推 `tse_`／`otc_` 前綴的，
+清單裡沒有指數會被誤判成上櫃，所以頻道名寫在 `INDICES` 裡，由 `realtime_service` 直接指定。
+
+指數沒有 `nf`（全名）也沒有單量欄位，MIS 回的 payload 少那幾個 key，這部分在 service 層補掉。
+
+---
+
+## 上市櫃名冊為什麼自己維護
+
+twstock 把上市櫃名冊做成兩個 CSV 打包在套件裡，更新方式是 `__update_codes()`
+把檔案**原地覆寫回套件目錄**。這在容器裡行不通：那棵樹是 root 的，程式跑在 `appuser`，
+就算寫得進去也會在下次重啟消失。結果就是名冊會無聲地過期 —— 本專案 vendor 的那份停在
+**2026/03/31**，而 `codes_service.get_stock()` 是 history / analysis / watchlist 共用的守門員，
+所以那之後掛牌的每一檔都會回 404，看起來像「這支股票不存在」。
+
+實測那份快照漏掉 **57 檔**真實標的（20 檔股票、6 檔創新板、31 檔 ETF/ETN），
+包含 7855 和運租車、4178 永笙-KY、009826 貝萊德世界股票。
+
+所以名冊改放 PostgreSQL 的 `stock_code`，由 `server/app/services/code_sync.py` 維護：
+
+| 階段 | 行為 |
+|---|---|
+| seed | 表是空的就先灌 twstock 內建快照，**不碰網路** —— 沒有外網也開得起來 |
+| refresh | 啟動時與每 `STOCK_CODE_SYNC_INTERVAL_HOURS` 小時，抓 `isin.twse.com.tw` 上市(strMode=2)＋上櫃(strMode=4) 做 upsert |
+| retire | 名冊上消失的代碼標記 `is_active=false`，**不刪** —— `daily_price` 與 `watchlist_item` 還指著它，下市公司的歷史也還有價值 |
+| prune | 唯獨權證例外：一次同步就退役 29,062 檔，沒人看過期權證的線圖，過保留期（30 天）直接刪，表跟記憶體才有界 |
+
+### 怎麼知道這個 batch job 有沒有正常跑
+
+每一次嘗試 —— 包含「因為還新鮮所以略過」和「失敗」—— 都會寫進 `stock_code_sync_run`。
+這是必要的：同步失敗兩個禮拜跟同步「沒事可做」，對 `stock_code` 來說都是**沒有任何改變**，
+光看名冊本身分不出來。
+
+管理者登入後從右上角 **名冊同步** 進 `/admin/stock-codes`，可以看到：
+
+- 可查詢標的數、最後一次成功同步、排程間隔（或「已關閉」）
+- 每次執行的表格：開始時間、來源（啟動／排程／手動）、結果、耗時、新增／更新／下市／清除筆數、訊息
+- **立即同步** 按鈕（送 `force=true`，忽略間隔），跑完會順手讓 health 與搜尋快取失效
+
+三種狀態各代表什麼：
+
+| 結果 | 意思 |
+|---|---|
+| `已同步` | 真的抓了名冊並寫入 |
+| `已同步 (部分)` | 只有一個市場回應，寫了拿到的部分，但**刻意沒有退役任何代碼** |
+| `略過` | 排程醒來時名冊還在間隔內 —— 這是「批次工作還活著」的心跳 |
+| `失敗` | 兩個市場都連不上，既有資料原封不動 |
+
+超過兩個間隔沒有成功紀錄時，頁面上會出現警示橫幅。紀錄只保留最近 200 次。
+
+幾個刻意的決定：
+
+- **同步跑在背景 daemon thread**。首次抓取要 40 秒以上（上市那頁是 8MB HTML），
+  不能卡住 startup 或 compose 的 healthcheck。`/api/health` 一開機就會回應。
+- **只有兩個市場都抓成功才會 retire**。否則其中一邊失敗會把整個市場誤判成下市。
+- **失敗 10 分鐘後重試**，不是等滿 24 小時。
+- **新鮮度檢查**：重啟不會重抓，`max(synced_at)` 還在區間內就直接跳過。
+- **不跨 replica 協調**。最壞情況是多抓一次同樣的兩頁，upsert 是冪等的；
+  為此在 40 秒的爬取上壓一把鎖不划算。
+- 下市標的**仍可用完整代碼查到**（`get_stock` 照樣解析、線圖照畫），只是不再出現在搜尋的前綴／名稱比對裡。
+
+```bash
+# 手動同步（需要 ADMIN token）
+curl -X POST -H "Authorization: Bearer $TOKEN"      'http://localhost:8000/api/stocks/sync?force=true'
+```
+
+`/api/health` 的 `stock_codes_synced_at` 是 `null` 時，代表名冊還是 twstock 的內建快照，一次都沒對過。
 
 ---
 
@@ -147,9 +355,63 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `stockboard` | DB 帳密與資料庫名，容器與 server 共用 |
 | `POSTGRES_HOST` / `POSTGRES_PORT` | `localhost` / `5433` | server 連線位置；5433 避免撞到既有的 5432 |
 | `DATABASE_URL` | （未設） | 設了就蓋過上面組出來的連線字串，用來指向外部託管資料庫 |
-| `CORS_ORIGINS` | `http://localhost:5173,...` | 允許的來源 |
+| `SERVER_PORT` / `FRONTEND_PORT` | `8000` / `8100` | docker compose 對外公開的 port |
+| `CORS_ORIGINS` | `http://localhost:5173,...` | 允許的來源（走 nginx 時同源，用不到） |
 | `CURRENT_MONTH_TTL_SECONDS` | `900` | 當月資料快取秒數 |
 | `THROTTLE_MAX_CALLS` / `THROTTLE_WINDOW_SECONDS` | `3` / `5.5` | 上游速率限制 |
+| `JWT_SECRET` | （未設，啟動時隨機產生） | access token 的簽章密鑰，見下方「帳號與權限」 |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` / `REFRESH_TOKEN_EXPIRE_DAYS` | `30` / `7` | 兩種 token 的有效期 |
+| `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin` / （未設） / （未設） | 啟動時建立的第一個管理員，email 與密碼都設了才生效 |
+| `STOCK_CODE_SYNC_ENABLED` | `true` | 關掉就不再更新上市櫃名冊，API 照常但學不到新掛牌 |
+| `STOCK_CODE_SYNC_INTERVAL_HOURS` | `24` | 名冊同步間隔；`/admin/stock-codes` 會顯示這個值 |
+
+---
+
+## 帳號與權限
+
+帳號（username）、Email、密碼為必填，手機選填。角色只有 `ADMIN` 與 `USER` 兩種，
+現有的行情 API（`/api/health`、`/api/stocks/*`、`/api/realtime`）維持公開不需登入。
+
+### Token
+
+以 access + refresh 兩段式交換：
+
+- **Access token** 是 JWT，預設 30 分鐘，只帶 `sub`（使用者 id）。
+  角色**不放進 token**，`get_current_user` 每次都讀資料庫那一列——因此 ADMIN 把某人降權或停用時
+  **下一個 request 就生效**，不必等 token 過期。
+- **Refresh token** 是不透明隨機字串，資料庫只存 SHA-256 雜湊，預設 7 天。
+  每次 `/api/auth/refresh` 都會**輪替**：撤銷舊的、發新的一組。
+- 拿**已經輪替掉的** refresh token 再打一次，視為外洩，該使用者**所有** session 一次撤銷。
+  前端因此必須把 refresh 收斂成單一請求（`frontend/src/api/client.ts` 的 `refreshPromise`），
+  否則多個 API 同時過期會互相踩到，把使用者隨機登出。
+
+### 第一個管理員
+
+`deployment/.env` 設好 `ADMIN_EMAIL` 與 `ADMIN_PASSWORD`，server 啟動時就會建立。
+可重複啟動：
+
+- 帳號不存在 → 建立為 ADMIN
+- 帳號已存在 → **不會覆寫密碼**（否則 `.env` 等於一個永久的密碼重設後門），
+  但如果被降權或停用了會還原成啟用中的 ADMIN——這是刻意留的救援路徑
+
+`JWT_SECRET` 沒設時，server 仍然會啟動，改用一把隨程序產生的隨機密鑰並記一筆 WARNING。
+代價是**每次重啟所有人的 access token 失效**（refresh token 存在資料庫，客戶端會自動換發，使用者無感），
+而且**不能跑多個 uvicorn worker**（各自的密鑰不同，會互相拒絕）。正式環境請設定：
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+### 自選股
+
+登入後自選股存在資料庫（`watchlist_item`，最多 20 檔）；未登入則沿用 localStorage。
+第一次登入時會把 localStorage 那份**聯集**進帳號，然後清掉本機那份——
+不清的話，在同一台瀏覽器換帳號登入會把前一個人的清單帶進去。
+
+```bash
+curl -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' -d '{"identifier":"admin@example.com","password":"..."}'
+curl localhost:8000/api/watchlist -H "Authorization: Bearer $ACCESS_TOKEN"
+```
 
 ---
 
@@ -159,8 +421,28 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 - **上櫃（TPEX）資料比上市晚一天**發布，屬於來源行為。
 - 首次查詢 1 年區間需要 12 個對外請求，受速率限制約需 **18 秒**；之後走快取。
 - 四大買賣點需要至少 12 個交易日，不足時回傳「資料不足」。
-- 即時報價不寫入資料庫，只有歷史日成交落地。
-- 資料表用 `Base.metadata.create_all` 在啟動時建立。schema 目前穩定，日後要改欄位再導入 Alembic。
+- 即時報價不寫入資料庫，只有歷史日成交落地（大盤的日線同樣落在 `daily_price`，sid = `t00`）。
+- 大盤看板非交易時段顯示最近一個交易日的收盤。13:30 收盤到 TWSE 發布當日報表之間，
+  日線還是前一天，此時改用 MIS 的最後成交值，避免看板倒退一天。
+- 目前只接了加權指數。櫃買指數（`o00`）的即時頻道可用，但歷史報表端點不同，尚未接。
+- 上市櫃名冊每 24 小時才對一次。當天早上剛掛牌的標的最久要等一天才查得到，
+  急用可到 `/admin/stock-codes` 按「立即同步」（或打 `POST /api/stocks/sync?force=true`）。
+- 同步紀錄只保留最近 200 筆，且存在資料庫裡；沒有對外送告警，要靠人進管理頁看。
+- 四大買賣點只讀成交量、開盤、收盤三個欄位，且只比較最新一根與前一根 K 棒，沒有趨勢或部位概念；
+  籌碼面（法人買賣超、融資融券）完全不在裡面。
+- 同一套規則現在也跑在大盤 `t00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
+  指數的「量」是全市場成交股數，性質與單一個股的量能不同。
+- grs 與 twstock 都沒有為四大買賣點提供書目出處，可驗證的「標準」只到 grs 這份參考實作為止。
+- 資料表用 `Base.metadata.create_all` 在啟動時建立。它只建立**不存在的表**，永遠不會 ALTER 既有的表——
+  `app_user` 之類已經有資料的 schema 要改欄位，只能手動下 SQL 或導入 Alembic。
+- **Token 存在 localStorage**，任何 XSS 都讀得到。專案沒有 cookie/CSRF 基礎建設，
+  nginx 與 Vite proxy 都已原樣轉發 `Authorization`，所以先採 Bearer；access token 的短效期限制了外洩的影響範圍。
+- **登出後既有的 access token 仍然有效到過期為止**（最多 30 分鐘）。這是無狀態 token 的固有取捨；
+  refresh token 會立刻撤銷，所以 session 無法續期。
+- 使用者資料表名為 `app_user` 而不是 `user`——`user` 是 PostgreSQL 保留字，
+  而且 `select * from user` **不會報錯**，它回傳的是目前的連線帳號。手寫 SQL 時請用 `app_user`。
+- 前端用 **pnpm**（`packageManager` 欄位鎖 11.0.8，靠 corepack 生效）。pnpm 11 預設擋掉依賴的 install script，
+  `frontend/pnpm-workspace.yaml` 的 `allowBuilds` 放行 esbuild —— 沒有它 `vite build` 會缺平台 binary。
 - 前端 Recharts 停在 2.x（3.x 有 breaking changes）。K 線是 range bar + 自訂 shape，見 `frontend/src/components/Candlestick.tsx`。
 
 ## 資料檢查
@@ -170,6 +452,7 @@ cd deployment
 docker compose exec db psql -U stockboard -d stockboard \
   -c "select sid, count(*), min(date), max(date) from daily_price group by sid;"
 docker compose exec db psql -U stockboard -d stockboard -c "select * from fetch_log order by sid, year, month;"
+docker compose exec db psql -U stockboard -d stockboard -c "select id, username, email, role, is_active from app_user order by id;"
 ```
 
 清掉快取重來：

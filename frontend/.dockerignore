@@ -1,0 +1,7 @@
+node_modules
+dist
+*.tsbuildinfo
+.vite
+.pnpm-store
+npm-debug.log*
+pnpm-debug.log*

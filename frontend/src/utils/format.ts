@@ -5,6 +5,15 @@ export function fmtPrice(value: number | null | undefined, digits = 2): string {
   return value.toFixed(digits)
 }
 
+/** Index levels are five digits -- group them so 44,933.74 stays readable. */
+export function fmtIndex(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '--'
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })
+}
+
 export function fmtInt(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '--'
   return value.toLocaleString('en-US')

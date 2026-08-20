@@ -1,0 +1,19 @@
+# Build context for server/Dockerfile is the repository root -- keep the local
+# virtualenvs, caches and the Node tree out of it.
+.git
+.gitignore
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+frontend/node_modules
+frontend/dist
+frontend/.pnpm-store
+**/*.tsbuildinfo
+
+deployment/.env
+**/*.log

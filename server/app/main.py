@@ -17,9 +17,11 @@ from sqlalchemy import text
 
 from app import models  # noqa: F401  -- registers tables on Base.metadata
 from app.config import get_settings
-from app.db import Base, engine
-from app.routers import analysis, history, realtime, stocks
+from app.db import Base, SessionLocal, engine
+from app.routers import analysis, auth, history, realtime, stocks, users, watchlist
 from app.schemas import HealthResponse
+from app.services import auth as auth_service
+from app.services import code_sync
 from app.services import codes as codes_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -37,6 +39,18 @@ async def lifespan(app: FastAPI):
     except Exception:
         # Let the app boot so /api/health can report *why* the DB is unreachable.
         logger.exception("Could not create tables -- is PostgreSQL running?")
+
+    try:
+        with SessionLocal() as db:
+            auth_service.seed_admin(db)
+    except Exception:
+        # Same reasoning: a failed seed must not take the whole service down.
+        logger.exception("Could not seed the ADMIN account")
+
+    # Seeds `stock_code` and reconciles it with the exchanges' ISIN registry.
+    # Runs on its own thread: the first scrape takes the better part of a
+    # minute and must not delay the port opening or the container healthcheck.
+    code_sync.start_scheduler()
     yield
 
 
@@ -62,8 +76,13 @@ app.include_router(stocks.router)
 app.include_router(history.router)
 app.include_router(analysis.router)
 app.include_router(realtime.router)
+app.include_router(auth.router)
+app.include_router(users.router)
+app.include_router(watchlist.router)
 
 
+# Deliberately unauthenticated: the compose healthcheck polls this, and a 401
+# here would leave the server container unhealthy and the frontend never started.
 @app.get("/api/health", response_model=HealthResponse, tags=["meta"])
 def health() -> HealthResponse:
     try:
@@ -79,6 +98,9 @@ def health() -> HealthResponse:
         status=status,
         database=database,
         stock_codes_loaded=codes_service.code_count(),
+        # Read off the cached listing, so this costs no extra query. None means
+        # the listing on offer is still twstock's bundled snapshot.
+        stock_codes_synced_at=codes_service.last_synced_at(),
     )
 
 
