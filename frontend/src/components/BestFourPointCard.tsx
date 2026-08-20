@@ -37,6 +37,9 @@ export default function BestFourPointCard({
   ruleSet?: RuleSet
   onRuleSetChange?: (next: RuleSet) => void
 }) {
+  const holdWhy =
+    result.signal === 'hold' && result.label === "Don't touch" && result.reasons.length > 0
+
   return (
     <section className="card">
       <div className="row-between wrap" style={{ marginBottom: 12 }}>
@@ -64,7 +67,7 @@ export default function BestFourPointCard({
       <div className={`signal signal-${result.signal}`}>{result.label}</div>
 
       <p className="dim" style={{ margin: '10px 0 0' }}>
-        {SIGNAL_HINT[result.signal]}
+        {holdWhy ? '未達買進或賣出門檻' : SIGNAL_HINT[result.signal]}
         {asOf ? ` · 資料截至 ${asOf}` : ''}
         {sampleSize ? ` · ${sampleSize} 個交易日` : ''}
       </p>

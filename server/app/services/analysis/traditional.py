@@ -164,6 +164,70 @@ def _engine(stock: _CachedStock, rule_set: str) -> BestFourPoint:
     return BestFourPoint(stock) if rule_set == "twstock" else _GrsBestFourPoint(stock)
 
 
+def _bias_sample(stock: _CachedStock) -> list[float]:
+    return stock.ma_bias_ratio(3, 6)[-5:]
+
+
+def _buy_gate_reason(stock: _CachedStock) -> str:
+    sample = _bias_sample(stock)
+    if max(sample) >= 0:
+        return "買點未成立：近 5 日並非持續超賣（3 日均未全部低於 6 日均）"
+    if sample.index(min(sample)) == len(sample) - 1:
+        return "買點未成立：乖離仍在探底（谷底在今天，轉折尚未確認）"
+    return "買點未成立：超賣谷底不在昨日或前日，轉折窗口已過"
+
+
+def _sell_gate_reason(stock: _CachedStock) -> str:
+    sample = _bias_sample(stock)
+    if max(sample) <= 0:
+        return "賣點未成立：近 5 日沒有超買（3 日均未高於 6 日均）"
+    if sample.index(max(sample)) == len(sample) - 1:
+        return "賣點未成立：乖離仍在走高（高點在今天，轉折尚未確認）"
+    return "賣點未成立：超買高點不在昨日或前日，轉折窗口已過"
+
+
+def _hold_reasons(engine: BestFourPoint, rule_set: str) -> list[str]:
+    """Explain a None verdict so the card can show why there is no Buy/Sell."""
+    buy_hits = any(
+        [
+            engine.best_buy_1(),
+            engine.best_buy_2(),
+            engine.best_buy_3(),
+            engine.best_buy_4(),
+        ]
+    )
+    sell_hits = any(
+        [
+            engine.best_sell_1(),
+            engine.best_sell_2(),
+            engine.best_sell_3(),
+            engine.best_sell_4(),
+        ]
+    )
+
+    # twstock's bias_ratio() is an always-true tuple, so Don't touch only means
+    # none of the four buy *and* none of the four sell conditions matched.
+    if rule_set == "twstock":
+        reasons = []
+        if not buy_hits:
+            reasons.append("四大買點條件皆不符合")
+        if not sell_hits:
+            reasons.append("四大賣點條件皆不符合")
+        return reasons
+
+    reasons = []
+    if not engine.mins_bias_ratio():
+        reasons.append(_buy_gate_reason(engine.stock))
+    elif not buy_hits:
+        reasons.append("已通過買點乖離關卡，但四大買點條件皆不符合")
+
+    if not engine.plus_bias_ratio():
+        reasons.append(_sell_gate_reason(engine.stock))
+    elif not sell_hits:
+        reasons.append("已通過賣點乖離關卡，但四大賣點條件皆不符合")
+    return reasons
+
+
 def best_four_point(
     stock: _CachedStock, rule_set: str = DEFAULT_RULE_SET
 ) -> BestFourPointResult:
@@ -174,9 +238,14 @@ def best_four_point(
             reasons=[f"需要至少 {MIN_SAMPLES_FOR_BFP} 個交易日才能判斷"],
         )
 
-    result = _engine(stock, rule_set).best_four_point()
+    engine = _engine(stock, rule_set)
+    result = engine.best_four_point()
     if result is None:
-        return BestFourPointResult(signal="hold", label="Don't touch", reasons=[])
+        return BestFourPointResult(
+            signal="hold",
+            label="Don't touch",
+            reasons=_hold_reasons(engine, rule_set),
+        )
 
     is_buy, why = result
     reasons = [w.strip() for w in why.split(",") if w.strip()]
