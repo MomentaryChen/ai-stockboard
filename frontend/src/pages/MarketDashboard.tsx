@@ -7,6 +7,7 @@ import type { RuleSet } from '../api/types'
 import BestFourPointCard from '../components/BestFourPointCard'
 import MaPanel from '../components/MaPanel'
 import PriceChart, { buildChartRows } from '../components/PriceChart'
+import SignInPrompt from '../components/SignInPrompt'
 import StockSearch from '../components/StockSearch'
 import VolumeChart from '../components/VolumeChart'
 import { POLL_MS, useLiveQuote } from '../hooks/useLiveQuote'
@@ -50,6 +51,8 @@ export default function MarketDashboard() {
   const lastClose = rows.at(-1)
   const {
     marketOpen,
+    locked,
+    sessionLabel,
     intraday,
     price: level,
     change,
@@ -98,7 +101,7 @@ export default function MarketDashboard() {
             <span className="sname" style={{ fontSize: 22, color: 'var(--text)' }}>
               加權指數
             </span>
-            <span className="tag">{marketOpen ? '盤中' : '收盤'}</span>
+            <span className="tag">{sessionLabel}</span>
             <span className="dim">發行量加權股價指數 · TAIEX</span>
           </div>
 
@@ -111,16 +114,22 @@ export default function MarketDashboard() {
               </span>
             </div>
 
-            <div className="row wrap">
-              <button
-                type="button"
-                className={`btn btn-sm ${live ? 'active' : ''}`}
-                onClick={() => setLive((v) => !v)}
-              >
-                {live ? `自動更新中 (每 ${POLL_MS / 1000} 秒)` : '已暫停'}
-              </button>
-              {isFetching && <span className="spinner" />}
-            </div>
+            {/* Signed out there is nothing to poll, so the toggle gives way to
+                the invitation rather than sitting there dead. */}
+            {locked ? (
+              <SignInPrompt compact title="登入看即時指數" />
+            ) : (
+              <div className="row wrap">
+                <button
+                  type="button"
+                  className={`btn btn-sm ${live ? 'active' : ''}`}
+                  onClick={() => setLive((v) => !v)}
+                >
+                  {live ? `自動更新中 (每 ${POLL_MS / 1000} 秒)` : '已暫停'}
+                </button>
+                {isFetching && <span className="spinner" />}
+              </div>
+            )}
           </div>
         </div>
 
@@ -153,10 +162,16 @@ export default function MarketDashboard() {
           </div>
         </div>
 
-        {!marketOpen && (
+        {locked ? (
           <p className="dim" style={{ margin: '12px 0 0' }}>
-            非交易時段（台股 09:00–13:30）顯示最近一個交易日的收盤，成交金額與成交量為當日結算值。
+            以上為最近一個交易日的收盤資料。登入後可看盤中即時指數，每 {POLL_MS / 1000} 秒自動更新。
           </p>
+        ) : (
+          !marketOpen && (
+            <p className="dim" style={{ margin: '12px 0 0' }}>
+              非交易時段（台股 09:00–13:30）顯示最近一個交易日的收盤，成交金額與成交量為當日結算值。
+            </p>
+          )
         )}
       </section>
 

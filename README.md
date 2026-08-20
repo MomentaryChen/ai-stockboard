@@ -112,7 +112,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/stocks/{sid}` | 個股基本資料 |
 | GET | `/api/stocks/{sid}/history?months=6&force=false` | 歷史日成交 |
 | GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點 |
-| GET | `/api/realtime?sids=2330,0050` | 即時報價（最多 20 檔） |
+| GET | `/api/realtime?sids=2330,0050` | 即時報價，最多 20 檔（**需登入**） |
 | POST | `/api/auth/register` | 註冊，直接回一組 token |
 | POST | `/api/auth/login` | 登入，帳號或 Email 皆可 |
 | POST | `/api/auth/refresh` | 換發 token（會輪替 refresh token） |
@@ -133,7 +133,9 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 ```bash
 curl 'http://localhost:8000/api/stocks/2330/history?months=3'
 curl 'http://localhost:8000/api/stocks/2330/analysis/traditional'
-curl 'http://localhost:8000/api/realtime?sids=2330,6488'
+
+# 即時報價要帶 access token，其餘行情端點不用
+curl 'http://localhost:8000/api/realtime?sids=2330,6488' -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
 ---
@@ -200,6 +202,7 @@ twstock 版在兩萬組裡**沒有一次回傳 Don't touch**，而且與 grs 版
 ## 大盤（加權指數）
 
 首頁 `/` 是大盤看板：即時指數、K 線與均線、四大買賣點、近 10 日。個股頁在 `/stock/:sid`，即時報價在 `/realtime`。
+即時的部分需要登入（見〈[Realtime quotes require sign-in](#realtime-quotes-require-sign-in)〉），K 線與分析則不用。
 
 大盤在後端就是一個 `sid` = **`t00`**，走的是跟個股完全相同的路由：
 
@@ -207,7 +210,7 @@ twstock 版在兩萬組裡**沒有一次回傳 Don't touch**，而且與 grs 版
 curl 'http://localhost:8000/api/stocks/t00'
 curl 'http://localhost:8000/api/stocks/t00/history?months=3'
 curl 'http://localhost:8000/api/stocks/t00/analysis/traditional'
-curl 'http://localhost:8000/api/realtime?sids=t00'
+curl 'http://localhost:8000/api/realtime?sids=t00' -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
 做得到這件事是因為 `server/app/services/market_index.py` 補上了 twstock 沒有的兩塊：
@@ -371,7 +374,7 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 ## 帳號與權限
 
 帳號（username）、Email、密碼為必填，手機選填。角色只有 `ADMIN` 與 `USER` 兩種，
-現有的行情 API（`/api/health`、`/api/stocks/*`、`/api/realtime`）維持公開不需登入。
+行情 API 中 `/api/health` 與 `/api/stocks/*` 維持公開，只有 `/api/realtime` 需要登入。
 
 ### Token
 
@@ -435,6 +438,9 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 第一次登入時會把 localStorage 那份**聯集**進帳號，然後清掉本機那份——
 不清的話，在同一台瀏覽器換帳號登入會把前一個人的清單帶進去。
 
+`/realtime` 改成需要登入之後，未登入已經沒有介面可以編輯自選股，
+localStorage 那條路留著是為了把**這個改動之前**存下來的清單接進帳號，`useWatchlist` 的兩套儲存不需要動。
+
 ```bash
 curl -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' -d '{"identifier":"admin@example.com","password":"..."}'
 curl localhost:8000/api/watchlist -H "Authorization: Bearer $ACCESS_TOKEN"
@@ -442,8 +448,51 @@ curl localhost:8000/api/watchlist -H "Authorization: Bearer $ACCESS_TOKEN"
 
 ---
 
+## Realtime quotes require sign-in
+
+`/api/realtime` is the only market-data route behind a sign-in. History, search
+and the rule analysis all answer out of the PostgreSQL cache, but a quote is
+worthless unless it is fresh, so every call genuinely reaches TWSE MIS and spends
+part of a budget the **whole service shares** -- the upstream limit is 3 requests
+per 5 seconds per source IP, and every open board burns one every 10 seconds.
+Requiring an account is what keeps that budget attributable.
+
+Nobody is thrown out of a page:
+
+| Page | Signed out | What signing in adds |
+|---|---|---|
+| 大盤 `/` | Last trading day's close, K-line and moving averages, 四大買賣點, last 10 days | Intraday index level, refreshed every 10s |
+| 個股 `/stock/:sid` | Same, plus the instrument's basics | Intraday price, volume, quote timestamp |
+| 即時報價 `/realtime` | A card explaining what the page offers, with sign-in / register | The watchlist board and bid/ask depth |
+
+Three things on the frontend make that work:
+
+- `useLiveQuote` issues no request while signed out (`enabled`), so the view falls
+  back to the last-close path that already existed -- written for weekends, not
+  added for this feature.
+- The 盤中 / 收盤 badge reads `intraday` (what the numbers on screen actually are)
+  rather than `isMarketOpen()`. Without this, a signed-out visitor during market
+  hours would see yesterday's close labelled 盤中.
+- `SignInPrompt` has two variants: full-page for `/realtime`, inline in place of
+  the 自動更新 toggle on 大盤 / 個股. Both put the current path into router state,
+  so signing in or registering returns to the page the visitor started on.
+
+With no token, or an expired one, the server answers **401 rather than 403** --
+`app/deps.py` records why: the frontend interceptor refreshes on 401 and does not
+retry on 403, and a request that repeats every 10 seconds cannot afford to be
+signed out mid-poll.
+
+`/api/realtime` takes `get_current_user`, so it also inherits that dependency's
+403: `Password reset required`, for an account still holding an ADMIN-generated
+password. The frontend never reaches it -- `<PasswordGate>` wraps the whole route
+table, pinning such an account to `/change-password`, so the 大盤 and 個股 pages
+never render and nothing polls.
+
+---
+
 ## 已知限制
 
+- **即時報價需要登入**，未登入只看得到最近一個交易日的收盤（頁面不會被擋掉，見上一節）。
 - **即時報價只在交易時段有效**（週一至週五 09:00–13:30）。非交易時段來源會回最後一筆或空值，UI 有提示。
 - **上櫃（TPEX）資料比上市晚一天**發布，屬於來源行為。
 - 首次查詢 1 年區間需要 12 個對外請求，受速率限制約需 **18 秒**；之後走快取。

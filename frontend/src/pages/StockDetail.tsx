@@ -8,6 +8,7 @@ import BestFourPointCard from '../components/BestFourPointCard'
 import DividendCard from '../components/DividendCard'
 import MaPanel from '../components/MaPanel'
 import PriceChart, { buildChartRows } from '../components/PriceChart'
+import SignInPrompt from '../components/SignInPrompt'
 import StockSearch from '../components/StockSearch'
 import VolumeChart from '../components/VolumeChart'
 import { POLL_MS, useLiveQuote } from '../hooks/useLiveQuote'
@@ -55,7 +56,8 @@ export default function StockDetail() {
   const lastClose = rows.at(-1)
   const {
     quote,
-    marketOpen,
+    locked,
+    sessionLabel,
     intraday,
     price,
     change,
@@ -103,7 +105,7 @@ export default function StockDetail() {
               {history.data?.name ?? analysis.data?.name ?? quote?.name ?? ''}
             </span>
             {history.data && <span className="tag">{history.data.source.toUpperCase()}</span>}
-            <span className="tag">{marketOpen ? '盤中' : '收盤'}</span>
+            <span className="tag">{sessionLabel}</span>
           </div>
 
           <div className="row wrap" style={{ gap: 16 }}>
@@ -115,16 +117,22 @@ export default function StockDetail() {
               </span>
             </div>
 
-            <div className="row wrap">
-              <button
-                type="button"
-                className={`btn btn-sm ${live ? 'active' : ''}`}
-                onClick={() => setLive((v) => !v)}
-              >
-                {live ? `自動更新中 (每 ${POLL_MS / 1000} 秒)` : '已暫停'}
-              </button>
-              {isFetching && <span className="spinner" />}
-            </div>
+            {/* Signed out there is nothing to poll, so the toggle gives way to
+                the invitation rather than sitting there dead. */}
+            {locked ? (
+              <SignInPrompt compact title="登入看即時報價" />
+            ) : (
+              <div className="row wrap">
+                <button
+                  type="button"
+                  className={`btn btn-sm ${live ? 'active' : ''}`}
+                  onClick={() => setLive((v) => !v)}
+                >
+                  {live ? `自動更新中 (每 ${POLL_MS / 1000} 秒)` : '已暫停'}
+                </button>
+                {isFetching && <span className="spinner" />}
+              </div>
+            )}
           </div>
         </div>
 
@@ -169,6 +177,12 @@ export default function StockDetail() {
             </div>
           )}
         </div>
+
+        {locked && (
+          <p className="dim" style={{ margin: '12px 0 0' }}>
+            以上為最近一個交易日的收盤資料。登入後可看盤中即時報價與委買委賣五檔。
+          </p>
+        )}
       </section>
 
       <div className="grid-detail">
