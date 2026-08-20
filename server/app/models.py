@@ -1,9 +1,7 @@
 """Database tables.
 
 `stock_code` mirrors the exchanges' ISIN registry -- every instrument they
-list, and the gate every other lookup passes through. `stock_code_sync_run`
-is that mirror's audit trail: one row per reconciliation attempt, which is the
-only way to tell a healthy nightly job from one that has been failing quietly.
+list, and the gate every other lookup passes through.
 `daily_price` holds one row per (stock, trading day) -- the market history this
 service owns, and what every analysis engine reads from.
 `fetch_log` records which (stock, year, month) buckets have already been pulled
@@ -11,6 +9,12 @@ from the exchange, which is what lets us skip the network on repeat requests.
 `dividend_event` is one ex-right / ex-dividend day per stock; `dividend_fetch_log`
 is the same kind of bucket stamp `fetch_log` is, so a year of TWSE events is
 pulled once.
+
+`job_schedule` and `job_run` carry the background jobs: when each one is meant
+to fire (admin-editable, which is why it is a table and not just an env var)
+and what happened every time it did. The run log is the only way to tell a
+healthy nightly job from one that has been failing quietly, because both leave
+the tables they maintain untouched.
 
 `app_user`, `refresh_token` and `watchlist_item` carry the account system: who
 may sign in, which refresh tokens are still live, and what each user watches.
@@ -33,6 +37,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -45,10 +50,10 @@ from app.db import Base
 # than a date that would imply the listing is current.
 SEED_SYNCED_AT = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 
-# How many sync attempts `stock_code_sync_run` keeps. Enough to cover a couple
-# of months of a daily job plus any manual runs, and small enough that the
-# admin view never needs pagination.
-MAX_SYNC_RUNS_KEPT = 200
+# How many attempts `job_run` keeps *per job*. Enough to cover a couple of
+# months of a daily job plus any manual runs, and small enough that the admin
+# view never needs pagination.
+MAX_JOB_RUNS_KEPT = 200
 
 
 class StockCode(Base):
@@ -97,42 +102,113 @@ class StockCode(Base):
     )
 
 
-class StockCodeSyncRun(Base):
-    """One `stock_code` reconciliation attempt, successful or not.
+# Every background job is scheduled one of two ways. `interval` fires every N
+# minutes from the last attempt; `daily` fires at a wall-clock time, which is
+# what you actually want for a market job -- "02:30 每天" survives restarts,
+# whereas "every 24h" drifts to whenever the container last booted.
+SCHEDULE_INTERVAL = "interval"
+SCHEDULE_DAILY = "daily"
+SCHEDULE_KINDS = (SCHEDULE_INTERVAL, SCHEDULE_DAILY)
 
-    Without this the batch job is invisible: a scrape that has been failing for
-    a fortnight looks exactly like one that had nothing to do, because both
-    leave `stock_code` untouched. Skipped runs are recorded too -- they are the
-    heartbeat that says the scheduler is still alive.
+JOB_STATUSES = ("success", "skipped", "failed")
+JOB_TRIGGERS = ("startup", "schedule", "manual")
 
-    Trimmed to the most recent `MAX_SYNC_RUNS_KEPT` rows on every write, so it
-    stays a rolling window rather than a table nobody ever prunes.
+
+class JobSchedule(Base):
+    """When one background job fires. Written by admins, read by the scheduler.
+
+    The job *definitions* live in code (`app/services/jobs/registry.py`); this
+    table only carries the parts an operator is allowed to change, and only
+    once they have changed something -- a job with no row here runs on the
+    defaults its definition declares.
+
+    Deliberately the source of truth over the environment variables that seed
+    it: a schedule edited in the UI has to survive a container restart, and an
+    env var cannot be written back to from a running process. The env values
+    stay meaningful as the first-boot defaults.
+
+    `updated_by` stores the username as text rather than a foreign key. It is
+    an audit trail, and it must still read correctly after that account is
+    deleted.
     """
 
-    __tablename__ = "stock_code_sync_run"
+    __tablename__ = "job_schedule"
+
+    # Matches JobDefinition.id -- an identifier from code, never user input.
+    job_id: Mapped[str] = mapped_column(String(48), primary_key=True)
+
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+
+    kind: Mapped[str] = mapped_column(
+        String(16), default=SCHEDULE_INTERVAL, server_default=SCHEDULE_INTERVAL
+    )
+    # Used when kind == interval. Bounds are enforced per job by the registry,
+    # not here: a five-minute listing sync would get us banned by TWSE, while
+    # five minutes is perfectly reasonable for a cleanup job.
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=1440)
+    # Used when kind == daily: "HH:MM" in `SCHEDULER_TIMEZONE`. Stored as text
+    # because it is a wall-clock time with no date, and Time columns drag
+    # timezone semantics along that we would only have to strip again.
+    daily_at: Mapped[str] = mapped_column(String(5), default="03:00")
+
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(32))
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind in ('interval', 'daily')", name="ck_job_schedule_kind"
+        ),
+        CheckConstraint("interval_minutes > 0", name="ck_job_schedule_interval"),
+    )
+
+
+class JobRun(Base):
+    """One attempt at one background job, successful or not.
+
+    Without this the batch jobs are invisible: a listing sync that has been
+    failing for a fortnight looks exactly like one that had nothing to do,
+    because both leave `stock_code` untouched. Skipped runs are recorded too --
+    they are the heartbeat that says the scheduler is still alive.
+
+    `stats` is JSONB rather than columns because every job counts different
+    things (the sync counts 新增/下市, a cleanup counts deleted rows), and the
+    admin table renders whatever keys the job's definition declares labels for.
+
+    `actor` is the username that pressed the button, kept for manual runs only.
+    Together with `job_schedule.updated_by` it answers "who made this job do
+    that", which is the question an audit of an admin-only feature asks.
+
+    Trimmed to the most recent `MAX_JOB_RUNS_KEPT` rows *per job* on every
+    write, so it stays a rolling window rather than a table nobody ever prunes.
+    """
+
+    __tablename__ = "job_run"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(48))
 
     started_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True))
 
-    status: Mapped[str] = mapped_column(String(16))  # synced / skipped / failed
+    status: Mapped[str] = mapped_column(String(16))  # success / skipped / failed
     trigger: Mapped[str] = mapped_column(String(16))  # startup / schedule / manual
+    actor: Mapped[str | None] = mapped_column(String(32))
 
-    # Which markets answered this time. A run that saw only one of them writes
-    # what it got but retires nothing, and this is how you tell that apart from
-    # a clean run afterwards.
-    sources: Mapped[str] = mapped_column(String(32), default="")
-
-    active: Mapped[int] = mapped_column(Integer, default=0)
-    inserted: Mapped[int] = mapped_column(Integer, default=0)
-    updated: Mapped[int] = mapped_column(Integer, default=0)
-    delisted: Mapped[int] = mapped_column(Integer, default=0)
-    pruned: Mapped[int] = mapped_column(Integer, default=0)
+    # {"inserted": 12, "delisted": 3, ...} -- keys are job-specific.
+    stats: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
 
     message: Mapped[str | None] = mapped_column(String(255))
 
-    __table_args__ = (Index("ix_stock_code_sync_run_started", "started_at"),)
+    __table_args__ = (
+        # The admin view reads one job's newest rows; the scheduler reads the
+        # single newest row to work out when the next fire is due.
+        Index("ix_job_run_job_started", "job_id", "started_at"),
+        CheckConstraint(
+            "status in ('success', 'skipped', 'failed')", name="ck_job_run_status"
+        ),
+    )
 
 
 class DailyPrice(Base):

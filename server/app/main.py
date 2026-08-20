@@ -19,11 +19,22 @@ from app import models  # noqa: F401  -- registers tables on Base.metadata
 from app import schema_patches
 from app.config import get_settings
 from app.db import Base, SessionLocal, engine
-from app.routers import analysis, auth, dividends, history, realtime, stocks, users, watchlist
+from app.routers import (
+    analysis,
+    auth,
+    dividends,
+    history,
+    jobs,
+    realtime,
+    stocks,
+    users,
+    watchlist,
+)
 from app.schemas import HealthResponse
 from app.services import auth as auth_service
-from app.services import code_sync
 from app.services import codes as codes_service
+from app.services.jobs import scheduler as job_scheduler
+from app.services.jobs import store as job_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -51,10 +62,19 @@ async def lifespan(app: FastAPI):
         # Same reasoning: a failed seed must not take the whole service down.
         logger.exception("Could not seed the ADMIN account")
 
-    # Seeds `stock_code` and reconciles it with the exchanges' ISIN registry.
-    # Runs on its own thread: the first scrape takes the better part of a
-    # minute and must not delay the port opening or the container healthcheck.
-    code_sync.start_scheduler()
+    try:
+        with SessionLocal() as db:
+            job_store.backfill_legacy_sync_runs(db)
+    except Exception:
+        # Only the audit trail of the old single-job table; losing it must not
+        # stop the service from booting.
+        logger.exception("Could not backfill the legacy sync-run history")
+
+    # Background jobs -- among them the one that seeds `stock_code` and
+    # reconciles it with the exchanges' ISIN registry. Each runs on its own
+    # thread: the first scrape takes the better part of a minute and must not
+    # delay the port opening or the container healthcheck.
+    job_scheduler.start()
     yield
 
 
@@ -77,6 +97,7 @@ app.add_middleware(
 )
 
 app.include_router(stocks.router)
+app.include_router(jobs.router)
 app.include_router(history.router)
 app.include_router(dividends.router)
 app.include_router(analysis.router)

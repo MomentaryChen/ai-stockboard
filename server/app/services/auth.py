@@ -318,6 +318,27 @@ def _purge_stale_tokens(db: Session, user_id: int) -> None:
     )
 
 
+def purge_dead_refresh_tokens(db: Session) -> int:
+    """Delete every refresh token nobody can do anything with, for every user.
+
+    The per-user version above only runs when that user signs in, so the rows
+    of an account that stopped logging in three months ago sit there forever.
+    This is the same predicate applied across the table, and it is what the
+    `refresh_token_cleanup` job calls.
+
+    Revoked-but-recent rows are deliberately spared: reuse detection needs them
+    to still be there, or a replayed token looks like one we never issued.
+    """
+    cutoff = _now() - datetime.timedelta(days=REVOKED_RETENTION_DAYS)
+    result = db.execute(
+        delete(RefreshToken).where(
+            or_(RefreshToken.expires_at < _now(), RefreshToken.revoked_at < cutoff)
+        )
+    )
+    db.commit()
+    return result.rowcount or 0
+
+
 def issue_tokens(db: Session, user: AppUser) -> tuple[str, str, int]:
     """A fresh (access, refresh, expires_in) triple for an authenticated user."""
     access_token, expires_in = security.create_access_token(user.id)

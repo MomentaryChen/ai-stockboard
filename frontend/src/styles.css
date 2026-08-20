@@ -333,6 +333,17 @@ table.data tbody tr:hover { background: var(--bg-input); }
 .auth-card { width: 100%; max-width: 380px; }
 
 .form-stack { display: flex; flex-direction: column; gap: 14px; margin-top: 4px; }
+/* The job console lists every job side by side; one column once a card would
+   be narrower than its schedule row. */
+.job-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+  gap: 16px;
+}
+@media (max-width: 560px) {
+  .job-grid { grid-template-columns: 1fr; }
+}
+
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field label {
   font-size: 12px;

@@ -3,7 +3,7 @@
 import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class StockInfo(BaseModel):
@@ -164,38 +164,110 @@ class CodeSyncResponse(BaseModel):
     message: str | None = None
 
 
-class SyncRun(BaseModel):
-    """One recorded attempt at reconciling `stock_code`."""
+# --------------------------------------------------------------------------
+# Background jobs
+# --------------------------------------------------------------------------
+
+JobStatus = Literal["success", "skipped", "failed"]
+JobTrigger = Literal["startup", "schedule", "manual"]
+ScheduleKind = Literal["interval", "daily"]
+
+
+class JobRunOut(BaseModel):
+    """One recorded attempt at one job."""
 
     id: int
+    job_id: str
     started_at: datetime.datetime
     finished_at: datetime.datetime
     duration_seconds: float
-    status: Literal["synced", "skipped", "failed"]
-    trigger: Literal["startup", "schedule", "manual"]
-    sources: list[str]  # markets that answered: twse / tpex
-    active: int
-    inserted: int
-    updated: int
-    delisted: int
-    pruned: int
+    # skipped == the job woke up and correctly had nothing to do.
+    status: JobStatus
+    trigger: JobTrigger
+    # The username that pressed the button; set on manual runs only.
+    actor: str | None
+    # Job-specific counters. The keys are whatever that job's `stat_labels`
+    # declares, which is how one table renders every job.
+    stats: dict[str, int]
     message: str | None
 
 
-class SyncRunsResponse(BaseModel):
-    """The batch job's health, as the admin view needs it."""
+class JobScheduleOut(BaseModel):
+    """When a job fires, and how far an admin may move it."""
 
-    # Whether the scheduler is running at all, and how often. Without these a
-    # long gap between runs is ambiguous: broken, or simply switched off?
     enabled: bool
-    interval_hours: int
+    kind: ScheduleKind
+    interval_minutes: int
+    daily_at: str  # "HH:MM" in `timezone`
+    timezone: str
+    # Guard rails from the job definition, sent so the UI can bound its own
+    # input instead of guessing -- the server refuses out-of-range values
+    # regardless.
+    min_interval_minutes: int
+    max_interval_minutes: int
+    # False once an admin has saved anything: from then on the row wins over
+    # the environment variables that seeded it.
+    is_default: bool
+    updated_at: datetime.datetime | None
+    updated_by: str | None
+
+
+class JobOut(BaseModel):
+    """A job as the admin console needs it: what it is, when, and how it went."""
+
+    id: str
+    name: str
+    description: str
+    schedule: JobScheduleOut
+    # True while an attempt is in flight *in this process*. The run-now button
+    # is disabled on it, and the server refuses a second run anyway.
+    running: bool
+    expected_seconds: int
+    manual_cooldown_seconds: int
+    stat_labels: dict[str, str]
+    last_run: JobRunOut | None
+    # Newest run that did the work. A long gap here with recent `skipped` runs
+    # means the schedule is alive but the output is stale.
     last_success_at: datetime.datetime | None
-    # None when `stock_code` has never been reconciled -- the listing on offer
-    # is still twstock's bundled snapshot.
-    synced_at: datetime.datetime | None
-    active: int
+    next_run_at: datetime.datetime | None
+    total_runs: int
+
+
+class JobListResponse(BaseModel):
+    # False when JOBS_SCHEDULER_ENABLED is off: every job below is then
+    # manual-only, which is otherwise indistinguishable from a stuck scheduler.
+    scheduler_enabled: bool
+    timezone: str
+    jobs: list[JobOut]
+
+
+class JobRunsResponse(BaseModel):
+    job: JobOut
     total: int  # attempts on record, which the rolling window caps
-    runs: list[SyncRun]
+    runs: list[JobRunOut]
+
+
+class JobScheduleUpdateRequest(BaseModel):
+    """A partial edit. Unset fields keep their current value."""
+
+    enabled: bool | None = None
+    kind: ScheduleKind | None = None
+    # Bounds are per job and enforced server-side; this only rejects the
+    # nonsense that never reaches a job (0, negatives, a year).
+    interval_minutes: int | None = Field(None, ge=1, le=525_600)
+    daily_at: str | None = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+class JobTriggerResponse(BaseModel):
+    """Answer to the run-now button.
+
+    The run itself happens on a background thread -- the listing sync takes ~40
+    seconds and the page lists several jobs -- so this only confirms it started.
+    """
+
+    job_id: str
+    started: bool
+    message: str
 
 
 # --------------------------------------------------------------------------

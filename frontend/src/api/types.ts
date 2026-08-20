@@ -130,6 +130,8 @@ export interface HealthResponse {
   status: 'ok' | 'degraded'
   database: string
   stock_codes_loaded: number
+  /** null while the listing is still twstock's bundled snapshot. */
+  stock_codes_synced_at: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -185,46 +187,84 @@ export interface WatchlistResponse {
   sids: string[]
 }
 
-/** --- 上市櫃名冊同步（ADMIN） --- */
+/** --- 背景排程作業（ADMIN） --- */
 
-export type SyncStatus = 'synced' | 'skipped' | 'failed'
-export type SyncTrigger = 'startup' | 'schedule' | 'manual'
+/** `skipped` 代表工作醒來後確認沒事可做 —— 那是排程還活著的心跳，不是失敗。 */
+export type JobStatus = 'success' | 'skipped' | 'failed'
+export type JobTrigger = 'startup' | 'schedule' | 'manual'
+/** `interval` 每 N 分鐘一次；`daily` 每天固定時刻。 */
+export type ScheduleKind = 'interval' | 'daily'
 
-export interface CodeSyncResponse {
-  status: SyncStatus
-  synced_at: string | null
-  active: number
-  inserted: number
-  updated: number
-  delisted: number
-  pruned: number
-  message: string | null
-}
-
-export interface SyncRun {
+export interface JobRun {
   id: number
+  job_id: string
   started_at: string
   finished_at: string
   duration_seconds: number
-  status: SyncStatus
-  trigger: SyncTrigger
-  /** markets that answered: 'twse' / 'tpex'. One of two means a partial run. */
-  sources: string[]
-  active: number
-  inserted: number
-  updated: number
-  delisted: number
-  pruned: number
+  status: JobStatus
+  trigger: JobTrigger
+  /** 按下手動執行的管理員帳號；排程執行為 null。 */
+  actor: string | null
+  /** 各工作自己的計數，key 由 `Job.stat_labels` 定義。 */
+  stats: Record<string, number>
   message: string | null
 }
 
-export interface SyncRunsResponse {
+export interface JobSchedule {
   enabled: boolean
-  interval_hours: number
+  kind: ScheduleKind
+  interval_minutes: number
+  /** 'HH:MM'，以 `timezone` 為準。 */
+  daily_at: string
+  timezone: string
+  /** 後端的護欄；表單照著限制輸入，但真正把關的是伺服器。 */
+  min_interval_minutes: number
+  max_interval_minutes: number
+  /** true 代表還沒有人改過，跑的是環境變數給的預設值。 */
+  is_default: boolean
+  updated_at: string | null
+  updated_by: string | null
+}
+
+export interface Job {
+  id: string
+  name: string
+  description: string
+  schedule: JobSchedule
+  running: boolean
+  expected_seconds: number
+  manual_cooldown_seconds: number
+  /** stats 的 key → 表格欄位標題。一張表就能顯示所有工作。 */
+  stat_labels: Record<string, string>
+  last_run: JobRun | null
+  /** 最後一次真的做了事的執行；只有心跳不算。 */
   last_success_at: string | null
-  /** null while the listing is still twstock's bundled snapshot. */
-  synced_at: string | null
-  active: number
+  next_run_at: string | null
+  total_runs: number
+}
+
+export interface JobListResponse {
+  /** false 代表整個排程器被關掉，所有工作都只能手動執行。 */
+  scheduler_enabled: boolean
+  timezone: string
+  jobs: Job[]
+}
+
+export interface JobRunsResponse {
+  job: Job
   total: number
-  runs: SyncRun[]
+  runs: JobRun[]
+}
+
+export interface JobScheduleUpdate {
+  enabled?: boolean
+  kind?: ScheduleKind
+  interval_minutes?: number
+  daily_at?: string
+}
+
+export interface JobTriggerResponse {
+  job_id: string
+  started: boolean
+  message: string
 }

@@ -123,8 +123,11 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET / PATCH / DELETE | `/api/users/{user_id}` | 檢視／改角色與狀態／刪除（ADMIN） |
 | POST | `/api/users/{user_id}/password-reset` | 重設密碼，回傳一次性臨時密碼（ADMIN） |
 | GET / PUT | `/api/watchlist` | 自選股，整批讀寫（需登入） |
-| POST | `/api/stocks/sync?force=false` | 手動同步上市櫃名冊（**ADMIN**） |
-| GET | `/api/stocks/sync/runs?limit=50` | 名冊同步的執行紀錄（**ADMIN**） |
+| GET | `/api/jobs` | Every background job: schedule, last run, next run (**ADMIN**) |
+| GET | `/api/jobs/{job_id}/runs?limit=50` | One job's run history (**ADMIN**) |
+| PATCH | `/api/jobs/{job_id}/schedule` | Change when a job fires (**ADMIN**) |
+| POST | `/api/jobs/{job_id}/run` | Run now; answers 202 and continues server-side (**ADMIN**) |
+| POST | `/api/stocks/sync?force=true` | Sync the listing and wait for it; superseded by the above (**ADMIN**) |
 
 `{sid}` 可以是個股代碼，也可以是大盤 `t00`。AI 分析預定放在 `/api/stocks/{sid}/analysis/ai`，與傳統分析平行。
 
@@ -249,42 +252,116 @@ twstock 把上市櫃名冊做成兩個 CSV 打包在套件裡，更新方式是 
 | retire | 名冊上消失的代碼標記 `is_active=false`，**不刪** —— `daily_price` 與 `watchlist_item` 還指著它，下市公司的歷史也還有價值 |
 | prune | 唯獨權證例外：一次同步就退役 29,062 檔，沒人看過期權證的線圖，過保留期（30 天）直接刪，表跟記憶體才有界 |
 
-### 怎麼知道這個 batch job 有沒有正常跑
+### 怎麼知道這些 batch job 有沒有正常跑
 
-每一次嘗試 —— 包含「因為還新鮮所以略過」和「失敗」—— 都會寫進 `stock_code_sync_run`。
+每一次嘗試 —— 包含「因為還新鮮所以略過」和「失敗」—— 都會寫進 `job_run`。
 這是必要的：同步失敗兩個禮拜跟同步「沒事可做」，對 `stock_code` 來說都是**沒有任何改變**，
 光看名冊本身分不出來。
 
-管理者登入後從右上角 **名冊同步** 進 `/admin/stock-codes`，可以看到：
+管理者登入後從右上角 **排程作業** 進 `/admin/jobs`，可以看到：
 
-- 可查詢標的數、最後一次成功同步、排程間隔（或「已關閉」）
-- 每次執行的表格：開始時間、來源（啟動／排程／手動）、結果、耗時、新增／更新／下市／清除筆數、訊息
-- **立即同步** 按鈕（送 `force=true`，忽略間隔），跑完會順手讓 health 與搜尋快取失效
+- 每個作業的排程、下次執行、上次結果、最後一次成功、以及 **立即執行**
+- 點「執行紀錄」進 `/admin/jobs/{job_id}`：開始時間、觸發方式（啟動／排程／手動，手動附帳號）、
+  結果、耗時、各作業自己的計數、訊息
+- `/admin/stock-codes` 仍然存在，多附上「名冊現在長什麼樣」（可查詢標的數、有沒有對過交易所）
 
-三種狀態各代表什麼：
+三種結果各代表什麼：
 
 | 結果 | 意思 |
 |---|---|
-| `已同步` | 真的抓了名冊並寫入 |
-| `已同步 (部分)` | 只有一個市場回應，寫了拿到的部分，但**刻意沒有退役任何代碼** |
-| `略過` | 排程醒來時名冊還在間隔內 —— 這是「批次工作還活著」的心跳 |
-| `失敗` | 兩個市場都連不上，既有資料原封不動 |
+| `成功` | 真的做了事：名冊抓回來寫入、或清掉了憑證 |
+| `略過` | 醒來後確認沒事可做（名冊還在間隔內、沒有可清的憑證）—— 這是「批次工作還活著」的心跳 |
+| `失敗` | 例如兩個市場都連不上，既有資料原封不動 |
 
-超過兩個間隔沒有成功紀錄時，頁面上會出現警示橫幅。紀錄只保留最近 200 次。
+名冊同步的 `訊息` 欄寫著 `Partial:` 的那幾次，是只有一個市場回應：寫了拿到的部分，
+但**刻意沒有退役任何代碼**。超過兩個排程週期沒有成功紀錄時，頁面上會出現警示橫幅。
+每個作業各保留最近 200 次紀錄。
 
 幾個刻意的決定：
 
-- **同步跑在背景 daemon thread**。首次抓取要 40 秒以上（上市那頁是 8MB HTML），
+- **每個作業一條背景 daemon thread**。名冊首次抓取要 40 秒以上（上市那頁是 8MB HTML），
   不能卡住 startup 或 compose 的 healthcheck。`/api/health` 一開機就會回應。
 - **只有兩個市場都抓成功才會 retire**。否則其中一邊失敗會把整個市場誤判成下市。
-- **失敗 10 分鐘後重試**，不是等滿 24 小時。
+- **失敗 10 分鐘後重試**，不是等滿一個週期。
 - **新鮮度檢查**：重啟不會重抓，`max(synced_at)` 還在區間內就直接跳過。
 - **不跨 replica 協調**。最壞情況是多抓一次同樣的兩頁，upsert 是冪等的；
-  為此在 40 秒的爬取上壓一把鎖不划算。
+  為此在 40 秒的爬取上壓一把鎖不划算。要只讓一個副本跑排程，把其他副本的
+  `JOBS_SCHEDULER_ENABLED` 關掉即可（關掉後仍可手動執行）。
 - 下市標的**仍可用完整代碼查到**（`get_stock` 照樣解析、線圖照畫），只是不再出現在搜尋的前綴／名稱比對裡。
 
+### Background jobs
+
+The listing sync is one of several recurring jobs, so the machinery around it is
+generic: `app/services/jobs/` holds a registry of job definitions, the two tables
+that record them, a runner, and one scheduler thread per job. Adding a job means
+adding a definition and a handler; the scheduler, the API and the admin console
+are all driven off that list.
+
+| Job | Default schedule | What it does |
+|---|---|---|
+| `stock_code_sync` | every 24 h (`STOCK_CODE_SYNC_INTERVAL_HOURS`), plus once at startup | reconciles `stock_code` with the exchanges' registry -- see above |
+| `refresh_token_cleanup` | daily at 04:10 | deletes expired refresh tokens, and revoked ones past their retention window |
+
+Each attempt lands in `job_run`, whose `stats` column is JSONB rather than a set
+of columns: every job counts different things, and the admin table renders
+whatever keys that job's definition declares labels for.
+
+#### Schedules are data, guard rails are code
+
+Schedules live in `job_schedule`, and **the row wins over the environment
+variable that seeded it**. A schedule changed in the UI has to survive a
+container restart, and a running process cannot write back to its own env, so
+`STOCK_CODE_SYNC_*` are demoted to first-boot defaults.
+
+- Two kinds: a fixed **interval** (N minutes/hours/days) or a **daily** wall-clock
+  time (`HH:MM`, read in `SCHEDULER_TIMEZONE`).
+- Saving takes effect **immediately**. The scheduler thread sleeps on an `Event`;
+  saving wakes it so it re-reads the row and recomputes when it is next due,
+  instead of finishing a sleep that may have been 24 hours long.
+- Each job carries its own **floor and ceiling** in
+  `app/services/jobs/registry.py`, and an administrator cannot cross them. The
+  listing sync's floor is 60 minutes: one run is two multi-megabyte scrapes off a
+  shared rate limiter, and this limit protects TWSE's rate limit rather than this
+  service's permission model.
+
+#### This is the most privileged surface in the service
+
+So the limits sit in three layers, none of which trusts the one above it (the
+reasoning is in `app/routers/jobs.py`):
+
+| Layer | Refuses | Status |
+|---|---|---|
+| `require_admin`, declared on the router | anyone who is not an ADMIN | 403, or 401 without a token -- and a route added later inherits it |
+| `store.set_schedule`, validating the merged schedule | an interval outside that job's range, a malformed time | 400 / 422 |
+| the runner's lock and cooldown | a second concurrent run, a held-down run-now button | 409 / 429 with `Retry-After` |
+
+The cooldown is measured from `job_run`, not from process memory, so restarting
+the container or asking a different replica does not clear it. Manual runs record
+the administrator who started them (`job_run.actor`) and schedule edits record
+who saved them (`job_schedule.updated_by`); both are shown back in the UI. Reads
+stay behind the same guard, because the run log carries upstream failure messages
+and admin usernames -- the anonymous `/api/health` keeps its own much narrower
+summary.
+
+Two consequences worth knowing about:
+
+- **Run-now answers 202 and returns.** The work continues on a background thread
+  and the page polls the run log. A page listing several jobs cannot hold a
+  request open for 40 seconds per job. `POST /api/stocks/sync` still blocks and
+  returns the outcome, for scripts that want it in one call; it goes through the
+  same lock, cooldown and audit trail.
+- **The old `stock_code_sync_run` table is migrated into `job_run` at startup**,
+  once, and only when the target is empty. This project has no migration tool, so
+  without that step the history would be stranded in a table nothing reads.
+
 ```bash
-# 手動同步（需要 ADMIN token）
+# Run a job now (ADMIN token). Answers 202; the work continues server-side.
+curl -X POST -H "Authorization: Bearer $TOKEN"      'http://localhost:8000/api/jobs/stock_code_sync/run'
+
+# Move it to 02:30 every day.
+curl -X PATCH -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json'      -d '{"kind":"daily","daily_at":"02:30"}'      'http://localhost:8000/api/jobs/stock_code_sync/schedule'
+
+# Sync and wait for the outcome (~40 s).
 curl -X POST -H "Authorization: Bearer $TOKEN"      'http://localhost:8000/api/stocks/sync?force=true'
 ```
 
@@ -366,8 +443,10 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `JWT_SECRET` | （未設，啟動時隨機產生） | access token 的簽章密鑰，見下方「帳號與權限」 |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` / `REFRESH_TOKEN_EXPIRE_DAYS` | `30` / `7` | 兩種 token 的有效期 |
 | `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin` / （未設） / （未設） | 啟動時建立的第一個管理員，email 與密碼都設了才生效 |
-| `STOCK_CODE_SYNC_ENABLED` | `true` | 關掉就不再更新上市櫃名冊，API 照常但學不到新掛牌 |
-| `STOCK_CODE_SYNC_INTERVAL_HOURS` | `24` | 名冊同步間隔；`/admin/stock-codes` 會顯示這個值 |
+| `STOCK_CODE_SYNC_ENABLED` | `true` | First-boot default for the listing sync. Once an admin saves a schedule at `/admin/jobs`, the `job_schedule` row wins |
+| `STOCK_CODE_SYNC_INTERVAL_HOURS` | `24` | First-boot default for its interval, same as above |
+| `JOBS_SCHEDULER_ENABLED` | `true` | Master switch. Off means this process fires nothing on its own (manual runs still work); leave it on for exactly one replica |
+| `SCHEDULER_TIMEZONE` | `Asia/Taipei` | Wall clock a "daily at HH:MM" schedule is read in. `TZ` comes from the same .env, so the two agree by default |
 
 ---
 
@@ -501,9 +580,13 @@ never render and nothing polls.
 - 大盤看板非交易時段顯示最近一個交易日的收盤。13:30 收盤到 TWSE 發布當日報表之間，
   日線還是前一天，此時改用 MIS 的最後成交值，避免看板倒退一天。
 - 目前只接了加權指數。櫃買指數（`o00`）的即時頻道可用，但歷史報表端點不同，尚未接。
-- 上市櫃名冊每 24 小時才對一次。當天早上剛掛牌的標的最久要等一天才查得到，
-  急用可到 `/admin/stock-codes` 按「立即同步」（或打 `POST /api/stocks/sync?force=true`）。
-- 同步紀錄只保留最近 200 筆，且存在資料庫裡；沒有對外送告警，要靠人進管理頁看。
+- 上市櫃名冊預設每 24 小時才對一次。當天早上剛掛牌的標的最久要等一天才查得到，
+  急用可到 `/admin/stock-codes` 按「立即同步」。
+- Scheduling is per process; there is no leader election across replicas. Run with
+  `JOBS_SCHEDULER_ENABLED=true` on exactly one of them, or every job runs several
+  times over -- harmless, since they are idempotent, but wasted work.
+- Run history is capped at the most recent 200 attempts per job and lives only in
+  the database. Nothing alerts anywhere; someone has to look at `/admin/jobs`.
 - 四大買賣點只讀成交量、開盤、收盤三個欄位，且只比較最新一根與前一根 K 棒，沒有趨勢或部位概念；
   籌碼面（法人買賣超、融資融券）完全不在裡面。
 - 同一套規則現在也跑在大盤 `t00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
