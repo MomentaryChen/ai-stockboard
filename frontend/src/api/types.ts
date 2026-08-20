@@ -45,6 +45,30 @@ export interface HistoryResponse {
   data: DailyPricePoint[]
 }
 
+export interface DividendEvent {
+  ex_date: string
+  kind: string
+  cash_dividend: number | null
+  stock_dividend: number | null
+  deduction: number | null
+  close_before: number | null
+  reference_price: number | null
+  upcoming: boolean
+}
+
+export interface DividendResponse {
+  sid: string
+  name: string
+  source: DataSource
+  coverage: 'history' | 'recent' | 'none'
+  years: number
+  count: number
+  ttm_cash: number | null
+  latest_close: number | null
+  yield_percent: number | null
+  events: DividendEvent[]
+}
+
 export interface MovingAverages {
   ma5: number | null
   ma10: number | null

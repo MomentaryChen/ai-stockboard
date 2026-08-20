@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { RuleSet } from '../api/types'
 import BestFourPointCard from '../components/BestFourPointCard'
+import DividendCard from '../components/DividendCard'
 import MaPanel from '../components/MaPanel'
 import PriceChart, { buildChartRows } from '../components/PriceChart'
 import StockSearch from '../components/StockSearch'
@@ -39,6 +40,11 @@ export default function StockDetail() {
   const analysis = useQuery({
     queryKey: ['analysis', 'traditional', sid, months, ruleSet],
     queryFn: () => api.getTraditionalAnalysis(sid, months, ruleSet),
+  })
+
+  const dividends = useQuery({
+    queryKey: ['dividends', sid],
+    queryFn: () => api.getDividends(sid),
   })
 
   const rows = useMemo(
@@ -152,6 +158,16 @@ export default function StockDetail() {
             <div className="stat-label">{intraday ? '報價時間' : '最新日期'}</div>
             <div className="stat-value">{stamp}</div>
           </div>
+          {dividends.data?.coverage === 'history' && (
+            <div>
+              <div className="stat-label">殖利率</div>
+              <div className="stat-value">
+                {dividends.data.yield_percent === null
+                  ? '--'
+                  : `${fmtPrice(dividends.data.yield_percent)}%`}
+              </div>
+            </div>
+          )}
         </div>
       </section>
 
@@ -249,6 +265,10 @@ export default function StockDetail() {
                 latestClose={analysis.data.latest_close}
               />
             </>
+          )}
+
+          {dividends.data && dividends.data.coverage !== 'none' && (
+            <DividendCard data={dividends.data} />
           )}
 
           <section className="card">

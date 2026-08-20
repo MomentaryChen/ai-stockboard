@@ -18,7 +18,7 @@ from sqlalchemy import text
 from app import models  # noqa: F401  -- registers tables on Base.metadata
 from app.config import get_settings
 from app.db import Base, SessionLocal, engine
-from app.routers import analysis, auth, history, realtime, stocks, users, watchlist
+from app.routers import analysis, auth, dividends, history, realtime, stocks, users, watchlist
 from app.schemas import HealthResponse
 from app.services import auth as auth_service
 from app.services import code_sync
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ai-stockboard API",
     description=(
-        "台股看板服務：歷史股價、即時報價、股票搜尋，"
+        "台股看板服務：歷史股價、除權息、即時報價、股票搜尋，"
         "以及傳統技術分析（AI 分析開發中）。行情資料來源為 twstock。"
     ),
     version="0.1.0",
@@ -74,6 +74,7 @@ app.add_middleware(
 
 app.include_router(stocks.router)
 app.include_router(history.router)
+app.include_router(dividends.router)
 app.include_router(analysis.router)
 app.include_router(realtime.router)
 app.include_router(auth.router)
