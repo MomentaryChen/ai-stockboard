@@ -8,6 +8,9 @@ only way to tell a healthy nightly job from one that has been failing quietly.
 service owns, and what every analysis engine reads from.
 `fetch_log` records which (stock, year, month) buckets have already been pulled
 from the exchange, which is what lets us skip the network on repeat requests.
+`dividend_event` is one ex-right / ex-dividend day per stock; `dividend_fetch_log`
+is the same kind of bucket stamp `fetch_log` is, so a year of TWSE events is
+pulled once.
 
 `app_user`, `refresh_token` and `watchlist_item` carry the account system: who
 may sign in, which refresh tokens are still live, and what each user watches.
@@ -166,6 +169,53 @@ class FetchLog(Base):
 
     row_count: Mapped[int] = mapped_column(Integer, default=0)
     source: Mapped[str] = mapped_column(String(8), default="twse")
+    fetched_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DividendEvent(Base):
+    """One ex-right / ex-dividend day for one stock.
+
+    TWSE publishes a yearly JSON of every listed name that went ex (TWT49U),
+    so one upstream call fills this table for the whole board. TPEX only
+    publishes the current window plus the announcement calendar, which is why
+    OTC history here is recent rather than complete.
+    """
+
+    __tablename__ = "dividend_event"
+
+    sid: Mapped[str] = mapped_column(String(16), primary_key=True)
+    ex_date: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
+
+    name: Mapped[str] = mapped_column(String(64), default="")
+    # 息 / 權 / 權息 -- normalised from TWSE's 權/息 and TPEX's 除息/除權.
+    kind: Mapped[str] = mapped_column(String(8), default="")
+    close_before: Mapped[float | None] = mapped_column(Numeric(16, 6))
+    reference_price: Mapped[float | None] = mapped_column(Numeric(16, 6))
+    deduction: Mapped[float | None] = mapped_column(Numeric(16, 8))  # 權值+息值
+    cash_dividend: Mapped[float | None] = mapped_column(Numeric(16, 8))
+    stock_dividend: Mapped[float | None] = mapped_column(Numeric(16, 8))
+    source: Mapped[str] = mapped_column(String(8), default="twse")
+
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DividendFetchLog(Base):
+    """Cache stamp for one dividend upstream pull.
+
+    TWSE is keyed by calendar year (`2024`); TPEX is a single `live` bucket
+    because the exchange does not offer a historical range query.
+    """
+
+    __tablename__ = "dividend_fetch_log"
+
+    source: Mapped[str] = mapped_column(String(8), primary_key=True)
+    bucket: Mapped[str] = mapped_column(String(16), primary_key=True)
+
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
     fetched_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

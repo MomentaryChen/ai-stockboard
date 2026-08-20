@@ -8,6 +8,7 @@ import type {
   TraditionalAnalysisResponse,
   HealthResponse,
   HistoryResponse,
+  DividendResponse,
   RealtimeResponse,
   SearchResponse,
   StockInfo,
@@ -165,6 +166,9 @@ export const api = {
 
   getHistory: (sid: string, months: number) =>
     request<HistoryResponse>(`/api/stocks/${sid}/history?months=${months}`),
+
+  getDividends: (sid: string, years = 5) =>
+    request<DividendResponse>(`/api/stocks/${sid}/dividends?years=${years}`),
 
   /** Rule-based technical analysis. An AI counterpart will sit next to this. */
   getTraditionalAnalysis: (sid: string, months: number, ruleSet: RuleSet = 'grs') =>
