@@ -9,6 +9,7 @@ import type {
   Role,
   RuleSet,
   TokenResponse,
+  TraditionalAnalysisBatchResponse,
   TraditionalAnalysisResponse,
   HealthResponse,
   HistoryResponse,
@@ -177,6 +178,12 @@ export const api = {
   getTraditionalAnalysis: (sid: string, months: number, ruleSet: RuleSet = 'grs') =>
     request<TraditionalAnalysisResponse>(
       `/api/stocks/${sid}/analysis/traditional?months=${months}&rule_set=${ruleSet}`,
+    ),
+
+  /** Watchlist-sized BFP: Buy / Sell / Don't touch, no MA series. */
+  getTraditionalAnalysisBatch: (sids: string[], ruleSet: RuleSet = 'grs') =>
+    request<TraditionalAnalysisBatchResponse>(
+      `/api/analysis/traditional?sids=${sids.join(',')}&rule_set=${ruleSet}`,
     ),
 
   /** Signed in only -- the one market-data route that is not public. `auth`

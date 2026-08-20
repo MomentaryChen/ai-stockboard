@@ -1,11 +1,13 @@
 import { Link } from 'react-router-dom'
 
-import type { RealtimeQuote } from '../api/types'
+import type { BestFourPointResult, RealtimeQuote } from '../api/types'
 import { direction, fmtInt, fmtPrice, fmtSigned } from '../utils/format'
 
 interface Props {
   quote: RealtimeQuote
   onRemove?: (code: string) => void
+  bfp?: BestFourPointResult
+  bfpLoading?: boolean
 }
 
 function Depth({
@@ -33,7 +35,40 @@ function Depth({
   )
 }
 
-export default function RealtimeCard({ quote, onRemove }: Props) {
+/** Compact 四大買賣點 chip for a watchlist card. */
+export function BfpChip({
+  result,
+  loading,
+}: {
+  result?: BestFourPointResult
+  loading?: boolean
+}) {
+  if (loading && !result) {
+    return (
+      <div className="quote-bfp">
+        <span className="dim" style={{ fontSize: 12 }}>
+          四大買賣點載入中…
+        </span>
+      </div>
+    )
+  }
+  if (!result) return null
+
+  return (
+    <div className="quote-bfp">
+      <div className={`signal signal-sm signal-${result.signal}`}>{result.label}</div>
+      {result.reasons.length > 0 && (
+        <ul className="quote-bfp-reasons">
+          {result.reasons.map((reason) => (
+            <li key={reason}>{reason}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+export default function RealtimeCard({ quote, onRemove, bfp, bfpLoading }: Props) {
   const dir = direction(quote.change)
 
   return (
@@ -65,6 +100,8 @@ export default function RealtimeCard({ quote, onRemove }: Props) {
           {quote.change_percent !== null ? ` (${fmtSigned(quote.change_percent)}%)` : ''}
         </span>
       </div>
+
+      <BfpChip result={bfp} loading={bfpLoading} />
 
       <div className="stat-grid" style={{ marginTop: 14 }}>
         <div>

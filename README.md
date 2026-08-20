@@ -112,6 +112,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/stocks/{sid}` | 個股基本資料 |
 | GET | `/api/stocks/{sid}/history?months=6&force=false` | 歷史日成交 |
 | GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點 |
+| GET | `/api/analysis/traditional?sids=2330,0050` | Batch 四大買賣點 from cached daily bars only (no TWSE fetch, max 20) |
 | GET | `/api/realtime?sids=2330,0050` | 即時報價，最多 20 檔（**需登入**） |
 | POST | `/api/auth/register` | 註冊，直接回一組 token |
 | POST | `/api/auth/login` | 登入，帳號或 Email 皆可 |
@@ -136,6 +137,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 ```bash
 curl 'http://localhost:8000/api/stocks/2330/history?months=3'
 curl 'http://localhost:8000/api/stocks/2330/analysis/traditional'
+curl 'http://localhost:8000/api/analysis/traditional?sids=2330,2317,0050'
 
 # 即時報價要帶 access token，其餘行情端點不用
 curl 'http://localhost:8000/api/realtime?sids=2330,6488' -H "Authorization: Bearer $ACCESS_TOKEN"
@@ -516,6 +518,13 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 登入後自選股存在資料庫（`watchlist_item`，最多 20 檔）；未登入則沿用 localStorage。
 第一次登入時會把 localStorage 那份**聯集**進帳號，然後清掉本機那份——
 不清的話，在同一台瀏覽器換帳號登入會把前一個人的清單帶進去。
+
+The realtime board scores each watchlist sid with the same 四大買賣點
+(Buy / Sell / Don't touch) as the stock page, via `GET /api/analysis/traditional`.
+That batch route reads `daily_price` only -- it does not call TWSE/TPEX -- so a
+20-stock board cannot crowd the shared 3-per-5s limiter that realtime quotes
+already use. A sid with no cached bars shows 資料不足; opening the stock page
+fills the cache the usual way.
 
 `/realtime` 改成需要登入之後，未登入已經沒有介面可以編輯自選股，
 localStorage 那條路留著是為了把**這個改動之前**存下來的清單接進帳號，`useWatchlist` 的兩套儲存不需要動。
