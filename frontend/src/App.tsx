@@ -1,0 +1,59 @@
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+
+import { api } from './api/client'
+import StockDetail from './pages/StockDetail'
+import RealtimeBoard from './pages/RealtimeBoard'
+
+function HealthIndicator() {
+  const { data } = useQuery({
+    queryKey: ['health'],
+    queryFn: api.health,
+    refetchInterval: 60_000,
+  })
+
+  if (!data) return null
+
+  const ok = data.status === 'ok'
+  return (
+    <span className="row dim" title={`PostgreSQL: ${data.database}`}>
+      <span className={`dot ${ok ? 'dot-ok' : 'dot-bad'}`} />
+      {ok ? 'DB 已連線' : 'DB 未連線'}
+    </span>
+  )
+}
+
+export default function App() {
+  const { pathname } = useLocation()
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="brand">
+          <span>ai</span>-stockboard 台股看板
+        </div>
+        <nav className="nav">
+          {/* Any /stock/:sid keeps the tab lit, not just the default 2330. */}
+          <Link to="/stock/2330" className={pathname.startsWith('/stock') ? 'active' : ''}>
+            個股分析
+          </Link>
+          <Link to="/realtime" className={pathname.startsWith('/realtime') ? 'active' : ''}>
+            即時報價
+          </Link>
+        </nav>
+        <div className="topbar-right">
+          <HealthIndicator />
+        </div>
+      </header>
+
+      <main className="main">
+        <Routes>
+          <Route path="/" element={<Navigate to="/stock/2330" replace />} />
+          <Route path="/stock/:sid" element={<StockDetail />} />
+          <Route path="/realtime" element={<RealtimeBoard />} />
+          <Route path="*" element={<div className="center-note">找不到這個頁面</div>} />
+        </Routes>
+      </main>
+    </div>
+  )
+}

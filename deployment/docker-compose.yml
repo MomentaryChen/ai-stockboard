@@ -1,0 +1,27 @@
+# Compose reads deployment/.env automatically, so the same file configures both
+# this container and the API server (see server/app/config.py).
+name: ai-stockboard
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ai-stockboard-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stockboard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockboard}
+      POSTGRES_DB: ${POSTGRES_DB:-stockboard}
+      TZ: ${TZ:-Asia/Taipei}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - stockboard-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stockboard} -d ${POSTGRES_DB:-stockboard}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  stockboard-pgdata:

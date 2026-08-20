@@ -1,0 +1,28 @@
+[project]
+name = "ai-stockboard-server"
+version = "0.1.0"
+description = "ai-stockboard API — Taiwan stock market dashboard with traditional and AI-assisted analysis"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0.36",
+    "psycopg[binary]>=3.2",
+    "python-dotenv>=1.0",
+    # Market data source: TWSE/TPEX fetchers, stock code database, technical
+    # analytics. Vendored under ../vendor/twstock and installed editable, so the
+    # library can be adapted as the AI analysis engine takes shape.
+    "twstock",
+]
+
+[tool.uv.sources]
+twstock = { path = "../vendor/twstock", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
