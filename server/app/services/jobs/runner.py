@@ -24,6 +24,7 @@ import logging
 import threading
 
 from app.db import SessionLocal
+from app.logging_config import new_request_id, reset_request_id, set_request_id
 from app.models import JobRun
 from app.services.jobs import store
 from app.services.jobs.registry import JobContext, JobDefinition, JobResult
@@ -86,49 +87,67 @@ def run_job(
     if not lock.acquire(blocking=False):
         raise JobBusyError(job.id)
 
+    # Jobs run on their own threads, interleaved with request handling in the
+    # same process and the same log stream. Giving each attempt an id of the
+    # same shape as a request id is what lets `grep job:stock_code_sync` pull
+    # one run's lines out of that -- including the ones written deep inside a
+    # handler, which know nothing about jobs.
+    trace = set_request_id(f"job:{job.id}:{new_request_id()[:8]}")
     started_at = _now()
+    # Two nested try blocks rather than one: the lock has to be released as
+    # soon as the work is done, but the trace id has to outlive it far enough
+    # to reach the summary line below -- that line is the one an operator
+    # greps for, and it is worthless without the id that ties it to the rest.
     try:
-        with SessionLocal() as db:
-            state = store.get_schedule(db, job)
-            context = JobContext(
-                db=db,
-                trigger=trigger,
-                force=force,
-                freshness_seconds=state.freshness_seconds,
-            )
-            try:
-                result = job.handler(context)
-            except Exception as exc:
-                # The handler may have left a transaction half open; the run
-                # row has to be written on a clean session.
-                db.rollback()
-                logger.exception("job %s raised", job.id)
-                result = JobResult(
-                    status="failed", message=f"{exc.__class__.__name__}: {exc}"
+        try:
+            with SessionLocal() as db:
+                state = store.get_schedule(db, job)
+                context = JobContext(
+                    db=db,
+                    trigger=trigger,
+                    force=force,
+                    freshness_seconds=state.freshness_seconds,
                 )
+                try:
+                    result = job.handler(context)
+                except Exception as exc:
+                    # The handler may have left a transaction half open; the
+                    # run row has to be written on a clean session.
+                    db.rollback()
+                    logger.exception("job %s raised", job.id)
+                    result = JobResult(
+                        status="failed", message=f"{exc.__class__.__name__}: {exc}"
+                    )
 
-            record = store.record_run(
-                db,
-                job_id=job.id,
-                started_at=started_at,
-                finished_at=_now(),
-                result=result,
-                trigger=trigger,
-                actor=actor,
-            )
+                record = store.record_run(
+                    db,
+                    job_id=job.id,
+                    started_at=started_at,
+                    finished_at=_now(),
+                    result=result,
+                    trigger=trigger,
+                    actor=actor,
+                )
+        finally:
+            lock.release()
+
+        # A failed run is the one line in this file somebody needs to find
+        # later, and INFO is where log lines go to be filtered out. Together
+        # with /api/health (see services/health.py) it is the whole of the
+        # alerting this service has.
+        logger.log(
+            logging.ERROR if record.status == "failed" else logging.INFO,
+            "job %s %s (trigger=%s%s) in %.1fs%s",
+            job.id,
+            record.status,
+            trigger,
+            f", by {actor}" if actor else "",
+            (record.finished_at - record.started_at).total_seconds(),
+            f" -- {record.message}" if record.message else "",
+        )
+        return record
     finally:
-        lock.release()
-
-    logger.info(
-        "job %s %s (trigger=%s%s) in %.1fs%s",
-        job.id,
-        record.status,
-        trigger,
-        f", by {actor}" if actor else "",
-        (record.finished_at - record.started_at).total_seconds(),
-        f" -- {record.message}" if record.message else "",
-    )
-    return record
+        reset_request_id(trace)
 
 
 def check_manual_allowed(job: JobDefinition) -> None:

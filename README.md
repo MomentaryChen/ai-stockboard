@@ -16,7 +16,7 @@
 ai-stockboard/
 ├── deployment/          docker-compose.yml + .env（DB、server、frontend 共用同一份設定）
 ├── server/              FastAPI (uv) + Dockerfile
-├── frontend/            React 19 + Vite + Recharts（pnpm）+ Dockerfile / nginx.conf
+├── frontend/            React 19 + Vite + Recharts（pnpm）+ Dockerfile / nginx/
 ├── docs/
 │   └── screenshots/     The images this README embeds, captured by the script below
 ├── tools/
@@ -193,12 +193,20 @@ docker compose ps               # db / server / frontend 都要 (healthy)
 
 打開 <http://localhost:8100>，進站就是大盤看板。
 
-| 服務 | 內容 | Host port |
-|---|---|---|
-| `db` | postgres:16-alpine，資料存在 `stockboard-pgdata` volume | `5433` |
-| `server` | FastAPI + uvicorn，`server/Dockerfile` | `8000` |
-| `frontend` | vite build 產物由 nginx 提供，`frontend/Dockerfile` | `8100` |
-| `db-backup` | nightly `pg_dump` into `deployment/backups/` on the host | — |
+| 服務 | 內容 | Host port | Bound to |
+|---|---|---|---|
+| `db` | postgres:16-alpine，資料存在 `stockboard-pgdata` volume | `5433` | `127.0.0.1` |
+| `server` | FastAPI + uvicorn，`server/Dockerfile` | `8000` | `127.0.0.1` |
+| `frontend` | vite build 產物由 nginx 提供，`frontend/Dockerfile` | `8100`, `8443` (TLS) | `0.0.0.0` |
+| `db-backup` | nightly `pg_dump` into `deployment/backups/` on the host | — | — |
+
+Only the frontend is published on every interface. `ports: "5433:5432"` means
+*all* interfaces, so on a host without a firewall that line is the database on
+the internet -- and neither the database nor the API is reached that way by
+anything in this deployment: the containers talk over the compose network, and
+browsers reach the API through nginx at `/api`. The published ports are for
+`psql` and `curl` from the host, which loopback covers. Set `POSTGRES_BIND` or
+`SERVER_BIND` to `0.0.0.0` when you have actually decided otherwise.
 
 nginx 把 `/api` 與 `/docs` proxy 到 `server:8000`，瀏覽器全程同源，所以 CORS 不會參與；
 其餘路徑 fallback 到 `index.html` 交給 react-router。啟動順序由 healthcheck 串起來：
@@ -219,6 +227,101 @@ nginx 把 `/api` 與 `/docs` proxy 到 `server:8000`，瀏覽器全程同源，�
 ```bash
 docker compose up -d --build server     # 或 frontend
 ```
+
+### Security headers
+
+nginx sends a fixed set of headers on every route, from
+`frontend/nginx/includes/security-headers.conf`:
+
+| Header | Value | Why |
+|---|---|---|
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; …` | See below -- the one that earns its keep |
+| `X-Content-Type-Options` | `nosniff` | Stops a response being executed as a type it did not declare |
+| `X-Frame-Options` | `DENY` | Clickjacking, for browsers predating `frame-ancestors` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Keeps the path (which can carry a stock code) off outbound referers |
+| `Permissions-Policy` | `geolocation=(), microphone=(), …` | Nothing here needs those APIs |
+| `Cross-Origin-Opener-Policy` | `same-origin` | Severs the `window.opener` handle |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | **Only over TLS** -- see the TLS section |
+
+CSP is the one that matters, and it is here because of a limitation admitted
+further down this file: **the access token lives in `localStorage`, so any
+script that runs on this origin can read it.** `script-src 'self'` is what stops
+an injected `<script src=…>` or an inline payload from being that script. The
+two mitigations belong together -- the token storage decision is only defensible
+with the policy in place.
+
+Two deliberate holes:
+
+- **`style-src` allows `'unsafe-inline'`.** React writes style props through the
+  CSSOM, which CSP does not govern at all, but Recharts emits `style` attributes
+  on the SVG it renders and those are blocked without it. A style cannot read
+  `localStorage`; a script can, and scripts stay locked to `'self'`.
+- **`/docs` and `/redoc` get no headers at all.** Swagger UI is a CDN bundle
+  with an inline bootstrap script, which this CSP blocks outright. A policy that
+  breaks the page it is protecting only teaches people to turn it off, so those
+  two paths are excluded — do not publish that port on an untrusted network.
+
+`add_header` does not merge in nginx: a `location` that declares any header of
+its own discards every header inherited from `server`. That is why the snippet
+is `include`d once per location rather than once at the top, and why
+`/assets/` -- which sets its own `Cache-Control` -- would silently lose the
+whole set if it were not.
+
+### TLS
+
+Out of the box the frontend serves plain HTTP, and says so in its log. Give it a
+certificate and it serves HTTPS instead:
+
+```bash
+cd deployment
+cp /etc/letsencrypt/live/example.com/fullchain.pem certs/
+cp /etc/letsencrypt/live/example.com/privkey.pem   certs/
+docker compose up -d frontend
+```
+
+The container's entrypoint looks for both files at start and picks its config
+from what it finds -- there is no flag and no second image. With a certificate:
+443 serves the app, port 80 redirects to it, and HSTS is sent. Without one: port
+80 serves the app and HSTS is not sent, because a policy announced over plain
+HTTP is ignored by browsers anyway, and announcing it before TLS works is how a
+hostname makes itself unreachable for a year.
+
+`/healthz` answers on port 80 in both modes and is never redirected. The
+container healthcheck uses it: following a redirect into a self-signed
+certificate would report the container unhealthy for a reason that has nothing
+to do with it.
+
+Certificates are mounted, never baked into the image -- an image carrying a
+private key is an image nobody can push to a registry. `deployment/certs/` is
+git-ignored apart from its README. Renewal is not automated here: copy the new
+files in and restart the frontend. If you would rather not run TLS in this
+compose file at all, terminate it in front (Caddy, a cloud load balancer,
+Cloudflare) and leave the frontend on plain HTTP -- the `$scheme`-driven HSTS
+header means nothing here has to change either way, as long as the proxy sets
+`X-Forwarded-Proto`.
+
+### Resource limits and log rotation
+
+Every service has a memory ceiling, a CPU ceiling, and a capped log:
+
+| | CPU | Memory | Override |
+|---|---|---|---|
+| `db` | 1.0 | 768m | `DB_CPU_LIMIT` / `DB_MEMORY_LIMIT` |
+| `server` | 2.0 | 1g | `SERVER_CPU_LIMIT` / `SERVER_MEMORY_LIMIT` |
+| `frontend` | 0.5 | 128m | `FRONTEND_CPU_LIMIT` / `FRONTEND_MEMORY_LIMIT` |
+| `db-backup` | 0.5 | 256m | `BACKUP_CPU_LIMIT` / `BACKUP_MEMORY_LIMIT` |
+
+The point is not to size the service accurately -- it is that a job which goes
+wrong should cost its own container rather than the host. Without a limit, one
+runaway fetch takes the machine down to swap and PostgreSQL with it; with one,
+the container is OOM-killed and restarted by `restart: unless-stopped` while
+everything else keeps serving. Raise them in `.env` if a limit is genuinely too
+low; deleting them from the compose file gets you back to the failure mode they
+exist for.
+
+Container logs are capped at 3 × 10 MB per service for the same reason: nothing
+rotates Docker's JSON log by default, and a crash loop writing a few hundred
+lines a second fills the disk -- which stops PostgreSQL too.
 
 ### Backups
 
@@ -266,11 +369,97 @@ terminates any other session still connected -- an open `psql` holds locks on
 the objects `pg_restore` is about to drop, which is how a restore turns into a
 half-applied schema.
 
-Two things this is not. It is one machine's disk: a dump next to the database
-covers a mistaken `down -v`, an accidental `delete`, and a bad migration, but
-not the disk itself. Point `BACKUP_DIR` somewhere else if that matters. And
-nothing alerts -- `docker compose logs db-backup` is the only place a failing
-backup shows up, the same limitation the batch jobs have.
+This is one machine's disk: a dump next to the database covers a mistaken
+`down -v`, an accidental `delete`, and a bad migration, but not the disk itself.
+Point `BACKUP_DIR` somewhere else if that matters.
+
+The backup directory is also mounted read-only into the API container, which is
+the only reason a backup that stopped happening ever gets noticed: `/api/health`
+reports the age of the newest `*.dump` and goes `degraded` past
+`BACKUP_MAX_AGE_HOURS`. Only `*.dump` counts -- an interrupted run leaves
+`*.dump.partial`, and treating that as a backup would undo the rename that makes
+it safe. `docker compose logs db-backup` is still where the reason lives.
+
+### Logs and request ids
+
+Several requests and several background jobs run concurrently in one process,
+so an unlabelled log interleaves them: a traceback from a job sits between two
+lines of somebody's history fetch and nothing says which is which. Every line
+therefore carries an id:
+
+```
+2026-08-21 04:00:03 INFO app.access [8f2a1c04d9b3e750]: GET /api/stocks/2330/history -> 200 in 412ms
+2026-08-21 04:00:12 ERROR app.services.jobs.runner [job:stock_code_sync:1a2b3c4d]: job stock_code_sync failed (trigger=schedule) in 41.2s -- ConnectionError: ...
+```
+
+nginx mints one per request (`$request_id`) and passes it on as `X-Request-ID`;
+the API adopts it, stamps it on everything logged while that request is in
+flight, and echoes it back on the response -- so a user reporting "it failed at
+14:02" can hand over the id their browser saw. An id arriving from a proxy
+further out is kept, so a trace does not restart at our edge; it is checked
+first (≤ 64 characters, `[A-Za-z0-9_.:-]`) because it is written verbatim into
+every log line, and an unbounded value is a way to forge log entries.
+
+Background jobs are not requests and get `job:<name>:<id>` instead, which is
+what makes `grep job:stock_code_sync` pull one run's lines out of the noise --
+including lines written deep inside a handler that knows nothing about jobs.
+
+`LOG_FORMAT=json` swaps the text format for one JSON object per line, for a
+shipper to parse; `LOG_LEVEL` sets the threshold. A failed job logs at `ERROR`
+rather than `INFO`, because `INFO` is where log lines go to be filtered out.
+
+One caveat: an *unhandled* exception's 500 response carries no `X-Request-ID`.
+Starlette's `ServerErrorMiddleware` wraps the user middleware stack from the
+outside and writes that response past ours. The log line still has the id, which
+is the half that matters.
+
+### What `/api/health` reports
+
+There is no alerting stack in this deployment, and adding one is a separate
+piece of work. What there is instead: the two failures that are otherwise
+completely invisible are folded into the endpoint an uptime monitor is already
+polling, and they move `status`.
+
+```jsonc
+{
+  "status": "degraded",              // watch this field
+  "database": "connected",
+  "stock_codes_loaded": 2412,
+  "stock_codes_synced_at": "2026-08-21T04:00:41Z",
+  "jobs": {
+    "failing": ["stock_code_sync"],  // most recent attempt failed
+    "last_failure_at": "2026-08-21T04:00:12Z"
+  },
+  "backup": {
+    "status": "stale",               // ok | stale | missing | unchecked
+    "taken_at": "2026-08-18T04:00:07Z",
+    "age_hours": 74.2
+  },
+  "alerts": [
+    "background job(s) failing: stock_code_sync",
+    "newest database backup is 74h old (limit 36h)"
+  ]
+}
+```
+
+`alerts` is empty exactly when `status` is `ok`, and each line is written to be
+readable in an alert body at 03:00 -- "a job is failing" is not actionable, so
+the jobs are named. Point any uptime monitor at this path and alert on `status`
+or on `alerts` being non-empty.
+
+Three things it deliberately does *not* do:
+
+- **It never answers non-2xx.** The compose healthcheck polls this, so a 503
+  would mark the server container unhealthy and stop the frontend from ever
+  starting -- which is the wrong response to "last night's backup did not run".
+  `status` carries the verdict; the HTTP code carries only "the process is up".
+- **A failing job is judged on its latest attempt only.** One that failed at
+  03:00 and succeeded on the 03:10 retry is working, and paging about it teaches
+  people to ignore the page.
+- **`backup: unchecked` is not a fault.** It means `BACKUP_STATUS_DIR` is unset,
+  which is the normal state for a server run outside Docker. Compose sets it to
+  the backup directory mounted read-only; `BACKUP_MAX_AGE_HOURS` (36h, not 24h,
+  so one late run is not an alert) decides when a dump counts as stale.
 
 ### Schema migrations
 
@@ -334,7 +523,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 
 | Method | Path | 說明 |
 |---|---|---|
-| GET | `/api/health` | 服務與資料庫狀態 |
+| GET | `/api/health` | 服務、資料庫、背景作業與備份狀態；`status` 是給監控看的總結。見 [what /api/health reports](#what-apihealth-reports) |
 | GET | `/api/stocks/search?q=&limit=` | 代碼／名稱搜尋 |
 | GET | `/api/stocks/{sid}` | 個股基本資料 |
 | GET | `/api/stocks/{sid}/history?months=6` | 歷史日成交. `months` 上限 24; 12 without a token, and `force=true` is **ADMIN** -- see [the fetch budget](#the-upstream-fetch-budget) |
@@ -570,6 +759,11 @@ twstock 把上市櫃名冊做成兩個 CSV 打包在套件裡，更新方式是 
 但**刻意沒有退役任何代碼**。超過兩個排程週期沒有成功紀錄時，頁面上會出現警示橫幅。
 每個作業各保留最近 200 次紀錄。
 
+`/admin/jobs` requires somebody to go and look, which is why a failed run also
+logs at `ERROR` and shows up in `/api/health` as `jobs.failing` -- see
+[what /api/health reports](#what-apihealth-reports). That is the whole of the
+alerting; there is no pager.
+
 幾個刻意的決定：
 
 - **每個作業一條背景 daemon thread**。名冊首次抓取要 40 秒以上（上市那頁是 8MB HTML），
@@ -732,6 +926,9 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `POSTGRES_HOST` / `POSTGRES_PORT` | `localhost` / `5433` | server 連線位置；5433 避免撞到既有的 5432 |
 | `DATABASE_URL` | （未設） | 設了就蓋過上面組出來的連線字串，用來指向外部託管資料庫 |
 | `SERVER_PORT` / `FRONTEND_PORT` | `8000` / `8100` | docker compose 對外公開的 port |
+| `POSTGRES_BIND` / `SERVER_BIND` / `FRONTEND_BIND` | `127.0.0.1` / `127.0.0.1` / `0.0.0.0` | Which host interface each published port binds to. Only the frontend is meant to be reachable |
+| `TLS_CERT_DIR` / `FRONTEND_TLS_PORT` | `./certs` / `8443` | Drop `fullchain.pem` + `privkey.pem` in there and the frontend serves HTTPS; empty means plain HTTP. See [TLS](#tls) |
+| `DB_` / `SERVER_` / `FRONTEND_` / `BACKUP_` `_MEMORY_LIMIT`, `_CPU_LIMIT` | see [resource limits](#resource-limits-and-log-rotation) | Per-container ceilings, so a runaway job costs its container and not the host |
 | `CORS_ORIGINS` | `http://localhost:5173,...` | 允許的來源（走 nginx 時同源，用不到） |
 | `CURRENT_MONTH_TTL_SECONDS` | `900` | 當月資料快取秒數 |
 | `THROTTLE_MAX_CALLS` / `THROTTLE_WINDOW_SECONDS` | `3` / `5.5` | 上游速率限制 |
@@ -742,6 +939,8 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `STOCK_CODE_SYNC_INTERVAL_HOURS` | `24` | First-boot default for its interval, same as above |
 | `JOBS_SCHEDULER_ENABLED` | `true` | Master switch. Off means this process fires nothing on its own (manual runs still work); leave it on for exactly one replica |
 | `SCHEDULER_TIMEZONE` | `Asia/Taipei` | Wall clock a "daily at HH:MM" schedule is read in. `TZ` comes from the same .env, so the two agree by default |
+| `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | `json` emits one object per line for a shipper. Every line carries a request id -- see [logs and request ids](#logs-and-request-ids) |
+| `BACKUP_MAX_AGE_HOURS` | `36` | Past this, `/api/health` calls the newest dump stale and reports `degraded` |
 
 ---
 
@@ -1052,7 +1251,10 @@ not support.
   this switch covers the scheduler only, not the other per-process state: see
   [Deployment is single-process](#deployment-is-single-process).
 - Run history is capped at the most recent 200 attempts per job and lives only in
-  the database. Nothing alerts anywhere; someone has to look at `/admin/jobs`.
+  the database. A failed run logs at `ERROR` and surfaces in `/api/health` as
+  `jobs.failing`, so an uptime monitor pointed at that endpoint will see it --
+  but there is no pager and no notification: something outside this deployment
+  has to be watching, or someone has to look at `/admin/jobs`.
 - 四大買賣點只讀成交量、開盤、收盤三個欄位，且只比較最新一根與前一根 K 棒，沒有趨勢或部位概念；
   籌碼面（法人買賣超、融資融券）完全不在裡面。
 - 同一套規則現在也跑在大盤 `t00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
@@ -1065,12 +1267,20 @@ not support.
   than letting a deploy do it. See the schema migrations section above.
 - Backups are a nightly `pg_dump` to one directory on the same host. That covers
   a mistaken `down -v`, a bad migration and a wrong `delete`; it does not cover
-  losing the machine. Nothing alerts when a backup fails -- it shows up in
-  `docker compose logs db-backup` and nowhere else.
+  losing the machine. A backup that stopped happening shows up in `/api/health`
+  as `backup.status: stale`; *why* it failed is only in
+  `docker compose logs db-backup`.
+- **TLS is off unless you supply a certificate**, and renewal is not automated:
+  copy the new `fullchain.pem` / `privkey.pem` into `deployment/certs/` and
+  restart the frontend. Terminating TLS in front of this compose file (Caddy, a
+  cloud load balancer) is the other supported shape -- see [TLS](#tls).
 - 重設密碼產生的臨時密碼**只顯示一次**，且只能靠 ADMIN 自己轉交。沒有寄信、沒有簡訊，
   也沒有「忘記密碼」的自助流程——使用者一定要找得到管理員。
 - **Token 存在 localStorage**，任何 XSS 都讀得到。專案沒有 cookie/CSRF 基礎建設，
   nginx 與 Vite proxy 都已原樣轉發 `Authorization`，所以先採 Bearer；access token 的短效期限制了外洩的影響範圍。
+  正式部署由 nginx 的 CSP（`script-src 'self'`）擋住「注入的 script 去讀它」這條路，
+  見 [security headers](#security-headers)——但那是緩解，不是把 token 移出 localStorage。
+  `pnpm dev` 起的 Vite dev server 沒有這層 CSP。
 - **登出後既有的 access token 仍然有效到過期為止**（最多 30 分鐘）。這是無狀態 token 的固有取捨；
   refresh token 會立刻撤銷，所以 session 無法續期。
 - 使用者資料表名為 `app_user` 而不是 `user`——`user` 是 PostgreSQL 保留字，
