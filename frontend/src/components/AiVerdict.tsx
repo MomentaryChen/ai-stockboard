@@ -24,6 +24,7 @@ import type { AiAnalysisResponse, AiVerdict as Verdict } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { translateBfpLabel, useI18n } from '../i18n'
 import type { MessageKey } from '../i18n'
+import { errorMessage } from '../utils/errors'
 
 /** Which of the seven answers this is. Split by action so `hold` needs no size. */
 const CALL_KEY: Record<string, MessageKey> = {
@@ -178,7 +179,7 @@ export default function AiVerdictSection({ sid }: Props) {
       )}
       {error && !unavailable && !insufficient && !exhausted && (
         <p className="banner-error ai-note">
-          {t('ai.failed', { message: (error as Error).message })}
+          {t('ai.failed', { message: errorMessage(error, t) })}
         </p>
       )}
 
