@@ -40,6 +40,8 @@ export default function StockDetail() {
   const [visibleMas, setVisibleMas] = useState<string[]>(['ma5', 'ma20'])
   // Defaults to the corrected rules; 'twstock' is there to compare against.
   const [ruleSet, setRuleSet] = useState<RuleSet>('grs')
+  // Two analysis intents, not a card carousel: trade grades days, hold grades years.
+  const [analysisMode, setAnalysisMode] = useState<'trade' | 'hold'>('trade')
 
   const history = useQuery({
     queryKey: ['history', sid, months],
@@ -234,6 +236,35 @@ export default function StockDetail() {
           verdict in the stack below has lost nothing by moving down. */}
       <AiVerdictSection sid={sid} layout="spotlight" />
 
+      {/* Stage stays put (quote, AI, chart); only the evidence column swaps.
+          Trade and hold answer different horizons -- one scroll of both used
+          to bury the second question under the first. */}
+      <div className="analysis-mode-bar">
+        <div className="segmented" role="tablist" aria-label={t('nav.stock')}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={analysisMode === 'trade'}
+            className={`btn btn-sm ${analysisMode === 'trade' ? 'active' : ''}`}
+            onClick={() => setAnalysisMode('trade')}
+          >
+            {t('analysis.modeTrade')}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={analysisMode === 'hold'}
+            className={`btn btn-sm ${analysisMode === 'hold' ? 'active' : ''}`}
+            onClick={() => setAnalysisMode('hold')}
+          >
+            {t('analysis.modeHold')}
+          </button>
+        </div>
+        <p className="dim analysis-mode-hint">
+          {t(analysisMode === 'trade' ? 'analysis.hintTrade' : 'analysis.hintHold')}
+        </p>
+      </div>
+
       <div className="grid-detail">
         <section className="card">
           <div className="row-between wrap" style={{ marginBottom: 12 }}>
@@ -315,98 +346,104 @@ export default function StockDetail() {
           )}
         </section>
 
-        <div className="stack">
-          {analysis.data && (
+        <div className="stack" role="tabpanel">
+          {analysisMode === 'trade' ? (
             <>
-              {/* The evidence column: what the band above is judged
-                  against. Everything here is deterministic and free except
-                  the hold verdict at the foot of it, which is button-gated
-                  for the same reason the band is. */}
-              <div className="section-label">{t('section.traditional')}</div>
-              <BestFourPointCard
-                result={analysis.data.best_four_point}
-                asOf={analysis.data.as_of}
-                sampleSize={analysis.data.sample_size}
-                ruleSet={ruleSet}
-                onRuleSetChange={setRuleSet}
-              />
-              <MaPanel
-                mas={analysis.data.moving_averages}
-                latestClose={analysis.data.latest_close}
-              />
-              {/* Under the verdict it grades, and sharing its rule set: the
-                  card above says Buy, this one says what Buy has been worth. */}
-              {backtest.data ? (
-                <BacktestCard data={backtest.data} />
-              ) : backtest.isError ? (
-                <section className="card">
-                  <h2 className="card-title">{t('bt.title')}</h2>
-                  <p className="dim" style={{ margin: 0 }}>
-                    {backtest.error instanceof ApiError &&
-                    backtest.error.status === 422
-                      ? t('bt.notEnoughBars')
-                      : t('bt.failed', {
-                          message: (backtest.error as Error).message,
+              {analysis.data && (
+                <>
+                  <BestFourPointCard
+                    result={analysis.data.best_four_point}
+                    asOf={analysis.data.as_of}
+                    sampleSize={analysis.data.sample_size}
+                    ruleSet={ruleSet}
+                    onRuleSetChange={setRuleSet}
+                  />
+                  <MaPanel
+                    mas={analysis.data.moving_averages}
+                    latestClose={analysis.data.latest_close}
+                  />
+                  {/* Under the verdict it grades, and sharing its rule set: the
+                      card above says Buy, this one says what Buy has been worth. */}
+                  {backtest.data ? (
+                    <BacktestCard data={backtest.data} />
+                  ) : backtest.isError ? (
+                    <section className="card">
+                      <h2 className="card-title">{t('bt.title')}</h2>
+                      <p className="dim" style={{ margin: 0 }}>
+                        {backtest.error instanceof ApiError &&
+                        backtest.error.status === 422
+                          ? t('bt.notEnoughBars')
+                          : t('bt.failed', {
+                              message: (backtest.error as Error).message,
+                            })}
+                      </p>
+                    </section>
+                  ) : null}
+                </>
+              )}
+
+              {chips.data && chips.data.coverage !== 'none' && (
+                <ChipCard data={chips.data} />
+              )}
+
+              {rows.length > 0 && (
+                <details className="card details-card">
+                  <summary className="card-title">{t('table.last10')}</summary>
+                  <table className="data">
+                    <thead>
+                      <tr>
+                        <th>{t('table.date')}</th>
+                        <th>{t('table.close')}</th>
+                        <th>{t('table.change')}</th>
+                        <th>{t('table.turnover')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows
+                        .slice(-10)
+                        .reverse()
+                        .map((row) => {
+                          const point = history.data?.data.find((d) => d.date === row.date)
+                          return (
+                            <tr key={row.date}>
+                              <td>{row.date.slice(5)}</td>
+                              <td>{fmtPrice(row.close)}</td>
+                              <td className={direction(row.change)}>{fmtSigned(row.change)}</td>
+                              <td>{fmtCompact(point?.turnover ?? null, locale)}</td>
+                            </tr>
+                          )
                         })}
+                    </tbody>
+                  </table>
+                </details>
+              )}
+            </>
+          ) : (
+            <>
+              {hold.isLoading ? (
+                <section className="card">
+                  <div className="row" style={{ justifyContent: 'center' }}>
+                    <span className="spinner" />
+                  </div>
+                </section>
+              ) : hold.data ? (
+                <>
+                  <ChenHoldCard features={hold.data.features} rules={hold.data.rules} />
+                  <HoldAiVerdict sid={sid} />
+                </>
+              ) : (
+                <section className="card">
+                  <p className="dim" style={{ margin: 0 }}>
+                    {t('common.noData')}
                   </p>
                 </section>
-              ) : null}
+              )}
+
+              {dividends.data && dividends.data.coverage !== 'none' && (
+                <DividendCard data={dividends.data} />
+              )}
             </>
           )}
-
-          {/* A different question about the same stock, kept in its own
-              section rather than folded into the band above or the cards
-              beside it: those grade a position over days, this grades a
-              company over years, and one blended verdict across both horizons
-              would mean nothing. */}
-          {hold.data && (
-            <>
-              <div className="section-label">{t('section.hold')}</div>
-              <ChenHoldCard features={hold.data.features} rules={hold.data.rules} />
-              <HoldAiVerdict sid={sid} />
-            </>
-          )}
-
-          {chips.data && chips.data.coverage !== 'none' && (
-            <>
-              <div className="section-label">{t('section.chip')}</div>
-              <ChipCard data={chips.data} />
-            </>
-          )}
-
-          {dividends.data && dividends.data.coverage !== 'none' && (
-            <DividendCard data={dividends.data} />
-          )}
-
-          <section className="card">
-            <h2 className="card-title">{t('table.last10')}</h2>
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>{t('table.date')}</th>
-                  <th>{t('table.close')}</th>
-                  <th>{t('table.change')}</th>
-                  <th>{t('table.turnover')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows
-                  .slice(-10)
-                  .reverse()
-                  .map((row) => {
-                    const point = history.data?.data.find((d) => d.date === row.date)
-                    return (
-                      <tr key={row.date}>
-                        <td>{row.date.slice(5)}</td>
-                        <td>{fmtPrice(row.close)}</td>
-                        <td className={direction(row.change)}>{fmtSigned(row.change)}</td>
-                        <td>{fmtCompact(point?.turnover ?? null, locale)}</td>
-                      </tr>
-                    )
-                  })}
-              </tbody>
-            </table>
-          </section>
         </div>
       </div>
     </div>

@@ -101,6 +101,37 @@ body {
 .row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .wrap { flex-wrap: wrap; }
 
+/* Trade vs hold on the stock page: sits between the AI band and the chart
+   grid so the stage does not move when the evidence column swaps. */
+.analysis-mode-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.analysis-mode-hint {
+  margin: 0;
+  font-size: 13px;
+}
+
+details.details-card > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+details.details-card > summary::-webkit-details-marker { display: none; }
+details.details-card > summary::before {
+  content: '▸';
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1;
+}
+details.details-card[open] > summary::before { content: '▾'; }
+details.details-card > summary + * { margin-top: 12px; }
+
 /* ---------- search ---------- */
 /* min-width, so a crowded toolbar wraps this onto its own line rather than
    shrinking it to a stub nobody can type a stock code into. */
