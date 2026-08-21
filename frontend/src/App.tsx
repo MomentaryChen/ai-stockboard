@@ -47,7 +47,7 @@ export default function App() {
     <div className={`app${mini ? ' app-mini' : ''}`}>
       <header className="topbar" hidden={mini}>
         <div className="brand">
-          <span className="brand-mark">ai</span>
+          <span className="brand-mark">AI</span>
           {/* Its own element so a narrow screen can drop the words and keep
               the mark; the topbar has no room for both. */}
           <span className="brand-rest">{t('app.brandSuffix')}</span>
