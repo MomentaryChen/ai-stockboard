@@ -1,9 +1,10 @@
-"""AI-assisted analysis: when to spend a Gemini request, and when not to.
+"""AI-assisted analysis: when to spend a provider request, and when not to.
 
-The generation itself is one call in `gemini.py`. Almost everything here is
-about *not* making that call, because this is the first feature in the service
-whose upstream costs money per request and is triggered by a button rather than
-by a schedule.
+The generation itself is one call into the active provider adapter (Gemini
+today). Almost everything here is about *not* making that call, because this is
+the first feature in the service whose upstream costs money per request and is
+triggered by a button rather than by a schedule. Prompt wording is shared in
+`prompts.py`; adapters only transport it.
 
 Three gates, in order:
 
@@ -14,8 +15,8 @@ Three gates, in order:
 2. **The per-account daily quota**, counted from rows this account actually paid
    for. Cache hits are free and are not counted -- otherwise a user would be
    charged for reading someone else's answer.
-3. **The process-wide rate limiter** in `gemini.py`, which is the last line and
-   protects the deployment's quota rather than any one account's.
+3. **The process-wide rate limiter** in the provider adapter, which is the last
+   line and protects the deployment's quota rather than any one account's.
 
 `force` re-generates past gate 1. It is ADMIN-only at the router, for the same
 reason `force` on the history routes is: it is the one knob that turns a cached
@@ -42,14 +43,14 @@ from app.schemas import (
     PriceFeatures,
 )
 from app.services.analysis import features as feature_service
-from app.services.analysis import gemini, model_settings, traditional
+from app.services.analysis import gemini, model_settings, prompts, traditional
 
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
 #: Locales the prompt has wording for. Anything else is served the default
-#: rather than silently asking Gemini to write in a language nobody reviewed.
+#: rather than silently asking the model to write in a language nobody reviewed.
 SUPPORTED_LOCALES = ("zh-TW", "en")
 DEFAULT_LOCALE = "zh-TW"
 
@@ -118,7 +119,7 @@ def _find(
             AiAnalysis.sid == sid,
             AiAnalysis.as_of == as_of,
             AiAnalysis.model == model,
-            AiAnalysis.prompt_version == gemini.PROMPT_VERSION,
+            AiAnalysis.prompt_version == prompts.PROMPT_VERSION,
             AiAnalysis.locale == locale,
         )
     ).scalar_one_or_none()
@@ -209,7 +210,7 @@ def get_or_create(
         sid=sid,
         as_of=extracted.as_of,
         model=model,
-        prompt_version=gemini.PROMPT_VERSION,
+        prompt_version=prompts.PROMPT_VERSION,
         locale=locale,
         action=generation.verdict.action,
         size=generation.verdict.size,
@@ -239,7 +240,7 @@ def get_or_create(
                 AiAnalysis.sid == sid,
                 AiAnalysis.as_of == extracted.as_of,
                 AiAnalysis.model == model,
-                AiAnalysis.prompt_version == gemini.PROMPT_VERSION,
+                AiAnalysis.prompt_version == prompts.PROMPT_VERSION,
                 AiAnalysis.locale == locale,
             )
         )

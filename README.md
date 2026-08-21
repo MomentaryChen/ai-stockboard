@@ -1073,11 +1073,12 @@ per-name chip and return `coverage: none`.
 ```
 server/app/services/analysis/
 ├── __init__.py
-├── traditional.py     規則式：均線 + 四大買賣點
-├── backtest.py        把 traditional 的訊號在歷史上重跑一遍，算命中率與績效
-├── features.py        純函式：從日線算出 AI 要看的衍生指標
-├── gemini.py          唯一知道 provider 存在的模組：提示詞、結構化輸出、限流
-└── ai.py              編排：什麼時候該花一次 Gemini 請求，什麼時候不該
+├── traditional.py     Rule engine: moving averages + Best Four Point
+├── backtest.py        Replay traditional signals over history for hit rate / PnL
+├── features.py        Pure functions: derived measurements for the AI prompt
+├── prompts.py         Provider-agnostic prompt, wire schema, and prompt_version
+├── gemini.py          Gemini adapter: SDK, retries, thinking budget, rate limit
+└── ai.py              Orchestration: when to spend a provider request
 ```
 
 三者吃同一份 `daily_price` 資料，各自獨立產生結果，端點也分開，
@@ -1107,10 +1108,22 @@ hold. Direction and magnitude are separate fields rather than one seven-valued
 enum, so the card can render 進場/退場 and 大/中/小 independently and an
 evaluation can score direction without having to agree about sizing.
 
-The button lives in three places, all the same endpoint: the expanded watchlist
-row and the stock card on `/realtime` (inline, under the 四大買賣點 chip), and
-the 個股 page at `/stock/:sid` as a card in the analysis stack. It requires a
-sign-in, and answers on POST.
+The button lives in three places, all the same endpoint: the 個股 page at
+`/stock/:sid`, as a full-width band under the price header and above the chart;
+and the expanded watchlist row and the stock card on `/realtime`, inline
+between the 四大買賣點 chip and 開高低收/五檔. It requires a sign-in, and
+answers on POST.
+
+All three used to be the *last* block on their surface, on the principle that
+the free deterministic verdict should be read before the metered one is
+offered. That principle was being applied in the wrong place. The panel
+generates only when the button is pressed, so position on the page has never
+been what decides whether a Gemini request is paid for — the three gates in
+[Spending](#spending) are. What the old order did decide was that the feature
+this product leads with was the thing you had to scroll past 五檔 and a group
+picker to find. It now sits directly beneath the rule engine's verdict and
+above the numbers both were drawn from, so the two answers to "so what do I do
+with this" are read together.
 
 ### Why the model is not shown the bars
 
@@ -1143,6 +1156,14 @@ conditions ("mixed evidence", "a move that has already happened"), and
 `server/tests/test_ai_analysis.py` asserts that those sentences are still in the
 prompt. Deleting them is a one-line change that would be invisible in every
 other test.
+
+### One prompt package for every provider
+
+`services/analysis/prompts.py` owns the system instruction, user turn,
+structured wire schema, and `PROMPT_VERSION`. Provider adapters (`gemini.py`
+today; Claude or others later) only transport that contract. Edit the wording
+once; swap engines without touching the prompt. Bump `PROMPT_VERSION` when the
+wording or schema changes so cached verdicts stay attributable.
 
 ### Spending
 

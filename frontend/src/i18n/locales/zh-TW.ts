@@ -198,7 +198,6 @@ export const zhTW = {
     '本次向來源抓取 {fetched} 個月{detail}，由 PostgreSQL 快取提供 {cached} 個月',
   'history.fetchDetail': '（{months}）',
   'section.traditional': '傳統分析',
-  'section.ai': 'AI 分析',
   'section.chip': '籌碼',
   'table.last10': '近 10 日',
   'table.date': '日期',

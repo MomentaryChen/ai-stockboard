@@ -147,6 +147,13 @@ export default function QuoteRow({
           <td colSpan={8}>
             <div className="quote-detail">
               <BfpChip result={entry.bfp} loading={bfpLoading} />
+              {/* Straight under the rule verdict, above the numbers: the two
+                  answers to "so what do I do with it" belong next to each
+                  other. This used to be the last thing in the row, under 五檔
+                  and the group picker, which is past where anyone scrolls in a
+                  detail they opened to read one line of. Nothing about the
+                  spend changes -- the panel still generates on the button. */}
+              <AiVerdictSection sid={entry.code} />
               {quote ? (
                 <QuoteDetail quote={quote} />
               ) : (
@@ -176,11 +183,6 @@ export default function QuoteRow({
                   </select>
                 </label>
               )}
-              {/* Below the rule verdict on purpose: the free, deterministic
-                  answer is already on screen before anyone is offered a paid
-                  one, and the AI panel reads as a second opinion rather than
-                  the headline. */}
-              <AiVerdictSection sid={entry.code} />
             </div>
           </td>
         </tr>

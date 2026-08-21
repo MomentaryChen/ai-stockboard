@@ -7,10 +7,27 @@
  * the user has to ask -- and a watchlist of twenty stocks must not turn into
  * twenty generations because somebody opened the page.
  *
- * Two layouts, one component, because the verdict is the same object in both
- * places. `card` is the 個股 sidebar and uses the same `.card` / `.card-title`
- * / `.signal` language as 四大買賣點. `inline` is the nested block under a
- * watchlist quote, where a second card would be a box inside a box.
+ * Two layouts, one component, because the verdict is the same object in both:
+ *
+ * - `spotlight` is the 個股 band directly under the price header: full page
+ *   width, above the chart, tinted and edged in the accent so it reads as a
+ *   named region of the page rather than one more card in the analysis column.
+ * - `inline` is the block under a watchlist quote, between the 四大買賣點 chip
+ *   and 開高低收/五檔. Not a card, because a card there is a box inside a box;
+ *   an accent rule and a wash say "this is the AI's answer" without the chrome.
+ *
+ * (There was a third, a plain `.card` that sat in the 個股 analysis column
+ * looking like 四大買賣點' neighbour. The band replaced it: a card that looks
+ * like every other card is exactly what a headline feature must not be.)
+ *
+ * Both used to sit *below* the evidence they judge. That order was
+ * protecting the wallet -- free deterministic answer first, metered one after
+ * -- but it was protecting it in the wrong place: the panel still generates
+ * only on a click, so being read first is not the same as being paid for
+ * first. What the old order actually cost was that the feature this product
+ * leads with was the last thing on the page. The rule engine's verdict is
+ * still on screen next to it either way: the 四大買賣點 chip sits above the
+ * inline panel, and the analysis stack sits below the band.
  *
  * The result is written into the react-query cache under (sid, locale) rather
  * than kept in local state alone, so collapsing a board row and opening it
@@ -88,17 +105,24 @@ export function AiCallChip({
   )
 }
 
+type Layout = 'inline' | 'spotlight'
+
+/** One wrapper class per layout -- see the note at the top of the file. */
+const WRAPPER_CLASS: Record<Layout, string> = {
+  inline: 'ai-panel',
+  spotlight: 'card ai-spotlight',
+}
+
 interface Props {
   sid: string
-  /** `card` matches the 個股 analysis stack; `inline` nests under a quote. */
-  layout?: 'card' | 'inline'
+  layout?: Layout
 }
 
 export default function AiVerdictSection({ sid, layout = 'inline' }: Props) {
   const { t, locale, intlTag } = useI18n()
   const { status } = useAuth()
   const queryClient = useQueryClient()
-  const asCard = layout === 'card'
+  const spotlight = layout === 'spotlight'
 
   const cacheKey = ['ai-verdict', sid, locale]
   const [result, setResult] = useState<AiAnalysisResponse | null>(
@@ -136,16 +160,22 @@ export default function AiVerdictSection({ sid, layout = 'inline' }: Props) {
     },
   })
 
-  const wrapperClass = asCard ? 'card' : 'ai-panel'
   const title = (
     <h2 className="card-title" style={{ margin: 0 }}>
+      {/* Only the band has to announce itself across the width of a page; the
+          other two are already inside something that says where they are. */}
+      {spotlight && (
+        <span className="ai-mark" aria-hidden="true">
+          ✦
+        </span>
+      )}
       {t('ai.title')}
     </h2>
   )
 
   if (status !== 'authenticated') {
     return (
-      <section className={wrapperClass}>
+      <section className={WRAPPER_CLASS[layout]}>
         <div className="row-between wrap" style={{ marginBottom: 12 }}>
           {title}
         </div>
@@ -170,11 +200,14 @@ export default function AiVerdictSection({ sid, layout = 'inline' }: Props) {
     : ''
 
   return (
-    <section className={wrapperClass}>
+    <section className={WRAPPER_CLASS[layout]}>
       <div className="row-between wrap" style={{ marginBottom: 12 }}>
         <div className="row wrap" style={{ gap: 8 }}>
           {title}
-          {result && !asCard && <AiCallChip verdict={result.verdict} />}
+          {/* The call rides in the header beside the title, at the size the
+              layout can carry -- full size in the band, where the call *is*
+              the headline; a chip in a board row, where it is a line. */}
+          {result && <AiCallChip verdict={result.verdict} compact={!spotlight} />}
         </div>
         <div className="row wrap" style={{ gap: 8 }}>
           {!exhausted && left !== null && !result && (
@@ -203,19 +236,21 @@ export default function AiVerdictSection({ sid, layout = 'inline' }: Props) {
         </p>
       )}
 
-      {!result && !run.isPending && !error && <p className="dim">{t('ai.empty')}</p>}
+      {!result && !run.isPending && !error && <p className="dim ai-lead">{t('ai.empty')}</p>}
 
-      {result && <AiVerdictBody result={result} showBadge={asCard} />}
+      {result && <AiVerdictBody result={result} wide={spotlight} />}
     </section>
   )
 }
 
 function AiVerdictBody({
   result,
-  showBadge,
+  wide,
 }: {
   result: AiAnalysisResponse
-  showBadge: boolean
+  /** The band is as wide as the page, so reasons and risks stand side by side
+   *  instead of running one after the other down a board row. */
+  wide: boolean
 }) {
   const { t, intlTag } = useI18n()
   const { verdict } = result
@@ -231,11 +266,37 @@ function AiVerdictBody({
     (verdict.action === 'hold' && ruleSignal === 'hold')
   const ruleLabel = translateBfpLabel(result.traditional.label, t)
 
+  // Named here rather than inlined twice: the two-column band and the
+  // single-column panel differ only in how these are arranged.
+  const reasons = verdict.reasons.length > 0 && (
+    <>
+      {/* A heading only where a bare list would be ambiguous -- in one column
+          the list follows the summary and can only be its reasoning. */}
+      {wide && <span className="ai-block-title">{t('ai.reasons')}</span>}
+      <ul className="reason-list">
+        {verdict.reasons.map((reason) => (
+          <li key={reason}>{reason}</li>
+        ))}
+      </ul>
+    </>
+  )
+
+  const risks = verdict.risks.length > 0 && (
+    <>
+      <span className="ai-block-title">{t('ai.risks')}</span>
+      <ul className="reason-list ai-risks">
+        {verdict.risks.map((risk) => (
+          <li key={risk}>{risk}</li>
+        ))}
+      </ul>
+    </>
+  )
+
   return (
     <>
-      {showBadge && <AiCallChip verdict={verdict} compact={false} />}
-
-      <p className="dim" style={{ margin: showBadge ? '10px 0 0' : '0' }}>
+      {/* The call itself is in the header, next to the title -- the body picks
+          up at the sentence explaining it. */}
+      <p className="ai-headline dim" style={{ margin: 0 }}>
         {verdict.headline}
       </p>
 
@@ -249,22 +310,15 @@ function AiVerdictBody({
         {t('ai.asOf', { date: result.as_of })}
       </p>
 
-      {verdict.reasons.length > 0 && (
-        <ul className="reason-list">
-          {verdict.reasons.map((reason) => (
-            <li key={reason}>{reason}</li>
-          ))}
-        </ul>
-      )}
-
-      {verdict.risks.length > 0 && (
+      {wide ? (
+        <div className="ai-columns">
+          <div>{reasons}</div>
+          <div>{risks}</div>
+        </div>
+      ) : (
         <>
-          <span className="ai-block-title">{t('ai.risks')}</span>
-          <ul className="reason-list ai-risks">
-            {verdict.risks.map((risk) => (
-              <li key={risk}>{risk}</li>
-            ))}
-          </ul>
+          {reasons}
+          {risks}
         </>
       )}
 

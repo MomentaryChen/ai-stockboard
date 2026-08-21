@@ -210,7 +210,6 @@ export const en: Messages = {
     'Fetched {fetched} month(s) from the source{detail}; {cached} month(s) served from the PostgreSQL cache',
   'history.fetchDetail': ' ({months})',
   'section.traditional': 'Rule-based analysis',
-  'section.ai': 'AI analysis',
   'section.chip': 'Chip flow',
   'table.last10': 'Last 10 days',
   'table.date': 'Date',
