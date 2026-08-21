@@ -37,6 +37,7 @@ from app.db import get_db
 from app.models import AppUser
 from app.schemas import (
     AiAnalysisResponse,
+    AiDepth,
     AiHoldAnalysisResponse,
     AiQuotaStatus,
     BacktestBaselineStats,
@@ -264,6 +265,13 @@ def generate_ai_analysis(
     locale: str = Query(
         ai_service.DEFAULT_LOCALE, description="判讀要用哪個語言生成（zh-TW / en）"
     ),
+    depth: AiDepth = Query(
+        "quick",
+        description=(
+            "評估深度。quick = 只看價量；"
+            "deep = 另外帶入三大法人籌碼、融資券與年度基本面"
+        ),
+    ),
     regenerate: bool = Depends(deps.regenerate_ai),
     user: AppUser = Depends(deps.get_current_user),
     db: Session = Depends(get_db),
@@ -272,6 +280,18 @@ def generate_ai_analysis(
 
     POST rather than GET because a miss spends money and writes a row. A hit
     spends neither, which is what lets the button live on every watchlist card.
+
+    `depth` widens what the model is shown; it does not change the answer's
+    shape, so a client that ignores it keeps working. Both depths are cached
+    separately and both draw on the same daily allowance -- a deep call is one
+    generation, not two, even though it costs the provider more. That is a
+    deliberate simplification: `AI_DAILY_QUOTA` is the knob a deployment turns
+    if the bill moves, and a weighted quota would have to be explained in the
+    UI before it could be enforced.
+
+    The deep path reads `chip_day` and `fundamentals_annual` and never fetches
+    from the exchange -- see `ai_service._deep_inputs` for why that matters
+    when the button is on a twenty-row watchlist.
     """
     if not gemini.is_configured():
         raise HTTPException(
@@ -293,6 +313,7 @@ def generate_ai_analysis(
             user=user,
             locale=locale,
             force=regenerate,
+            depth=depth,
         )
     except ai_service.InsufficientData as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

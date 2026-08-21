@@ -640,10 +640,10 @@ class WatchlistItem(Base):
 class AiAnalysis(Base):
     """One generated position call, kept so the same one is never paid for twice.
 
-    The natural key is (sid, as_of, model, prompt_version, locale) and it is
-    enforced as a unique index, which makes this table a **shared** cache rather
-    than a per-user log: twenty people watching 2330 on the same session get one
-    Gemini request between them. `requested_by` records whichever account
+    The natural key is (sid, as_of, model, prompt_version, locale, depth) and it
+    is enforced as a unique index, which makes this table a **shared** cache
+    rather than a per-user log: twenty people watching 2330 on the same session
+    get one Gemini request between them. `requested_by` records whichever account
     happened to press the button first, and is what the daily quota counts --
     so a cache hit costs its reader nothing, which is the whole point.
 
@@ -670,6 +670,12 @@ class AiAnalysis(Base):
     model: Mapped[str] = mapped_column(String(64))
     prompt_version: Mapped[str] = mapped_column(String(16))
     locale: Mapped[str] = mapped_column(String(8))
+
+    # How much the model was shown. `quick` is the price series alone; `deep`
+    # adds institutional flow and annual fundamentals. Part of the key rather
+    # than folded into `prompt_version`, because it decides which inputs the
+    # verdict is comparable against and the database has to enforce that.
+    depth: Mapped[str] = mapped_column(String(8), default="quick", server_default="quick")
 
     action: Mapped[str] = mapped_column(String(8))  # enter / exit / hold
     size: Mapped[str | None] = mapped_column(String(8))  # large / medium / small
@@ -704,10 +710,14 @@ class AiAnalysis(Base):
             "model",
             "prompt_version",
             "locale",
+            "depth",
             unique=True,
         ),
         # The quota check counts one account's rows for today.
         Index("ix_ai_analysis_requested_by_created", "requested_by", "created_at"),
+        CheckConstraint(
+            "depth in ('quick', 'deep')", name="ck_ai_analysis_depth"
+        ),
         CheckConstraint(
             "action in ('enter', 'exit', 'hold')", name="ck_ai_analysis_action"
         ),

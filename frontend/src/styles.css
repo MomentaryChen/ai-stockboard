@@ -527,7 +527,8 @@ tr.row-active { background: var(--bg-input); box-shadow: inset 2px 0 0 var(--acc
 
 .hold-stats { margin-top: 14px; }
 .hold-note { margin: 10px 0 0; font-size: 12px; }
-.hold-gaps { font-size: 12px; }
+/* Coverage gaps, on the 存股 checklist and the deep AI verdict alike. */
+.coverage-gaps { font-size: 12px; }
 
 /* ---------- section label ---------- */
 .section-label {

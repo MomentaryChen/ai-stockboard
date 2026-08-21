@@ -262,6 +262,70 @@ class PriceFeatures(BaseModel):
     bias_3_6: list[float]
 
 
+class DeepChipColumn(BaseModel):
+    """One institutional column's recent behaviour, as the deep prompt sees it.
+
+    Shaped for a model rather than for the 籌碼 card: `ChipFlow` next door
+    carries a 5-day net in shares, which is unreadable without knowing how big
+    the stock trades. `net_5d_pct_of_volume` is that same net divided by the
+    volume of the same sessions, which is the number a reason can actually cite
+    -- 3% of a fortnight's turnover means the same thing on 2330 and on a
+    small-cap, and the raw share count does not.
+    """
+
+    streak: Literal["buy", "sell", "none"]
+    streak_days: int
+    net_5d_shares: int | None
+    net_20d_shares: int | None
+    net_5d_pct_of_volume: float | None
+
+
+class DeepChipFeatures(BaseModel):
+    """Institutional flow and margin, derived from `chip_day` rows already held.
+
+    `days_covered` is read before anything else: zero means the nightly chip
+    job has not covered this stock's sessions, which is a coverage gap rather
+    than a quiet 買賣超 of nought.
+    """
+
+    as_of: datetime.date | None
+    days_covered: int
+    foreign: DeepChipColumn
+    trust: DeepChipColumn
+    dealer: DeepChipColumn
+    total: DeepChipColumn
+    #: 張, the unit both exchanges publish -- not converted, unlike the nets.
+    margin_balance: int | None
+    margin_change_5d: int | None
+    short_balance: int | None
+    short_change_5d: int | None
+
+
+class DeepInputs(BaseModel):
+    """What a deep verdict was shown beyond the price series.
+
+    Null on a quick response, and that is the only difference between the two
+    on the wire: `features` and the verdict itself keep their shape, so every
+    reader written against the quick response goes on working.
+
+    `coverage_gaps` uses the same snake_case slugs `ChenRuleResult` does, and
+    for the same reason -- the UI renders each from a catalogue, so a gap the
+    frontend has no wording for shows as itself rather than as blank.
+    """
+
+    chip: DeepChipFeatures
+    # Quoted, and resolved by the `model_rebuild()` at the foot of this file.
+    # The annual figures belong to the 存股 block further down, and reusing that
+    # shape beats declaring a near-identical one here: both are "what
+    # `fundamentals_annual` says about this company", and two schemas for one
+    # answer would drift the first time a column is added.
+    fundamentals: "HoldFundamentalsFeatures"
+    coverage_gaps: list[str]
+
+
+#: How much the model was shown. Part of the cache key, not a display flag.
+AiDepth = Literal["quick", "deep"]
+
 #: What to do. `hold` is a first-class answer, not a fallback -- see AiVerdict.
 AiAction = Literal["enter", "exit", "hold"]
 #: How much of a position the action applies to. Null exactly when action is hold.
@@ -302,10 +366,14 @@ class AiAnalysisResponse(BaseModel):
     model: str
     prompt_version: str
     locale: str
+    depth: AiDepth
     #: False only when this call actually spent a Gemini request.
     cached: bool
     verdict: AiVerdict
     features: PriceFeatures
+    #: Present exactly when `depth` is "deep" -- the chip and fundamentals the
+    #: verdict additionally drew on, and what could not be checked.
+    deep: DeepInputs | None = None
     # The rule engine's answer for the same bars, so the card can put the
     # deterministic and the generated verdict side by side -- the comparison the
     # project was built to make.
@@ -1167,3 +1235,9 @@ class WatchlistGroupCreateRequest(BaseModel):
 
 class WatchlistGroupUpdateRequest(BaseModel):
     name: str
+
+
+# `DeepInputs` names a schema declared after it -- see the note on its
+# `fundamentals` field. Pydantic resolves the string once the name exists, and
+# the only place that is guaranteed is here, below every declaration.
+DeepInputs.model_rebuild()

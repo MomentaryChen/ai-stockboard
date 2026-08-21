@@ -172,6 +172,17 @@ class Settings(BaseSettings):
     # Raise it (and max_output_tokens with it) to trade latency for depth.
     gemini_thinking_budget: int = 0
 
+    # The deep lane's own ceiling. It is shown institutional flow and annual
+    # figures on top of the price series and is asked to cite them, so its
+    # answer is legitimately longer -- and a verdict truncated mid-JSON is a
+    # failed request, not a shorter one.
+    gemini_deep_max_output_tokens: int = 4096
+    # Off for the same reason as above, and worth being explicit about: what
+    # makes the deep lane deep is the extra data, not extra reasoning. Turning
+    # this up is the fastest way to spend the output budget before the JSON
+    # begins, so raise gemini_deep_max_output_tokens alongside it or not at all.
+    gemini_deep_thinking_budget: int = 0
+
     # Same shape as the TWSE limiter, for the same reason: an upstream budget
     # the whole process shares. This one also costs money, so it is deliberately
     # tighter than Gemini's own quota would require.

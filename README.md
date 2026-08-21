@@ -559,7 +559,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | PATCH | `/api/jobs/{job_id}/schedule` | Change when a job fires (**ADMIN**) |
 | POST | `/api/jobs/{job_id}/run` | Run now; answers 202 and continues server-side (**ADMIN**) |
 | POST | `/api/stocks/sync?force=true` | Sync the listing and wait for it; superseded by the above (**ADMIN**) |
-| POST | `/api/stocks/{sid}/analysis/ai` | AI position call: enter / exit / hold, and at what size (**需登入**) |
+| POST | `/api/stocks/{sid}/analysis/ai?depth=quick\|deep` | AI position call: enter / exit / hold, and at what size (**需登入**). `depth=deep` additionally reads institutional flow, margin balances and annual fundamentals — see [Two depths](#two-depths) |
 | GET | `/api/stocks/{sid}/analysis/chen` | 存股 checklist: five dimensions, a score over what could be checked, and what could not. Cache-only, so it is public and never calls the exchange — see [hold analysis](#hold-analysis-存股) |
 | POST | `/api/stocks/{sid}/analysis/ai-hold` | AI hold assessment: is this a company to accumulate and hold (**需登入**). Spends from the same daily allowance as `/analysis/ai` |
 | GET | `/api/analysis/ai/quota` | Generations left on this account today, counted across **both** AI lanes (**需登入**) |
@@ -1134,6 +1134,64 @@ picker to find. It now sits directly beneath the rule engine's verdict and
 above the numbers both were drawn from, so the two answers to "so what do I do
 with this" are read together.
 
+### Two depths
+
+The same question, asked of two different amounts of evidence, and the panel
+carries a button for each.
+
+**Quick** is the original call: the price series and nothing else. It is what
+the disclaimer under it has always said — no fundamentals, no institutional
+flow, no news.
+
+**Deep** adds what the deployment already stores. `chip_day` gives the last
+twenty sessions of foreign, trust and dealer net buying plus margin and short
+balances; `fundamentals_annual` gives annual EPS and ROE where they exist. News
+is still absent, and deliberately: nothing in this project ingests it, and a
+model invited to recall headlines produces confident, checkable-looking,
+entirely fabricated ones. The deep disclaimer says exactly this rather than
+reusing the quick one, because a disclaimer that misstates what was read is
+worse than no disclaimer.
+
+Three things make the pair work:
+
+**They are separate cached answers, not two renderings of one.** `depth` is a
+column in `ai_analysis` and part of its unique key, so a quick and a deep
+verdict for the same stock on the same trading day both exist and neither
+evicts the other. It is a column rather than a `deep-` prefix on
+`prompt_version` — the hold lane leans on such a prefix, but that lane has its
+own table, so there the prefix is decoration; here it would be the only thing
+keeping two verdicts apart, and a version string is the wrong place for a
+discriminator the database has to enforce.
+
+**The deep read never calls the exchange.** The button sits on watchlist rows
+as well as the stock page, and `chip.ensure_dates` is bounded per request but
+not per page: twenty rows each pressing it would queue tens of exchange calls
+on the limiter the realtime poll shares. So the deep path reads `chip_day` and
+`fundamentals_annual` and stops there. Nothing is lost by it — the nightly
+`籌碼日報快取` job warms the recent sessions for the whole market, and one T86
+report covers every listed name, so a miss means the job has not run rather
+than that this stock is uncovered.
+
+**Coverage is an output.** `deep_features.extract()` never fails and never
+returns nothing. A stock with no institutional report and no annual figures
+still produces a structure, one whose `coverage_gaps` say so; the prompt caps
+its confidence against that list, and the panel renders it under 未能納入的資料
+from the same catalogue the 存股 card uses. The alternative — a missing net
+reaching the model as a zero — is the failure this lane exists to avoid, since
+"foreign accounts net zero" read off an uncovered stock is indistinguishable
+from a real finding.
+
+Both depths draw on **one** daily allowance, and a deep call counts as one
+generation even though it costs the provider more. That is a deliberate
+simplification: `AI_DAILY_QUOTA` is the knob a deployment turns if the bill
+moves, and a weighted quota would have to be explained in the UI before it
+could be enforced fairly.
+
+Annual fundamentals are wired in but empty until an ingest lands — nothing
+populates `fundamentals_annual` yet. Deep verdicts therefore report
+`no_annual_fundamentals` today and light up on their own the day the ingest
+ships, with no prompt change. Institutional flow is real from the first press.
+
 ### Why the model is not shown the bars
 
 `services/analysis/features.py` turns the stored daily prices into a closed set
@@ -1385,8 +1443,9 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `GEMINI_MODELS` | `gemini-3.5-flash,gemini-3.6-flash,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.5-pro` | Closed set the admin picker may choose from. Add or remove entries here and restart the API |
 | `GEMINI_TEMPERATURE` / `GEMINI_MAX_OUTPUT_TOKENS` / `GEMINI_TIMEOUT_SECONDS` | `0.2` / `2048` / `45` | Low temperature so the same bars give the same call twice |
 | `GEMINI_THINKING_BUDGET` | `0` | Thinking tokens are spent from `GEMINI_MAX_OUTPUT_TOKENS`, so an unbounded budget can consume it before the JSON starts and return an empty body. Raise both together to trade latency for depth |
+| `GEMINI_DEEP_MAX_OUTPUT_TOKENS` / `GEMINI_DEEP_THINKING_BUDGET` | `4096` / `0` | Ceilings for the deep evaluation, which is shown institutional flow and annual fundamentals as well as the price series and so answers at greater length. A verdict truncated mid-JSON fails the request rather than coming back shorter |
 | `AI_THROTTLE_MAX_CALLS` / `AI_THROTTLE_WINDOW_SECONDS` | `5` / `60` | Process-wide limiter on Gemini. `THROTTLE_*` protects TWSE's rate limit; this protects a bill |
-| `AI_DAILY_QUOTA` / `AI_ADMIN_DAILY_QUOTA` | `20` / `200` | Generations one account may pay for per day. Cache hits are free and are not counted |
+| `AI_DAILY_QUOTA` / `AI_ADMIN_DAILY_QUOTA` | `20` / `200` | Generations one account may pay for per day, counted across every AI lane. Cache hits are free and are not counted. A deep evaluation counts as one generation even though it costs the provider more, so lower this if the bill moves |
 | `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin` / （未設） / （未設） | 啟動時建立的第一個管理員，email 與密碼都設了才生效 |
 | `STOCK_CODE_SYNC_ENABLED` | `true` | First-boot default for the listing sync. Once an admin saves a schedule at `/admin/jobs`, the `job_schedule` row wins |
 | `STOCK_CODE_SYNC_INTERVAL_HOURS` | `24` | First-boot default for its interval, same as above |
