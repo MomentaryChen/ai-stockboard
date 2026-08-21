@@ -10,6 +10,7 @@ import {
 import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
 import type { Translate } from '../i18n/types'
+import { errorMessage } from '../utils/errors'
 
 /**
  * Turn a sign-in failure into something worth reading.
@@ -42,7 +43,7 @@ function signInError(
   }
 
   return {
-    message: t('login.failed', { message: (error as Error).message }),
+    message: t('login.failed', { message: errorMessage(error, t) }),
     tone: 'error',
   }
 }

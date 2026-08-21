@@ -12,6 +12,7 @@
 import { ApiError } from '../api/client'
 import type { Job, JobStatus, JobTrigger } from '../api/types'
 import type { MessageKey, Translate } from '../i18n'
+import { errorMessage } from './errors'
 
 const STATUS_KEY: Record<JobStatus, MessageKey> = {
   success: 'jobs.statusSuccess',
@@ -116,5 +117,5 @@ export function runErrorMessage(error: unknown, t: Translate): string {
     if (error.status === 409) return t('jobs.errorRunning')
     if (error.status === 429) return t('jobs.errorCooldown')
   }
-  return (error as Error).message
+  return errorMessage(error, t)
 }

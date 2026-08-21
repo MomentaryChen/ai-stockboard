@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import JobRunsTable from '../components/JobRunsTable'
 import JobScheduleForm from '../components/JobScheduleForm'
 import { translateJobDescription, translateJobName, useI18n } from '../i18n'
+import { errorMessage } from '../utils/errors'
 import { fmtInt } from '../utils/format'
 import {
   runErrorMessage,
@@ -51,7 +52,7 @@ export default function AdminJobDetail() {
           {t('jobs.back')}
         </Link>
         <div className="banner banner-error">
-          {t('jobs.loadFailed', { message: (query.error as Error).message })}
+          {t('jobs.loadFailed', { message: errorMessage(query.error, t) })}
         </div>
       </div>
     )

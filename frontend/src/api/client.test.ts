@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, ApiError, isPasswordResetRequired, PASSWORD_RESET_REQUIRED } from './client'
+import {
+  api,
+  ApiError,
+  isPasswordResetRequired,
+  isTimeout,
+  PASSWORD_RESET_REQUIRED,
+} from './client'
 import { tokenStore } from './tokenStore'
 import type { TokenResponse, User } from './types'
 
@@ -24,6 +30,10 @@ function user(overrides: Partial<User> = {}): User {
     role: 'USER',
     is_active: true,
     must_change_password: false,
+    // Required on User since the account-approval work; an approved, unlocked
+    // account is the right default for a factory the auth tests build on.
+    pending_approval: false,
+    locked_until: null,
     created_at: '2024-01-01T00:00:00Z',
     ...overrides,
   }
@@ -180,5 +190,132 @@ describe('PASSWORD_RESET_REQUIRED', () => {
     expect(isPasswordResetRequired(new ApiError(PASSWORD_RESET_REQUIRED, 403))).toBe(true)
     expect(isPasswordResetRequired(new ApiError('Insufficient permissions', 403))).toBe(false)
     expect(isPasswordResetRequired(new ApiError(PASSWORD_RESET_REQUIRED, 401))).toBe(false)
+  })
+})
+
+/** A fetch that never answers, but honours the abort signal the way a real one
+ *  does -- which is the only thing that can distinguish a deadline from a hang. */
+function neverAnswers() {
+  return vi.fn(
+    (_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'))
+        })
+      }),
+  )
+}
+
+describe('request deadline', () => {
+  it('gives up on a stalled request instead of spinning until nginx does', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', neverAnswers())
+
+    const pending = api.getStock('2330').catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    const error = await pending
+    expect(isTimeout(error)).toBe(true)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(408)
+  })
+
+  it('lets a cold-cache history fetch outlive the default budget', async () => {
+    // ~18 s is a real first-fetch time for this route; the default would abort
+    // work that was going to succeed, so it gets SLOW_TIMEOUT_MS instead.
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', neverAnswers())
+
+    let settled = false
+    const pending = api
+      .getHistory('2330', 6)
+      .catch((error: unknown) => error)
+      .then((error) => {
+        settled = true
+        return error
+      })
+
+    // Well past DEFAULT_TIMEOUT_MS: if this route used it, the request would
+    // already have been abandoned here.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(settled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(35_000)
+    expect(isTimeout(await pending)).toBe(true)
+  })
+
+  it('leaves a caller-cancelled request an AbortError', async () => {
+    // StockSearch aborts on every keystroke. react-query treats AbortError as
+    // "ignore this"; turning it into an ApiError would show the user an error
+    // banner for typing.
+    vi.stubGlobal('fetch', neverAnswers())
+
+    const controller = new AbortController()
+    const pending = api
+      .searchStocks('233', 20, controller.signal)
+      .catch((error: unknown) => error)
+    controller.abort()
+
+    const error = await pending
+    expect((error as Error).name).toBe('AbortError')
+    expect(isTimeout(error)).toBe(false)
+  })
+})
+
+describe('error detail', () => {
+  it('names the offending field for a 422 rather than rendering [object Object]', async () => {
+    // FastAPI answers validation failures with a list of objects, not a string.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse(
+          {
+            detail: [
+              {
+                type: 'string_too_short',
+                loc: ['body', 'password'],
+                msg: 'String should have at least 8 characters',
+              },
+              {
+                type: 'value_error',
+                loc: ['body', 'email'],
+                msg: 'value is not a valid email address',
+              },
+            ],
+          },
+          422,
+        ),
+      ),
+    )
+
+    const error = await api
+      .register({ username: 'alice', email: 'nope', password: 'short' })
+      .catch((e: unknown) => e)
+
+    expect((error as ApiError).message).toBe(
+      'password: String should have at least 8 characters; ' +
+        'email: value is not a valid email address',
+    )
+  })
+
+  it('passes a plain string detail through untouched', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ detail: 'Username already taken' }, 409)),
+    )
+
+    const error = await api
+      .register({ username: 'alice', email: 'a@example.com', password: 'longenough' })
+      .catch((e: unknown) => e)
+
+    expect((error as ApiError).message).toBe('Username already taken')
+    expect((error as ApiError).status).toBe(409)
+  })
+
+  it('falls back to the status when there is no usable detail', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ detail: [] }, 500)))
+
+    const error = await api.getStock('2330').catch((e: unknown) => e)
+    expect((error as ApiError).message).toBe('HTTP 500')
   })
 })

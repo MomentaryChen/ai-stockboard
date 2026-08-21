@@ -13,6 +13,7 @@ import StockSearch from '../components/StockSearch'
 import VolumeChart from '../components/VolumeChart'
 import { POLL_MS, useLiveQuote } from '../hooks/useLiveQuote'
 import { useI18n, type MessageKey } from '../i18n'
+import { errorMessage } from '../utils/errors'
 import { direction, fmtCompact, fmtIndex, fmtLots, fmtSigned } from '../utils/format'
 import { taipeiToday } from '../utils/market'
 import { fromHistory, fromQuote, fromSnapshot, type OpenView } from '../utils/openIntel'
@@ -199,7 +200,7 @@ export default function MarketDashboard() {
 
       {error && (
         <div className="banner banner-error">
-          {t('error.loadFailed', { message: (error as Error).message })}
+          {t('error.loadFailed', { message: errorMessage(error, t) })}
           <br />
           <span className="dim">{t('error.dbHint')}</span>
         </div>
@@ -315,7 +316,7 @@ export default function MarketDashboard() {
             ) : openBoard.error ? (
               // "No session" would be a lie about a day that did trade, so a
               // failed lookup has to say it failed.
-              <div>{t('error.loadFailed', { message: (openBoard.error as Error).message })}</div>
+              <div>{t('error.loadFailed', { message: errorMessage(openBoard.error, t) })}</div>
             ) : (
               <>
                 <div>{t('open.noSession', { date })}</div>
