@@ -232,12 +232,12 @@ export default function StockDetail() {
           which question the stage answers, not leave a trade verdict hanging
           over a hold evidence column. Quote and chart stay put either way. */}
       <div className="analysis-mode-bar">
-        <div className="segmented" role="tablist" aria-label={t('nav.stock')}>
+        <div className="analysis-modes" role="tablist" aria-label={t('nav.stock')}>
           <button
             type="button"
             role="tab"
             aria-selected={analysisMode === 'trade'}
-            className={`btn btn-sm ${analysisMode === 'trade' ? 'active' : ''}`}
+            className={`analysis-mode ${analysisMode === 'trade' ? 'active' : ''}`}
             onClick={() => setAnalysisMode('trade')}
           >
             {t('analysis.modeTrade')}
@@ -246,7 +246,7 @@ export default function StockDetail() {
             type="button"
             role="tab"
             aria-selected={analysisMode === 'hold'}
-            className={`btn btn-sm ${analysisMode === 'hold' ? 'active' : ''}`}
+            className={`analysis-mode ${analysisMode === 'hold' ? 'active' : ''}`}
             onClick={() => setAnalysisMode('hold')}
           >
             {t('analysis.modeHold')}
