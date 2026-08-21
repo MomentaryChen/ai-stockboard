@@ -3,10 +3,12 @@
 台股看板服務。預設畫面是**台股大盤**（加權指數）看板，另可查個股歷史 K 線、即時報價與基本資料，
 並對大盤與個股產生同一套分析結果。
 
-分析分成兩種，可以互相對照：
+分析分成三種，可以互相對照：
 
 - **傳統分析** — 規則式技術分析：均線與四大買賣點。已完成。
-- **AI 分析** — 由模型對同一份行情資料產生判讀。開發中。
+- **訊號回測** — 把上面那條規則在歷史日線上重跑一遍，算它的命中率與同期基準。已完成。
+- **AI 分析** — 由模型對同一份行情資料給出進出場與部位建議。已完成，但還沒有自己的回測，
+  所以它的判讀目前無法像四大買賣點那樣拿出一個歷史命中率。
 
 行情資料（TWSE／TPEX 日成交、即時報價、上市櫃清單）來自 [twstock](https://github.com/mlouielu/twstock)，
 原始碼收在 `vendor/twstock/`，以 editable 方式安裝，之後為了 AI 分析要調整取數邏輯時可以直接改。
@@ -555,8 +557,10 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | PATCH | `/api/jobs/{job_id}/schedule` | Change when a job fires (**ADMIN**) |
 | POST | `/api/jobs/{job_id}/run` | Run now; answers 202 and continues server-side (**ADMIN**) |
 | POST | `/api/stocks/sync?force=true` | Sync the listing and wait for it; superseded by the above (**ADMIN**) |
+| POST | `/api/stocks/{sid}/analysis/ai` | AI position call: enter / exit / hold, and at what size (**需登入**) |
+| GET | `/api/analysis/ai/quota` | Generations left on this account today (**需登入**) |
 
-`{sid}` 可以是個股代碼，也可以是大盤 `t00`。AI 分析預定放在 `/api/stocks/{sid}/analysis/ai`，與傳統分析平行。
+`{sid}` 可以是個股代碼，也可以是大盤 `t00`。
 
 搜尋預設**排除認購(售)權證**（4.2 萬檔，佔全部代碼的 95%），加 `&include_warrants=true` 才會出現。
 
@@ -1069,11 +1073,13 @@ server/app/services/analysis/
 ├── __init__.py
 ├── traditional.py     規則式：均線 + 四大買賣點
 ├── backtest.py        把 traditional 的訊號在歷史上重跑一遍，算命中率與績效
-└── (ai.py)            AI 分析，開發中
+├── features.py        純函式：從日線算出 AI 要看的衍生指標
+├── gemini.py          唯一知道 provider 存在的模組：提示詞、結構化輸出、限流
+└── ai.py              編排：什麼時候該花一次 Gemini 請求，什麼時候不該
 ```
 
-兩種分析吃同一份 `daily_price` 資料，各自獨立產生結果，端點也分開，
-所以可以對同一支股票同時取得兩種判讀來比較。
+三者吃同一份 `daily_price` 資料，各自獨立產生結果，端點也分開，
+所以可以對同一支股票同時取得多種判讀來比較。
 
 傳統分析沒有自己重寫演算法：`_CachedStock` 把資料庫的資料餵回 twstock 的
 `Analytics` / `BestFourPoint`，因此結果與該套件本身一致，也不會多打一次交易所。
@@ -1086,6 +1092,85 @@ server/app/services/analysis/
 本服務  : close 2375.0  MA5 2380.0  MA10 2389.5  MA20 2358.25  buy / 量縮價不跌
 twstock : close 2375.0  MA5 2380.0  MA10 2389.5  MA20 2358.25  (True, '量縮價不跌')
 ```
+
+---
+
+## AI position call
+
+The rule engine answers buy/sell/hold. The AI engine answers the question a
+holder actually has -- **get in, get out, or leave it alone, and with how much**
+-- so it has its own vocabulary: `action` ∈ {enter, exit, hold} paired with
+`size` ∈ {large, medium, small}, and `size` is null exactly when the action is
+hold. Direction and magnitude are separate fields rather than one seven-valued
+enum, so the card can render 進場/退場 and 大/中/小 independently and an
+evaluation can score direction without having to agree about sizing.
+
+The button lives in the expanded watchlist row, below the 四大買賣點 verdict. It
+is on `/realtime` and on the stock card, requires a sign-in, and answers on
+POST.
+
+### Why the model is not shown the bars
+
+`services/analysis/features.py` turns the stored daily prices into a closed set
+of derived measurements -- where the close sits relative to each moving average
+as a percentage, volume as a ratio to its own 5- and 20-day means, the signed
+run of consecutive up or down days, position inside the 60-day range, 20-day
+volatility, and the same 3/6-day bias series the 四大買賣點 gate pivots on.
+That set is what goes into the prompt.
+
+Handing over 120 rows of OHLCV instead would make every verdict depend on the
+model's own arithmetic, which is the part it is least reliable at. It would also
+make the input unreviewable: with a closed feature set, what the model was asked
+about is diffable, reproducible, and rendered back on the card so a reader can
+check the verdict against it.
+
+`extract()` is a pure function of the rows -- no clock, no session, no network.
+That is what will let a backtest replay any past date by slicing the same
+series, and it is why the feature layer has its own tests
+(`server/tests/test_features.py`) even though nothing user-facing calls it
+directly.
+
+### `hold` is a first-class answer
+
+twstock's 四大買賣點 never returned Don't touch across 20 000 random sequences,
+and that was a bug -- the 乖離 gate had been dropped in porting. A model asked
+for a recommendation has the same failure mode for a different reason: it will
+produce one. So the system instruction names hold as a correct answer, gives it
+conditions ("mixed evidence", "a move that has already happened"), and
+`server/tests/test_ai_analysis.py` asserts that those sentences are still in the
+prompt. Deleting them is a one-line change that would be invisible in every
+other test.
+
+### Spending
+
+A Gemini request costs money, which no other upstream in this service does. So
+the same defence the TWSE budget gets is applied, one layer at a time:
+
+| Gate | What it stops |
+|---|---|
+| The shared cache, keyed on (sid, trading day, model, prompt version, locale) | A verdict being paid for twice. Twenty people watching 2330 on the same session share one generation; the second reader's request is free and comes back `cached: true` |
+| The per-account daily quota (`AI_DAILY_QUOTA`, default 20) | One account working through the listing. Counted from rows that account actually paid for, so reading a cached verdict costs nothing |
+| The process-wide limiter in `gemini.py` | A burst reaching Gemini faster than the deployment intends. Same sliding window as `throttle.py`, different numbers |
+
+Two consequences worth knowing about:
+
+- **The history window is fixed at 6 months and is not a query parameter.** It is
+  part of what the verdict was computed from, and a caller who could vary it
+  would decide what everyone else reads for that trading day.
+- **`?regenerate=true` is ADMIN-only**, for the same reason `force` is on the
+  history routes: it is the switch that turns a cached endpoint back into a
+  metered one. Its legitimate use is checking a prompt change against a stock
+  whose verdict is already stored.
+
+`prompt_version` is part of the cache key, not a plain column. Changing the
+prompt has to produce a new row, or an evaluation run would average two
+different engines together and report the difference as a change in the market.
+
+### Configuration
+
+`GEMINI_API_KEY` blank switches the feature off cleanly: the endpoint answers
+503 and the panel says so rather than offering a button that always fails. Get a
+key from <https://aistudio.google.com/apikey>.
 
 ## vendor/twstock
 
@@ -1125,6 +1210,12 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `THROTTLE_MAX_CALLS` / `THROTTLE_WINDOW_SECONDS` | `3` / `5.5` | 上游速率限制 |
 | `JWT_SECRET` | （未設，啟動時隨機產生） | access token 的簽章密鑰，見下方「帳號與權限」 |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` / `REFRESH_TOKEN_EXPIRE_DAYS` | `30` / `7` | 兩種 token 的有效期 |
+| `GEMINI_API_KEY` | （未設） | Blank switches AI analysis off: the endpoint answers 503 and the panel says so |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Part of every stored verdict's cache key, so changing it re-generates rather than mixing engines |
+| `GEMINI_TEMPERATURE` / `GEMINI_MAX_OUTPUT_TOKENS` / `GEMINI_TIMEOUT_SECONDS` | `0.2` / `2048` / `45` | Low temperature so the same bars give the same call twice |
+| `GEMINI_THINKING_BUDGET` | `0` | Thinking tokens are spent from `GEMINI_MAX_OUTPUT_TOKENS`, so an unbounded budget can consume it before the JSON starts and return an empty body. Raise both together to trade latency for depth |
+| `AI_THROTTLE_MAX_CALLS` / `AI_THROTTLE_WINDOW_SECONDS` | `5` / `60` | Process-wide limiter on Gemini. `THROTTLE_*` protects TWSE's rate limit; this protects a bill |
+| `AI_DAILY_QUOTA` / `AI_ADMIN_DAILY_QUOTA` | `20` / `200` | Generations one account may pay for per day. Cache hits are free and are not counted |
 | `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin` / （未設） / （未設） | 啟動時建立的第一個管理員，email 與密碼都設了才生效 |
 | `STOCK_CODE_SYNC_ENABLED` | `true` | First-boot default for the listing sync. Once an admin saves a schedule at `/admin/jobs`, the `job_schedule` row wins |
 | `STOCK_CODE_SYNC_INTERVAL_HOURS` | `24` | First-boot default for its interval, same as above |
@@ -1515,6 +1606,19 @@ not support.
 - **上櫃（TPEX）資料比上市晚一天**發布，屬於來源行為。
 - 首次查詢 1 年區間需要 12 個對外請求，受速率限制約需 **18 秒**；之後走快取。
 - 四大買賣點需要至少 12 個交易日，不足時回傳「資料不足」。
+- **The AI position call has never been backtested.** Nothing in this project can
+  yet answer whether its verdicts -- or the rule engine's -- beat holding. The
+  feature layer is a pure function of the bars precisely so that a replay is
+  possible, but the replay itself is not written. Treat both engines as ways of
+  reading a chart, not as evidence about one.
+- **The AI sees price and volume only.** No fundamentals, no institutional flow,
+  no margin balance, no news, and the prompt forbids it from citing any. It is
+  reading the same thin slice the rule engine reads, in more words.
+- AI 判讀以 6 個月日線為輸入，且需要至少 20 個交易日；不足時回 422。
+- 判讀依 (股票, 交易日, 模型, 提示詞版本, 語言) 快取並**跨帳號共用**。同一個交易日
+  重按按鈕不會再花一次請求，回應的 `cached` 會是 true。
+- AI 判讀的敘述文字由模型即時生成，**不經過 i18n 訊息表**：語言是在生成時決定的，
+  所以切換介面語言不會翻譯已經產生的判讀，而是需要用該語言重新生成一次。
 - **The English UI covers interface copy only.** Stock names and industry groups
   stay as the exchange publishes them; server error `detail` strings are already
   English by convention.

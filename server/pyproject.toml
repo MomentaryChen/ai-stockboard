@@ -26,6 +26,11 @@ dependencies = [
     # slim image may not carry and Windows never does -- and SCHEDULER_TIMEZONE
     # decides when the "每天 03:00" jobs actually fire.
     "tzdata>=2024.1",
+    # AI analysis. The engine is Gemini specifically, not "an LLM": the stored
+    # verdicts carry the model name, so swapping providers is a migration, not a
+    # config change. Kept behind app/services/analysis/gemini.py all the same,
+    # so that migration is one module.
+    "google-genai>=1.0",
 ]
 
 [tool.uv.sources]

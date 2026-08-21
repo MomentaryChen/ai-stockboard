@@ -1,5 +1,7 @@
 import { tokenStore } from './tokenStore'
 import type {
+  AiAnalysisResponse,
+  AiQuotaStatus,
   BacktestBatchResponse,
   BacktestResponse,
   Job,
@@ -418,6 +420,27 @@ export const api = {
     request<BacktestBatchResponse>(
       `/api/analysis/backtest?sids=${sids.join(',')}&rule_set=${ruleSet}`,
     ),
+
+  /** Ask the AI engine for a position call: enter / exit / hold, and at what size.
+   *
+   *  POST, and signed in, because a miss costs a Gemini request. The server
+   *  caches per (stock, trading day, model, prompt) and shares that cache across
+   *  accounts, so pressing this twice on the same session is free the second
+   *  time -- `cached` on the response says which of the two happened.
+   *
+   *  There is no `months` parameter on purpose: the history window is part of
+   *  what the verdict was computed from, and letting callers vary it would make
+   *  the cached answer depend on whoever asked first.
+   */
+  generateAiAnalysis: (sid: string, locale: string) =>
+    request<AiAnalysisResponse>(
+      `/api/stocks/${sid}/analysis/ai?locale=${encodeURIComponent(locale)}`,
+      { method: 'POST', auth: true },
+    ),
+
+  /** Generations left today. Read up front so the button can explain itself
+   *  before it is pressed, rather than answering 429 afterwards. */
+  getAiQuota: () => request<AiQuotaStatus>('/api/analysis/ai/quota', { auth: true }),
 
   /** Signed in only -- the one market-data route that is not public. `auth`
    *  also buys the refresh-and-retry, which a 10-second poll needs. */

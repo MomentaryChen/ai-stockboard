@@ -1,26 +1,35 @@
 """Analysis endpoints.
 
-Traditional (rule-based) analysis lives at `/analysis/traditional`. AI-assisted
-analysis will be added as a sibling route so both can be requested for the same
-stock and compared.
+Three sibling routes answer questions about the same stock, shaped differently
+on purpose.
 
-`/analysis/backtest` is what makes that comparison mean anything. Two engines
-disagreeing about today settles nothing; the backtest replays the rule-based
-one over bars already in the database and reports its hit rate against the base
-rate of the same days -- so a second engine has a number to beat rather than an
-anecdote to differ from.
+`/analysis/traditional` is the rule engine: free, deterministic, and a GET.
+
+`/analysis/backtest` is what makes a comparison between engines mean anything.
+Two engines disagreeing about today settles nothing; the backtest replays the
+rule-based one over bars already in the database and reports its hit rate
+against the base rate of the same days -- so a second engine has a number to
+beat rather than an anecdote to differ from.
+
+`/analysis/ai` is that second engine. It costs a Gemini request, so it answers
+on POST, requires a sign-in, and serves a shared cache keyed on the trading day
+-- see `services/analysis/ai.py` for what each of those is defending. It has no
+backtest of its own yet, which is the honest gap between it and the route above.
 """
 
 import datetime
+import math
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app import deps
 from app.db import get_db
 from app.models import AppUser
 from app.schemas import (
+    AiAnalysisResponse,
+    AiQuotaStatus,
     BacktestBaselineStats,
     BacktestBatchResponse,
     BacktestEdge,
@@ -36,8 +45,9 @@ from app.schemas import (
 from app.services import backtest_store
 from app.services import codes as codes_service
 from app.services import history as history_service
+from app.services.analysis import ai as ai_service
 from app.services.analysis import backtest as backtest_service
-from app.services.analysis import traditional
+from app.services.analysis import gemini, traditional
 
 router = APIRouter(prefix="/api/stocks", tags=["analysis"])
 batch_router = APIRouter(prefix="/api/analysis", tags=["analysis"])
@@ -218,6 +228,94 @@ def get_traditional_analysis_batch(
         )
 
     return TraditionalAnalysisBatchResponse(items=items, errors=errors)
+
+
+# --- AI analysis -------------------------------------------------------------
+
+#: Fixed, and deliberately not a query parameter.
+#:
+#: The stored verdict is keyed on (sid, trading day, model, prompt, locale). If
+#: the caller could choose the history window, two requests for the same day
+#: would build different features, and whichever arrived first would decide what
+#: everyone else reads for that day. Widening the window is a prompt-version
+#: change, because it changes what the model saw.
+AI_MONTHS = 6
+
+
+@router.post("/{sid}/analysis/ai", response_model=AiAnalysisResponse)
+def generate_ai_analysis(
+    sid: str,
+    response: Response,
+    locale: str = Query(
+        ai_service.DEFAULT_LOCALE, description="判讀要用哪個語言生成（zh-TW / en）"
+    ),
+    regenerate: bool = Depends(deps.regenerate_ai),
+    user: AppUser = Depends(deps.get_current_user),
+    db: Session = Depends(get_db),
+) -> AiAnalysisResponse:
+    """A position call for one stock: enter/exit/hold, and at what size.
+
+    POST rather than GET because a miss spends money and writes a row. A hit
+    spends neither, which is what lets the button live on every watchlist card.
+    """
+    if not gemini.is_configured():
+        raise HTTPException(
+            status_code=503, detail="AI analysis is not configured on this server"
+        )
+
+    info = codes_service.get_stock(sid)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")
+
+    rows, _, _ = history_service.get_history(db, sid, AI_MONTHS)
+
+    try:
+        result = ai_service.get_or_create(
+            db,
+            sid=sid,
+            name=info.name,
+            rows=rows,
+            user=user,
+            locale=locale,
+            force=regenerate,
+        )
+    except ai_service.InsufficientData as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ai_service.QuotaExceeded as exc:
+        # Retry-After in seconds, so a client can say when rather than just that.
+        wait = (exc.status.resets_at - datetime.datetime.now(datetime.timezone.utc))
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(max(1, math.ceil(wait.total_seconds())))},
+        ) from exc
+    except gemini.AiUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except gemini.AiFailed as exc:
+        # 502, not 500: this service worked, its upstream did not -- the same
+        # distinction the realtime path draws when TWSE MIS refuses.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # Lets the client show "已快取" without inspecting the body, and keeps a
+    # proxy from ever storing a metered response as if it were free.
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@batch_router.get("/ai/quota", response_model=AiQuotaStatus)
+def get_ai_quota(
+    user: AppUser = Depends(deps.get_current_user),
+    db: Session = Depends(get_db),
+) -> AiQuotaStatus:
+    """What is left of this account's daily allowance.
+
+    Read before the button is pressed, so the UI can disable it with a reason
+    instead of letting the request come back 429.
+    """
+    return ai_service.quota_status(db, user)
+
+
+# --- Backtest ----------------------------------------------------------------
 
 
 def _horizon_out(stats) -> BacktestHorizonStats:

@@ -1,7 +1,7 @@
 """chip flow tables
 
-Revision ID: 0005_chip_flow
-Revises: 0004_backtest_result_cache
+Revision ID: 0006_chip_flow
+Revises: 0005_ai_analysis
 Create Date: 2026-08-21 16:00:00.000000+00:00
 
 Two new tables, nothing else touched.
@@ -14,6 +14,9 @@ sid so the second stock to ask for the same session is a cache hit.
 Both are source data, not derived: dropping them on downgrade loses the
 cached reports and they are re-fetched from the exchange on the next page
 view, the same way `daily_price` is.
+
+Numbered 0006 because 0005 is the AI analysis cache that landed on develop
+first; a branched 0005 would fail the single-chain revision test.
 """
 
 from collections.abc import Sequence
@@ -21,8 +24,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0005_chip_flow"
-down_revision: str | None = "0004_backtest_result_cache"
+revision: str = "0006_chip_flow"
+down_revision: str | None = "0005_ai_analysis"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
