@@ -44,12 +44,18 @@ interface AuthValue {
    */
   mustChangePassword: boolean
   login: (identifier: string, password: string) => Promise<void>
+  /**
+   * Create an account. Resolves to `{ pending: true }` when the deployment
+   * reviews registrations -- there is no session in that case, so the caller
+   * must show the "waiting for an administrator" state rather than navigating
+   * somewhere that requires being signed in.
+   */
   register: (input: {
     username: string
     email: string
     password: string
     phone?: string
-  }) => Promise<void>
+  }) => Promise<{ pending: boolean }>
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>
   logout: () => Promise<void>
 }
@@ -160,10 +166,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password: string
       phone?: string
     }) => {
-      const tokens = await api.register(input)
+      const result = await api.register(input)
+      // Awaiting approval: the account exists but has no session behind it, so
+      // there is nothing to store and the locally kept watchlist stays where
+      // it is -- it will be merged on the first real sign-in, once an admin
+      // has let the account in.
+      if (result.pending || !result.tokens) return { pending: true }
+
+      const { tokens } = result
       tokenStore.set(tokens.access_token, tokens.refresh_token)
       queryClient.setQueryData(['me'], tokens.user)
       await afterSignInUnlessLocked(tokens.user)
+      return { pending: false }
     },
     [afterSignInUnlessLocked, queryClient],
   )
