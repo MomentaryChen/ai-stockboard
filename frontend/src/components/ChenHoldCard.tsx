@@ -90,9 +90,23 @@ function evidence(dimension: ChenDimension, t: Translate): string {
     case 'cheap': {
       const pe = num(m, 'trailing_pe')
       const ceiling = num(m, 'ceiling')
-      return unknown || pe === null || ceiling === null
-        ? say('hold.evidenceCheapUnknown')
-        : say('hold.evidenceCheap', { pe: fmtPrice(pe), ceiling: fmtPrice(ceiling) })
+      if (unknown || pe === null || ceiling === null) {
+        return say('hold.evidenceCheapUnknown')
+      }
+      const base = say('hold.evidenceCheap', {
+        pe: fmtPrice(pe),
+        ceiling: fmtPrice(ceiling),
+      })
+      // The cyclical half, when there is enough EPS history for it.
+      const cape = num(m, 'cape')
+      const capeCeiling = num(m, 'cape_ceiling')
+      return cape === null || capeCeiling === null
+        ? base
+        : base +
+            say('hold.evidenceCheapCape', {
+              cape: fmtPrice(cape),
+              ceiling: fmtPrice(capeCeiling),
+            })
     }
     case 'collect': {
       if (unknown) return say('hold.evidenceCollectUnknown')

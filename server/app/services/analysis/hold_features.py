@@ -52,6 +52,11 @@ LIQUIDITY_WINDOW = 60
 #: is a question about the cycle, not about the last quarter.
 PRICE_WINDOW = 480
 
+#: Years of EPS the cyclically adjusted PE averages over, and the fewest it
+#: will work with. Below five the average still carries most of one phase of
+#: the cycle, which is the thing it exists to remove.
+CAPE_MIN_YEARS = 5
+
 #: A trading year, for the one-year return. Approximate on purpose -- the exact
 #: count varies with the exchange calendar and no decision here turns on it.
 TRADING_DAYS_PER_YEAR = 240
@@ -240,6 +245,16 @@ def fundamentals_features(
     elif latest_close is not None and latest_eps is not None and latest_eps > 0:
         trailing_pe = round(latest_close / latest_eps, 2)
 
+    # Cyclically adjusted: the same price over *average* earnings. Loss years
+    # are kept in the average rather than dropped -- a cycle that includes bad
+    # years is the thing being measured, and excluding them would restore the
+    # very flattery this is here to remove.
+    cape = None
+    if latest_close is not None and len(eps) >= CAPE_MIN_YEARS:
+        mean_eps = statistics.fmean(v for _, v in eps)
+        if mean_eps > 0:
+            cape = round(latest_close / mean_eps, 2)
+
     return HoldFundamentalsFeatures(
         years_available=len(rows),
         eps_years_checked=len(eps),
@@ -253,6 +268,8 @@ def fundamentals_features(
         roe_stdev_pct=_round(statistics.stdev(roe)) if len(roe) >= 2 else None,
         roe_years_checked=len(roe),
         trailing_pe=trailing_pe,
+        cape=cape,
+        cape_years=len(eps),
     )
 
 

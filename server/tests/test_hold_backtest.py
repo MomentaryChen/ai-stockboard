@@ -292,3 +292,63 @@ def test_payouts_outside_the_window_are_ignored():
 
     assert result.cash_collected == 0.0
     assert result.total_return_pct == 0.0
+
+
+# --- benchmark ----------------------------------------------------------------
+
+
+def test_the_benchmark_is_compared_against_price_not_total_return():
+    """加權指數 is a price index. Measuring a dividend-reinvested return
+    against it would flatter every stock on the board by roughly its own
+    yield, every year -- so the excess is taken against the price leg."""
+    rows = _bars(SPAN, price=lambda i: 100.0 + i * 0.05)      # +40% over the span
+    index = _bars(SPAN, price=lambda i: 1000.0 + i * 0.25)    # +20% over the same
+    result = hold_backtest.run(
+        SID, "test", rows, [_event(100, cash=5.0)],
+        index_rows=index, index_sid="t00",
+    )
+
+    assert result.index_sid == "t00"
+    assert result.index_return_pct == pytest.approx(20.0, abs=0.1)
+    # Excess is price - index, and deliberately not total - index.
+    assert result.excess_price_return_pp == pytest.approx(
+        result.price_return_pct - result.index_return_pct, abs=0.01
+    )
+    assert result.total_return_pct > result.price_return_pct
+
+
+def test_the_benchmark_is_bounded_to_the_stock_s_own_window():
+    """A benchmark measured over a different period is not a benchmark."""
+    rows = _bars(SPAN, price=lambda i: 100.0 + i * 0.05, start=START)
+    # Index history starts a year earlier and runs a year longer.
+    longer = _bars(SPAN + 730, price=lambda i: 1000.0 + i * 0.25,
+                   start=START - datetime.timedelta(days=365))
+    result = hold_backtest.run(SID, "test", rows, [], index_rows=longer,
+                               index_sid="t00")
+
+    # The index rose steadily throughout, so its whole-series return is far
+    # larger than its return over the stock's window. Only the slice counts.
+    whole_series = (longer[-1].close / longer[0].close - 1) * 100
+    slice_only = (
+        [r for r in longer if r.date == rows[-1].date][0].close
+        / [r for r in longer if r.date == rows[0].date][0].close - 1
+    ) * 100
+
+    assert whole_series > slice_only + 15  # they are nowhere near each other
+    assert result.index_return_pct == pytest.approx(slice_only, abs=0.05)
+
+
+def test_no_stored_index_bars_means_no_benchmark_rather_than_a_zero():
+    """Zero would read as "the market went nowhere", which is a claim."""
+    result = hold_backtest.run(SID, "test", _bars(SPAN), [], index_rows=[])
+    assert result.index_return_pct is None
+    assert result.index_sid is None
+    assert result.excess_price_return_pp is None
+
+
+def test_an_index_that_barely_overlaps_reports_nothing():
+    rows = _bars(SPAN)
+    stray = _bars(3, price=1000.0, start=START - datetime.timedelta(days=900))
+    result = hold_backtest.run(SID, "test", rows, [], index_rows=stray,
+                               index_sid="t00")
+    assert result.index_return_pct is None

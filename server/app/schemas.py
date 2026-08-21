@@ -479,10 +479,23 @@ class HoldFundamentalsFeatures(BaseModel):
     #: keeps happening, so a high average built from one spike is not it.
     roe_stdev_pct: float | None
     roe_years_checked: int
-    #: Latest close divided by the most recent annual EPS. Trailing and annual,
-    #: so it lags a turnaround by up to a year -- which is the conservative
-    #: direction for a checklist about not overpaying.
+    #: Latest close divided by the most recent annual EPS -- or the exchange's
+    #: own published figure when there is one, which there usually is.
     trailing_pe: float | None
+    #: Close divided by *average* EPS across the window: a cyclically adjusted
+    #: PE, in the Shiller sense.
+    #:
+    #: This exists because a trailing PE is at its most flattering exactly when
+    #: a cyclical is most dangerous. Earnings peak with the cycle, so the
+    #: denominator peaks with it, and a steel or shipping name at the top of
+    #: its cycle prints a single-digit PE that reads as a bargain. Averaging
+    #: the denominator over a decade takes the cycle out of it.
+    #:
+    #: Not inflation-adjusted, unlike Shiller's original. Taiwan's CPI over the
+    #: window is small next to the cyclical swing this is correcting for, and
+    #: an adjustment would need a price series the service does not carry.
+    cape: float | None
+    cape_years: int
 
 
 class HoldPriceFeatures(BaseModel):
@@ -646,6 +659,22 @@ class HoldBacktestResponse(BaseModel):
     #: Compounded annual rate on the total return. The only figure comparable
     #: between two stocks whose stored history differs in length.
     annualised_return_pct: float | None
+
+    #: The market index over the very same sessions, so a return has something
+    #: to be good *relative to*. Compare it against `price_return_pct`, never
+    #: against the total: 加權指數 is a price index and excludes dividends, so
+    #: putting it beside a dividend-reinvested figure would flatter every
+    #: stock on the board by roughly its own yield, every year.
+    #:
+    #: TWSE does publish 發行量加權股價報酬指數, which would be the like-for-like
+    #: benchmark -- but only as a current-month window with no dated query, so
+    #: it cannot cover a multi-year replay. Reported as null when the index has
+    #: no stored bars over this window.
+    index_sid: str | None
+    index_return_pct: float | None
+    #: Price return minus the index's, in percentage points. The number that
+    #: says whether holding *this* was better than holding the market.
+    excess_price_return_pp: float | None
 
     #: Cash actually received per original share, before any reinvestment.
     cash_collected: float

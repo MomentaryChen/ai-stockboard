@@ -320,7 +320,42 @@ Beyond the plan's list:
 ✓ The 存股 section now carries the checklist, the long backtest and the AI
 verdict, with the short backtest in the section above it.
 
-### M4 — Optional
+### M4 — Calibration: fixing what distorts — **partly done**
+
+Not the M4 originally sketched below. An audit of the shipped lanes turned up
+three ways the output could mislead, and those were worth more than new
+surface area.
+
+1. [x] **`ESSENTIAL_DIMENSIONS`.** An OTC name has no dividend archive, so
+   Collect is structurally `unknown` -- leaving 75/100 weight known, past the
+   thin-coverage gate. A stock could be labelled `strong` with its payout
+   record entirely unexamined. Weight alone cannot express that missing
+   Liquid (10) and missing Collect (25, the premise of the method) are not
+   interchangeable.
+2. [x] **Benchmark on the hold backtest.** A return with nothing to be good
+   relative to is not a grade. Compared on the price leg only, and labelled:
+   加權指數 excludes dividends, and 發行量加權股價報酬指數 -- the like-for-like
+   index -- is published only as a current-month window with no dated query.
+3. [x] **Cyclically adjusted PE.** The design said "PE vs its own 5-year
+   band"; that does not work, because at a cycle top the PE is low *and* low
+   against its own history. Averaging the denominator over the stored decade
+   is what removes the cycle, and M2 had already collected the EPS to do it.
+   `PROMPT_VERSION` -> `hold-v3`: the measurements changed and so did what
+   Cheap means.
+
+Still open, and the one that matters most:
+
+4. [ ] **Validate the thresholds.** Nothing demonstrates that a high score
+   predicts anything. The hold backtest now makes the experiment possible --
+   bucket by score, measure what happened next -- and it has not been run.
+   Until it is, the score has the appearance of rigour without the evidence.
+
+The remaining known distortions are listed in README under "Known
+distortions". The largest is that hold backtests are not comparable between
+stocks: the window is whatever history happens to be stored, so two names can
+be graded over different lengths and different market regimes.
+
+### M4 (original sketch) — Optional
 
 - Board screener on yield / score  
 - Technical AI replay (closes existing README gap)  

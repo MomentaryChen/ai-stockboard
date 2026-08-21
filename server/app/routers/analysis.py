@@ -69,6 +69,7 @@ from app.services import codes as codes_service
 from app.services import dividend as dividend_service
 from app.services import fundamentals as fundamentals_service
 from app.services import history as history_service
+from app.services import market_index
 from app.services import valuation as valuation_service
 from app.services.analysis import ai as ai_service
 from app.services.analysis import backtest as backtest_service
@@ -685,8 +686,26 @@ def get_hold_backtest(
         db, sid, HOLD_BACKTEST_YEARS
     )
 
+    # The board this stock trades on, so the benchmark is the market the
+    # holder could actually have bought instead. Cache-only like everything
+    # else here: an index nobody has loaded bars for simply goes unreported
+    # rather than triggering a fetch.
+    index_sid = market_index.benchmark_for(info.data_source)
+    index_rows = (
+        [] if market_index.is_index(sid)
+        else history_service.read_prices(db, index_sid, start)
+    )
+
     try:
-        return hold_backtest.run(sid, info.name, rows, events, coverage)
+        return hold_backtest.run(
+            sid,
+            info.name,
+            rows,
+            events,
+            coverage,
+            index_rows=index_rows,
+            index_sid=index_sid,
+        )
     except hold_backtest.NotEnoughBars as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

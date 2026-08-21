@@ -214,12 +214,33 @@ def _thin(points: list[HoldEquityPoint], cap: int) -> list[HoldEquityPoint]:
     return sampled
 
 
+def _index_return(
+    index_rows: list[DailyPrice], start: datetime.date, end: datetime.date
+) -> float | None:
+    """The market's price return over the same sessions, or None.
+
+    Bounded to the stock's own window rather than the index's: a benchmark
+    measured over a different period is not a benchmark. Both ends have to
+    fall inside what the index has stored, or there is nothing honest to
+    report and it stays null.
+    """
+    usable = [r for r in traditional.usable_rows(index_rows) if start <= r.date <= end]
+    if len(usable) < 2:
+        return None
+    first, last = float(usable[0].close), float(usable[-1].close)
+    if not first:
+        return None
+    return round((last / first - 1) * 100, 2)
+
+
 def run(
     sid: str,
     name: str,
     rows: list[DailyPrice],
     events: list[DividendEvent],
     coverage: str = "history",
+    index_rows: list[DailyPrice] | None = None,
+    index_sid: str | None = None,
 ) -> HoldBacktestResponse:
     """Replay a buy-and-hold over whatever bars are stored.
 
@@ -294,6 +315,10 @@ def run(
         p.cash for p in payouts if p.date > end - datetime.timedelta(days=365)
     )
 
+    index_return = (
+        _index_return(index_rows, start, end) if index_rows else None
+    )
+
     return HoldBacktestResponse(
         sid=sid,
         name=name,
@@ -307,6 +332,14 @@ def run(
         total_return_pct=round(total_return * 100, 2),
         dividend_return_pct=round((total_return - price_return) * 100, 2),
         annualised_return_pct=annualised,
+        index_sid=index_sid if index_return is not None else None,
+        index_return_pct=index_return,
+        # Against the *price* return, because the index excludes dividends.
+        excess_price_return_pp=(
+            round(price_return * 100 - index_return, 2)
+            if index_return is not None
+            else None
+        ),
         cash_collected=round(cash_collected, 4),
         yield_on_cost_pct=(
             round(recent_cash / start_close * 100, 2) if start_close else None

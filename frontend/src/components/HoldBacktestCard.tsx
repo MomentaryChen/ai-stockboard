@@ -134,6 +134,26 @@ export default function HoldBacktestCard({ data }: { data: HoldBacktestResponse 
         </div>
       </div>
 
+      {/* The benchmark. Against the price leg only -- 加權指數 excludes
+          dividends, and putting it beside the total would flatter every stock
+          by roughly its own yield. Absent rather than zero when the index has
+          no bars over this window. */}
+      {data.index_return_pct !== null && (
+        <p className="dim" style={{ margin: '12px 0 0' }}>
+          {t(
+            (data.excess_price_return_pp ?? 0) >= 0
+              ? 'hbt.beatIndex'
+              : 'hbt.trailIndex',
+            {
+              index: pct(data.index_return_pct),
+              excess: pct(data.excess_price_return_pp),
+            },
+          )}
+          <br />
+          <span style={{ fontSize: 11 }}>{t('hbt.indexCaveat')}</span>
+        </p>
+      )}
+
       {curve.length > 1 && (
         <div style={{ height: 200, marginTop: 14 }}>
           <ResponsiveContainer width="100%" height="100%">
