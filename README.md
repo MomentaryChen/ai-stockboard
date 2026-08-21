@@ -173,6 +173,7 @@ docker compose ps               # db / server / frontend 都要 (healthy)
 | `db` | postgres:16-alpine，資料存在 `stockboard-pgdata` volume | `5433` |
 | `server` | FastAPI + uvicorn，`server/Dockerfile` | `8000` |
 | `frontend` | vite build 產物由 nginx 提供，`frontend/Dockerfile` | `8100` |
+| `db-backup` | nightly `pg_dump` into `deployment/backups/` on the host | — |
 
 nginx 把 `/api` 與 `/docs` proxy 到 `server:8000`，瀏覽器全程同源，所以 CORS 不會參與；
 其餘路徑 fallback 到 `index.html` 交給 react-router。啟動順序由 healthcheck 串起來：
@@ -193,6 +194,102 @@ nginx 把 `/api` 與 `/docs` proxy 到 `server:8000`，瀏覽器全程同源，�
 ```bash
 docker compose up -d --build server     # 或 frontend
 ```
+
+### Backups
+
+The database is the only copy of everything this service cannot fetch again:
+user accounts, watchlists, the job schedules an admin edited, and the run
+history that says whether the nightly jobs are healthy. Prices can be pulled
+from the exchange a second time; none of that can.
+
+The `db-backup` container runs `pg_dump` once a day and writes into
+`deployment/backups/` **on the host**, not into a Docker volume. That is the
+whole point of the arrangement -- a named volume would be deleted by the same
+`docker compose down -v` that deletes the database, so it would fail in exactly
+the case a backup exists for.
+
+```bash
+cd deployment
+docker compose exec db-backup /opt/backup/backup.sh   # take one right now
+docker compose exec db-backup /opt/backup/restore.sh  # list what is on disk
+docker compose logs db-backup                         # did last night's run?
+ls backups/
+```
+
+Tuned in `.env` (`BACKUP_AT`, `BACKUP_KEEP_DAYS`, `BACKUP_DIR`). The first start
+takes a backup immediately when the directory is empty, so a new deployment is
+covered from day one rather than from the first time 04:00 comes around.
+
+Each dump is written under a `.partial` name and moved into place only after
+`pg_restore --list` has read it back, so a run interrupted half way through
+never leaves a file that looks like a good backup. Old dumps are pruned only
+after a new one has been verified -- a failed backup must not also cost you the
+copies it failed to replace.
+
+To restore, stop the API first so it is not writing into the database being
+replaced:
+
+```bash
+cd deployment
+docker compose stop server
+docker compose exec db-backup /opt/backup/restore.sh stockboard-20260821-040000.dump
+docker compose start server
+```
+
+The restore asks you to type the database name before it does anything, and
+terminates any other session still connected -- an open `psql` holds locks on
+the objects `pg_restore` is about to drop, which is how a restore turns into a
+half-applied schema.
+
+Two things this is not. It is one machine's disk: a dump next to the database
+covers a mistaken `down -v`, an accidental `delete`, and a bad migration, but
+not the disk itself. Point `BACKUP_DIR` somewhere else if that matters. And
+nothing alerts -- `docker compose logs db-backup` is the only place a failing
+backup shows up, the same limitation the batch jobs have.
+
+### Schema migrations
+
+Schema changes go through **Alembic**. The database is migrated on startup by
+`app/migrations.py`, so `docker compose up -d --build` remains the whole
+deployment procedure; a PostgreSQL advisory lock keeps two replicas booting at
+once from running the same DDL twice.
+
+```bash
+cd server
+uv run alembic current                                  # where is this database
+uv run alembic revision --autogenerate -m "add x"       # write one from the models
+uv run alembic upgrade head                             # apply
+uv run alembic check                                    # models vs database: any drift?
+uv run alembic upgrade head --sql                       # review the SQL, apply nothing
+```
+
+Always read what `--autogenerate` produced before committing it. It compares
+the models against a live database and is good at columns, indexes and types;
+it cannot know that a column is being renamed rather than dropped and re-added,
+and it will happily generate the second.
+
+`alembic check` is the one worth running in anger: it fails when the models and
+the database disagree, which is the class of bug that used to be invisible.
+
+**Why this replaced `create_all`.** `Base.metadata.create_all` only ever creates
+tables that do not exist. It never alters one that does -- so a column added to
+a shipped model was invisible to any database with data in it, and there was a
+second mechanism (`app/schema_patches.py`, now deleted) holding one idempotent
+`add column if not exists` per such column. That covered adding a column and
+nothing else: no type change, no composite index, no drop, no data backfill.
+The drift was not hypothetical. Adopting Alembic turned up an orphaned
+`stock_code_sync_run` table and an `ix_dividend_event_sid_ex_date` index that
+had been removed from the models but not from any running database, because
+dropping is precisely what `create_all` cannot do; `0002_retire_create_all_leftovers`
+is what finally removes them.
+
+An existing deployment needs no manual step. `0001_baseline` is written
+entirely in `IF NOT EXISTS` form, so it is a no-op against a database
+`create_all` already built and fills in whatever it could not add after the
+fact -- notably an index added to a model after its table had shipped, which
+`create_all` never revisits. Stamping the database as up to date would have
+been shorter, but a stamp asserts a match instead of establishing one, and
+`alembic check` afterwards proves the difference.
 
 ### 單一服務部署（不用 Docker）
 
@@ -931,10 +1028,15 @@ not support.
 - 同一套規則現在也跑在大盤 `t00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
   指數的「量」是全市場成交股數，性質與單一個股的量能不同。
 - grs 與 twstock 都沒有為四大買賣點提供書目出處，可驗證的「標準」只到 grs 這份參考實作為止。
-- 資料表用 `Base.metadata.create_all` 在啟動時建立。它只建立**不存在的表**，永遠不會 ALTER 既有的表。
-  既有的表要加欄位，改在 `server/app/schema_patches.py` 補一行冪等的
-  `add column if not exists`，每次啟動都會跑一次。那裡只放**加欄位**——
-  改型別、改名、刪欄位都不適合無人值守地對著正在跑的資料庫執行，需要時仍應導入 Alembic。
+- Schema changes are Alembic revisions under `server/alembic/versions/`, applied
+  at startup. A revision runs against a live database with no operator watching,
+  so anything that rewrites a large table or takes a long lock is still a manual
+  job -- write it, then run `alembic upgrade head` by hand at a quiet hour rather
+  than letting a deploy do it. See the schema migrations section above.
+- Backups are a nightly `pg_dump` to one directory on the same host. That covers
+  a mistaken `down -v`, a bad migration and a wrong `delete`; it does not cover
+  losing the machine. Nothing alerts when a backup fails -- it shows up in
+  `docker compose logs db-backup` and nowhere else.
 - 重設密碼產生的臨時密碼**只顯示一次**，且只能靠 ADMIN 自己轉交。沒有寄信、沒有簡訊，
   也沒有「忘記密碼」的自助流程——使用者一定要找得到管理員。
 - **Token 存在 localStorage**，任何 XSS 都讀得到。專案沒有 cookie/CSRF 基礎建設，
@@ -957,11 +1059,40 @@ docker compose exec db psql -U stockboard -d stockboard -c "select * from fetch_
 docker compose exec db psql -U stockboard -d stockboard -c "select id, username, email, role, is_active from app_user order by id;"
 ```
 
-清掉快取重來：
+### Clearing cached market data
+
+Prices, the month-bucket bookkeeping and the dividend history are a cache of
+what the exchanges publish: deleting them costs a re-fetch and nothing else.
+Accounts, watchlists, schedules and job history are not a cache, and this
+leaves them where they are.
 
 ```bash
-cd deployment && docker compose down -v && docker compose up -d
+cd deployment
+docker compose exec db psql -U stockboard -d stockboard \
+  -c "truncate daily_price, fetch_log, dividend_event, dividend_fetch_log;"
 ```
+
+The listed-instrument table is re-fetchable too, but on its own schedule --
+emptying `stock_code` leaves search returning nothing until the next sync
+finishes, so prefer the "立即同步" button at `/admin/stock-codes` over
+truncating it.
+
+### Starting the deployment over from nothing
+
+`docker compose down -v` is **not** a cache flush. The `-v` deletes the
+`stockboard-pgdata` volume, and with it every user account, every watchlist,
+every job run, and the schedules an admin edited -- none of which can be
+fetched again from anywhere. It is the right command for throwing a deployment
+away, and the wrong one for a stale price.
+
+```bash
+cd deployment
+docker compose exec db-backup /opt/backup/backup.sh   # so this is reversible
+docker compose down -v && docker compose up -d
+```
+
+A dump taken first makes it reversible: the backups live on the host, so
+`down -v` does not touch them, and `restore.sh` puts the accounts back.
 
 ---
 

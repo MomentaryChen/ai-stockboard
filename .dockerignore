@@ -22,4 +22,5 @@ docs
 tools
 
 deployment/.env
+deployment/backups
 **/*.log

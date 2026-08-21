@@ -36,6 +36,9 @@ pnpm-debug.log*
 # ---------------------------------------------------------------------------
 # Local data & logs
 # ---------------------------------------------------------------------------
+# Database dumps written by the db-backup container.
+deployment/backups/
+
 *.db
 *.sqlite
 *.sqlite3
