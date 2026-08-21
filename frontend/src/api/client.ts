@@ -120,6 +120,17 @@ const DEFAULT_TIMEOUT_MS = 15_000
  */
 const SLOW_TIMEOUT_MS = 60_000
 
+/** The budget for a Gemini generation behind `/analysis/ai`.
+ *
+ *  The server gives Gemini 45 s per attempt and retries once on a flaky reply,
+ *  and the same request may still load history on a cold cache first. The
+ *  default 15 s therefore aborts work that was going to succeed -- users saw
+ *  "AI 評估失敗：Request timed out" while the backend was still waiting on
+ *  Google. 120 s covers two attempts with headroom, and still finishes before
+ *  nginx's 180 s proxy_read_timeout.
+ */
+const AI_TIMEOUT_MS = 120_000
+
 /** One request's abort budget: the caller's signal, plus a deadline.
  *
  *  `AbortSignal.any()` would express this in a line, but it cannot say *which*
@@ -166,7 +177,7 @@ interface RequestOptions {
   /** Send the access token, and retry once after a refresh on 401. */
   auth?: boolean
   /** Override the deadline. Only the routes that can legitimately outlast
-   *  DEFAULT_TIMEOUT_MS pass this; see SLOW_TIMEOUT_MS. */
+   *  DEFAULT_TIMEOUT_MS pass this; see SLOW_TIMEOUT_MS and AI_TIMEOUT_MS. */
   timeoutMs?: number
 }
 
@@ -427,7 +438,7 @@ export const api = {
   generateAiAnalysis: (sid: string, locale: string) =>
     request<AiAnalysisResponse>(
       `/api/stocks/${sid}/analysis/ai?locale=${encodeURIComponent(locale)}`,
-      { method: 'POST', auth: true },
+      { method: 'POST', auth: true, timeoutMs: AI_TIMEOUT_MS },
     ),
 
   /** Generations left today. Read up front so the button can explain itself
