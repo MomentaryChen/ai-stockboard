@@ -114,6 +114,7 @@ const JOB_KEYS: Record<string, { name: MessageKey; description: MessageKey }> = 
     name: 'jobName.refresh_token_cleanup',
     description: 'jobDesc.refresh_token_cleanup',
   },
+  chip_refresh: { name: 'jobName.chip_refresh', description: 'jobDesc.chip_refresh' },
 }
 
 export function translateJobName(id: string, fallback: string, t: Translate): string {
@@ -139,6 +140,9 @@ const JOB_STAT_KEYS: Record<string, MessageKey> = {
   pruned: 'jobStat.pruned',
   active: 'jobStat.active',
   deleted: 'jobStat.deleted',
+  fetched: 'jobStat.fetched',
+  cached: 'jobStat.cached',
+  rows: 'jobStat.rows',
 }
 
 export function translateJobStat(key: string, fallback: string, t: Translate): string {

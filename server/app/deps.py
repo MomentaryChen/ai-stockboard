@@ -169,8 +169,9 @@ def force_refresh(
     who never signed in, while `/api/realtime` politely queues behind it.
 
     Declared as a dependency rather than repeated on each route so the rule
-    cannot drift between `/history` and `/dividends`, and so a new route that
-    wants a force switch gets the check by taking this instead of a bare bool.
+    cannot drift between `/history`, `/dividends` and `/chips`, and so a new
+    route that wants a force switch gets the check by taking this instead of
+    a bare bool.
     """
     if not force:
         return False

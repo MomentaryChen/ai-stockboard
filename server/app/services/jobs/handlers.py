@@ -15,6 +15,7 @@ import logging
 
 from app.services import auth as auth_service
 from app.services import backtest_store
+from app.services import chip as chip_service
 from app.services import code_sync
 from app.services.jobs.registry import JobContext, JobResult
 
@@ -60,6 +61,23 @@ def backtest_refresh(context: JobContext) -> JobResult:
     else:
         status, message = "skipped", "Every backtest is current"
 
+    return JobResult(status=status, message=message, stats=stats)
+
+
+def chip_refresh(context: JobContext) -> JobResult:
+    """Pull the last few sessions of T86 / MI_MARGN (and TPEX equivalents).
+
+    `skipped` here means every requested session was already stamped fresh --
+    the usual answer on a weekend, or when the market board has no calendar
+    bars yet so there is nothing to date the reports with.
+    """
+    stats = chip_service.refresh_recent(context.db, force=context.force)
+    if stats["fetched"]:
+        status, message = "success", None
+    elif stats["cached"]:
+        status, message = "skipped", "Every recent chip report is current"
+    else:
+        status, message = "skipped", "No trading calendar in daily_price yet"
     return JobResult(status=status, message=message, stats=stats)
 
 

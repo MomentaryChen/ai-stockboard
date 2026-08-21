@@ -70,6 +70,19 @@ export function fmtLotsAxis(value: number, locale: Locale = 'zh-TW'): string {
   return `${Math.round(value)} 張`
 }
 
+/** Whole numbers with a leading + for increases (融資增減, 張). */
+export function fmtSignedInt(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '--'
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${value.toLocaleString('en-US')}`
+}
+
+/** Institutional nets are published in 股; the card shows 張 like volume. */
+export function fmtSignedLots(shares: number | null | undefined): string {
+  if (shares === null || shares === undefined || Number.isNaN(shares)) return '--'
+  return fmtSignedInt(Math.round(shares / 1000))
+}
+
 export function fmtSigned(value: number | null | undefined, digits = 2): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '--'
   const sign = value > 0 ? '+' : ''
