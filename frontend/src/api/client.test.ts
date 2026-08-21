@@ -93,7 +93,7 @@ describe('refreshPromise single-flight', () => {
             return jsonResponse({ detail: 'Invalid or expired token' }, 401)
           }
           if (url === '/api/watchlist') {
-            return jsonResponse({ count: 0, sids: [] })
+            return jsonResponse({ count: 0, sids: [], groups: [], group_by_sid: {} })
           }
           return jsonResponse({ success: true, message: null, quotes: [], errors: {} })
         }

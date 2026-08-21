@@ -10,7 +10,7 @@
 
 import { Link } from 'react-router-dom'
 
-import type { BestFourPointResult, RealtimeQuote } from '../api/types'
+import type { BestFourPointResult, RealtimeQuote, WatchlistGroup } from '../api/types'
 import { usePriceFlash } from '../hooks/usePriceFlash'
 import { useI18n } from '../i18n'
 import { direction, fmtPrice, fmtSigned } from '../utils/format'
@@ -22,11 +22,22 @@ import QuoteDetail from './QuoteDetail'
 interface Props {
   quote: RealtimeQuote
   onRemove?: (code: string) => void
+  groups?: WatchlistGroup[]
+  groupId?: number | null
+  onAssign?: (code: string, groupId: number | null) => void
   bfp?: BestFourPointResult
   bfpLoading?: boolean
 }
 
-export default function RealtimeCard({ quote, onRemove, bfp, bfpLoading }: Props) {
+export default function RealtimeCard({
+  quote,
+  onRemove,
+  groups,
+  groupId,
+  onAssign,
+  bfp,
+  bfpLoading,
+}: Props) {
   const { t } = useI18n()
   const last = lastPrice(quote)
   const dir = direction(quote.change)
@@ -69,6 +80,29 @@ export default function RealtimeCard({ quote, onRemove, bfp, bfpLoading }: Props
       <div style={{ marginTop: 14 }}>
         <QuoteDetail quote={quote} />
       </div>
+
+      {onAssign && groups && groups.length > 0 && (
+        <label className="group-assign">
+          {t('board.groupAssign')}
+          <select
+            className="text-input group-assign-select"
+            value={groupId ?? ''}
+            onChange={(event) =>
+              onAssign(
+                quote.code,
+                event.target.value === '' ? null : Number(event.target.value),
+              )
+            }
+          >
+            <option value="">{t('board.groupNone')}</option>
+            {groups.map((group) => (
+              <option key={group.id} value={group.id}>
+                {group.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       <AiVerdictSection sid={quote.code} />
     </article>

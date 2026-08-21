@@ -70,3 +70,43 @@ export function saveBoardSort(sort: BoardSort) {
     /* the choice just won't survive a reload */
   }
 }
+
+/**
+ * Which folder the board is showing. A view preference, like sort -- the
+ * watchlist itself is not filtered on the server, so switching groups never
+ * drops a quote poll that was already paid for.
+ */
+export type GroupFilter =
+  | { kind: 'all' }
+  | { kind: 'ungrouped' }
+  | { kind: 'group'; id: number }
+
+const GROUP_KEY = 'ai-stockboard.boardGroup'
+
+export function readBoardGroup(): GroupFilter {
+  try {
+    const raw = localStorage.getItem(GROUP_KEY)
+    if (raw === 'ungrouped') return { kind: 'ungrouped' }
+    if (raw && raw.startsWith('g:')) {
+      const id = Number(raw.slice(2))
+      if (Number.isInteger(id) && id > 0) return { kind: 'group', id }
+    }
+  } catch {
+    /* storage unavailable -- fall through to the default */
+  }
+  return { kind: 'all' }
+}
+
+export function saveBoardGroup(filter: GroupFilter) {
+  try {
+    const raw =
+      filter.kind === 'ungrouped'
+        ? 'ungrouped'
+        : filter.kind === 'group'
+          ? `g:${filter.id}`
+          : 'all'
+    localStorage.setItem(GROUP_KEY, raw)
+  } catch {
+    /* the choice just won't survive a reload */
+  }
+}

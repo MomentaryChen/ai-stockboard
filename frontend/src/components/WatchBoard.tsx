@@ -9,6 +9,7 @@
 
 import { useMemo, useState } from 'react'
 
+import type { WatchlistGroup } from '../api/types'
 import {
   readBoardSort,
   saveBoardSort,
@@ -95,6 +96,9 @@ function nextSort(key: SortKey, initialDir: 'asc' | 'desc', sort: BoardSort): Bo
 interface Props {
   entries: BoardEntry[]
   onRemove?: (code: string) => void
+  groups?: WatchlistGroup[]
+  groupBySid?: Record<string, number>
+  onAssign?: (code: string, groupId: number | null) => void
   bfpLoading?: boolean
   fetching?: boolean
   /** The floating/mini variants drop the columns they have no room for. */
@@ -104,6 +108,9 @@ interface Props {
 export default function WatchBoard({
   entries,
   onRemove,
+  groups,
+  groupBySid,
+  onAssign,
   bfpLoading,
   fetching,
   compact,
@@ -161,6 +168,9 @@ export default function WatchBoard({
               expanded={expanded === entry.code}
               onToggle={(code) => setExpanded((open) => (open === code ? null : code))}
               onRemove={onRemove}
+              groups={compact ? undefined : groups}
+              groupId={groupBySid?.[entry.code] ?? null}
+              onAssign={compact ? undefined : onAssign}
               bfpLoading={bfpLoading}
               fetching={fetching}
             />

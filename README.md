@@ -550,7 +550,9 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET / PATCH / DELETE | `/api/users/{user_id}` | 檢視／改角色與狀態／刪除（ADMIN） |
 | POST | `/api/users/{user_id}/password-reset` | 重設密碼，回傳一次性臨時密碼（ADMIN） |
 | POST | `/api/users/{user_id}/unlock` | Lift a login lockout early, leaving the password alone（ADMIN） |
-| GET / PUT | `/api/watchlist` | 自選股，整批讀寫（需登入） |
+| GET / PUT | `/api/watchlist` | Watchlist, whole-list read/write (signed in). Response includes `groups` and `group_by_sid`. PUT may overlay assignments. |
+| POST | `/api/watchlist/groups` | Create a named folder on the same 20-stock list (signed in) |
+| PATCH / DELETE | `/api/watchlist/groups/{group_id}` | Rename or delete a folder; stocks stay, they just ungroup (signed in) |
 | GET | `/api/jobs` | Every background job: schedule, last run, next run (**ADMIN**) |
 | GET | `/api/jobs/{job_id}/runs?limit=50` | One job's run history (**ADMIN**) |
 | PATCH | `/api/jobs/{job_id}/schedule` | Change when a job fires (**ADMIN**) |
@@ -1282,6 +1284,11 @@ fills the cache the usual way.
 
 `/realtime` 改成需要登入之後，未登入已經沒有介面可以編輯自選股，
 localStorage 那條路留著是為了把**這個改動之前**存下來的清單接進帳號，`useWatchlist` 的兩套儲存不需要動。
+
+Named groups (`watchlist_group`) are folders on that same 20-stock list, not
+extra lists -- the realtime quote budget is already spent at 20. A stock
+belongs to at most one group. Adding a stock while a group chip is selected
+puts it there; deleting a group ungroups the stocks rather than removing them.
 
 ```bash
 curl -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' -d '{"identifier":"admin@example.com","password":"..."}'

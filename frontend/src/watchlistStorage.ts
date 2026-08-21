@@ -16,6 +16,10 @@ export const DEFAULT_WATCHLIST = ['2330', '2317', '0050']
  *  /api/realtime only quotes 20 codes per request anyway. */
 export const MAX_WATCHLIST = 20
 
+/** Mirrors watchlist_service.MAX_GROUPS -- folders on the same 20-stock list,
+ *  not extra lists, so the chip row stays a chip row. */
+export const MAX_WATCHLIST_GROUPS = 10
+
 /** What is actually stored, or null when the visitor has never curated a list. */
 export function readStoredWatchlist(): string[] | null {
   try {

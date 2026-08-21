@@ -870,10 +870,31 @@ class PasswordResetResponse(BaseModel):
     temp_password: str
 
 
+class WatchlistGroupOut(BaseModel):
+    id: int
+    name: str
+    position: int
+
+
 class WatchlistResponse(BaseModel):
     count: int
     sids: list[str]
+    groups: list[WatchlistGroupOut] = []
+    # Only the assigned sids; missing means ungrouped. Keys are stock codes.
+    group_by_sid: dict[str, int] = {}
 
 
 class WatchlistUpdateRequest(BaseModel):
     sids: list[str]
+    # Overlay on the assignments that survive the replace. None (or omitted)
+    # leaves every remaining sid in the group it was already in; a null value
+    # ungroups that sid. Unknown group ids are rejected, not silently dropped.
+    group_by_sid: dict[str, int | None] | None = None
+
+
+class WatchlistGroupCreateRequest(BaseModel):
+    name: str
+
+
+class WatchlistGroupUpdateRequest(BaseModel):
+    name: str
