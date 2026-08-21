@@ -215,7 +215,7 @@ export const en: Messages = {
   'analysis.modeTrade': 'Trade',
   'analysis.modeHold': 'Hold',
   'analysis.hintTrade': 'Short-horizon signals, backtest, and chip flow',
-  'analysis.hintHold': 'Long-horizon suitability and dividends',
+  'analysis.hintHold': 'Long-horizon suitability, backtest, and dividends',
   'table.last10': 'Last 10 days',
   'table.date': 'Date',
   'table.close': 'Close',

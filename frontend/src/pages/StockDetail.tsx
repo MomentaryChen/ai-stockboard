@@ -240,24 +240,16 @@ export default function StockDetail() {
         )}
       </section>
 
-      {/* Full width, under the price and above the chart: the AI call is what
-          this product leads with, and it spent its life at the bottom of the
-          320px analysis column, below three cards and a table. Here it is
-          across the page and it is still free to look at -- the panel only
-          spends a generation when the button is pressed, so the rule engine's
-          verdict in the stack below has lost nothing by moving down. */}
-      <AiVerdictSection sid={sid} layout="spotlight" />
-
-      {/* Stage stays put (quote, AI, chart); only the evidence column swaps.
-          Trade and hold answer different horizons -- one scroll of both used
-          to bury the second question under the first. */}
+      {/* Mode first, then the matching AI band: switching tabs must change
+          which question the stage answers, not leave a trade verdict hanging
+          over a hold evidence column. Quote and chart stay put either way. */}
       <div className="analysis-mode-bar">
-        <div className="segmented" role="tablist" aria-label={t('nav.stock')}>
+        <div className="analysis-modes" role="tablist" aria-label={t('nav.stock')}>
           <button
             type="button"
             role="tab"
             aria-selected={analysisMode === 'trade'}
-            className={`btn btn-sm ${analysisMode === 'trade' ? 'active' : ''}`}
+            className={`analysis-mode ${analysisMode === 'trade' ? 'active' : ''}`}
             onClick={() => setAnalysisMode('trade')}
           >
             {t('analysis.modeTrade')}
@@ -266,7 +258,7 @@ export default function StockDetail() {
             type="button"
             role="tab"
             aria-selected={analysisMode === 'hold'}
-            className={`btn btn-sm ${analysisMode === 'hold' ? 'active' : ''}`}
+            className={`analysis-mode ${analysisMode === 'hold' ? 'active' : ''}`}
             onClick={() => setAnalysisMode('hold')}
           >
             {t('analysis.modeHold')}
@@ -276,6 +268,12 @@ export default function StockDetail() {
           {t(analysisMode === 'trade' ? 'analysis.hintTrade' : 'analysis.hintHold')}
         </p>
       </div>
+
+      {analysisMode === 'trade' ? (
+        <AiVerdictSection sid={sid} layout="spotlight" />
+      ) : (
+        <HoldAiVerdict sid={sid} layout="spotlight" />
+      )}
 
       <div className="grid-detail">
         <section className="card">
@@ -442,8 +440,8 @@ export default function StockDetail() {
                 <>
                   <ChenHoldCard features={hold.data.features} rules={hold.data.rules} />
                   {/* Under the checklist it grades. This mode's counterpart to
-                      the short backtest in trade mode: two gradesheets, and the
-                      toggle above is what keeps them from being read as one. */}
+                      the short backtest in trade mode -- the Hold tab is what
+                      keeps the two gradesheets from being read as one. */}
                   {holdBacktest.data ? (
                     <HoldBacktestCard data={holdBacktest.data} />
                   ) : holdBacktest.isError ? (
@@ -459,7 +457,6 @@ export default function StockDetail() {
                       </p>
                     </section>
                   ) : null}
-                  <HoldAiVerdict sid={sid} />
                 </>
               ) : (
                 <section className="card">

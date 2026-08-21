@@ -203,7 +203,7 @@ export const zhTW = {
   'analysis.modeTrade': '進出場',
   'analysis.modeHold': '存股',
   'analysis.hintTrade': '短線訊號、回測與籌碼',
-  'analysis.hintHold': '長期適不適合抱、股利',
+  'analysis.hintHold': '長期適不適合抱、回測與股利',
   'table.last10': '近 10 日',
   'table.date': '日期',
   'table.close': '收盤',
