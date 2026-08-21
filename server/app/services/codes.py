@@ -207,10 +207,10 @@ def _index_to_info(meta: market_index.IndexMeta) -> StockInfo:
     """Present an index with the same shape as a listed company.
 
     Everything downstream -- /api/stocks/{sid}, history, analysis -- looks the
-    stock up through here, so this is all it takes for 大盤 to flow through the
-    existing endpoints. ISIN is blank because an index has none, and an index is
-    never in the exchanges' registry, so it is merged in at lookup time rather
-    than stored in `stock_code`.
+    stock up through here, so this is all it takes for t00 / o00 to flow through
+    the existing endpoints. ISIN is blank because an index has none, and an
+    index is never in the exchanges' registry, so it is merged in at lookup time
+    rather than stored in `stock_code`.
     """
     return StockInfo(
         code=meta.code,

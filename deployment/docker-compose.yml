@@ -1,6 +1,27 @@
 # Compose reads deployment/.env automatically, so the same file configures the
 # containers below and the API server run outside Docker (see server/app/config.py).
+#
+# Two conventions run through every service here:
+#
+#   * **Published ports bind to an interface on purpose.** Only the frontend
+#     defaults to 0.0.0.0; the database and the API bind to 127.0.0.1, because
+#     `ports: "5433:5432"` means *every* interface, and on a machine without a
+#     firewall that is the database on the internet. Set POSTGRES_BIND=0.0.0.0
+#     when you genuinely want it reachable, having decided that you do.
+#   * **Every service has a memory ceiling and a log ceiling.** A runaway job
+#     or a crash loop writing to stderr should cost its own container, not the
+#     host and everything else on it. The defaults suit a small VPS; raise them
+#     in .env rather than deleting them.
 name: ai-stockboard
+
+# Container logs are a file on the host that nothing rotates by default: one
+# crash loop at a few hundred lines a second fills the disk, and a full disk
+# stops PostgreSQL too. 3 x 10 MB per service is the cap.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
   db:
@@ -13,7 +34,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-stockboard}
       TZ: ${TZ:-Asia/Taipei}
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      # Loopback by default: the other containers reach this over the compose
+      # network as db:5432 and never touch the published port at all, so the
+      # only thing binding 0.0.0.0 buys is exposure. psql from the host still
+      # works; another machine no longer connects by accident.
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - stockboard-pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -22,6 +47,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "${DB_CPU_LIMIT:-1.0}"
+          # shared_buffers plus work_mem for a handful of connections. Raise it
+          # before raising the PostgreSQL memory settings, not after.
+          memory: ${DB_MEMORY_LIMIT:-768m}
+    logging: *default-logging
 
   # Nightly pg_dump. Without it the only copy of every account, watchlist and
   # job history is the stockboard-pgdata volume below -- one `docker compose
@@ -55,6 +88,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "${BACKUP_CPU_LIMIT:-0.5}"
+          # pg_dump --compress streams; it does not hold the database in RAM.
+          memory: ${BACKUP_MEMORY_LIMIT:-256m}
+    logging: *default-logging
 
   server:
     build:
@@ -71,11 +111,31 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       TZ: ${TZ:-Asia/Taipei}
+      # Where the dumps are *inside this container*. /api/health reports how old
+      # the newest one is, which is the only thing that ever notices a backup
+      # that stopped happening. Distinct from BACKUP_DIR, which is a host path.
+      BACKUP_STATUS_DIR: /backups
     ports:
-      - "${SERVER_PORT:-8000}:8000"
+      # Loopback by default: browsers reach the API through nginx at /api on the
+      # frontend port, and the frontend container uses the compose network. This
+      # port is for curl and the /docs page from the host.
+      - "${SERVER_BIND:-127.0.0.1}:${SERVER_PORT:-8000}:8000"
+    volumes:
+      # Read-only, and only so /api/health can stat the newest dump. Nothing in
+      # the API writes here; the db-backup container owns this directory.
+      - ${BACKUP_DIR:-./backups}:/backups:ro
     depends_on:
       db:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "${SERVER_CPU_LIMIT:-2.0}"
+          # A 12-month history fetch holds a few MB; the ceiling is here for the
+          # job that goes wrong, not for the ones that go right. The container
+          # is OOM-killed and restarted rather than swapping the host to death.
+          memory: ${SERVER_MEMORY_LIMIT:-1g}
+    logging: *default-logging
 
   frontend:
     build:
@@ -86,10 +146,26 @@ services:
     environment:
       TZ: ${TZ:-Asia/Taipei}
     ports:
-      - "${FRONTEND_PORT:-8100}:80"
+      # The one service that is meant to be reachable, so 0.0.0.0 by default.
+      - "${FRONTEND_BIND:-0.0.0.0}:${FRONTEND_PORT:-8100}:80"
+      - "${FRONTEND_BIND:-0.0.0.0}:${FRONTEND_TLS_PORT:-8443}:443"
+    volumes:
+      # Drop fullchain.pem and privkey.pem in here and restart: the image's
+      # entrypoint switches to the TLS config when it finds both, and serves
+      # plain HTTP when it does not. Read-only, and mounted rather than baked
+      # into the image -- an image carrying a private key cannot be pushed
+      # anywhere. See the TLS section of README.md.
+      - ${TLS_CERT_DIR:-./certs}:/etc/nginx/certs:ro
     depends_on:
       server:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "${FRONTEND_CPU_LIMIT:-0.5}"
+          # nginx serving a 2 MB static bundle. This is generous.
+          memory: ${FRONTEND_MEMORY_LIMIT:-128m}
+    logging: *default-logging
 
 volumes:
   stockboard-pgdata:
