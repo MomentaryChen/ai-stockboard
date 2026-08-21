@@ -198,7 +198,7 @@ def _liquidity_features(rows: list[DailyPrice]) -> HoldLiquidityFeatures:
     )
 
 
-def _fundamentals_features(
+def fundamentals_features(
     rows: list[FundamentalsAnnual],
     valuation: ValuationDay | None,
     as_of: datetime.date | None,
@@ -217,6 +217,11 @@ def _fundamentals_features(
     Returns an all-null structure when nothing is stored, which is a distinct
     shape from "we looked and the company lost money". The checklist relies on
     the difference.
+
+    Public, unlike its siblings here, because the deep technical lane reads the
+    same annual figures and asking a different question of them is not a reason
+    to derive them a second way -- two extractors over one table drift the
+    first time a column is added.
     """
     year_cap = (as_of.year if as_of else datetime.date.today().year) - 1
     window = sorted(
@@ -319,7 +324,7 @@ def extract(
             dividends, coverage, observed_dividend_years, as_of, price.latest_close
         ),
         liquidity=_liquidity_features(prices),
-        fundamentals=_fundamentals_features(
+        fundamentals=fundamentals_features(
             fundamentals, valuation, as_of, price.latest_close
         ),
         price=price,

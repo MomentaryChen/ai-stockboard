@@ -554,6 +554,32 @@ def flow_for(rows: list[ChipDay], attr: str) -> ChipFlow:
     return streak_and_net(values)
 
 
+def read_recent(db: Session, sid: str, days: int = DEFAULT_DAYS) -> list[ChipDay]:
+    """Rows already stored for this stock, newest first. Never fetches.
+
+    The cache-only half of `get_chips`, and it exists because the deep AI
+    verdict has a button on every watchlist row. `ensure_dates` is bounded per
+    request but not per page: twenty rows each pressing it would queue tens of
+    exchange calls on the limiter the realtime poll shares, which is the trap
+    the batch analysis routes are cache-only to avoid.
+
+    Nothing is lost by not fetching. `chip_refresh` warms the recent sessions
+    for the whole market nightly -- one report covers every listed name -- so a
+    miss here means the job has not run rather than that this stock is
+    uncovered, and the caller reports it as a coverage gap either way.
+    """
+    dates = trading_dates(db, sid, days)
+    if not dates:
+        return []
+    return list(
+        db.scalars(
+            select(ChipDay)
+            .where(ChipDay.sid == sid, ChipDay.date.in_(dates))
+            .order_by(ChipDay.date.desc())
+        )
+    )
+
+
 def get_chips(
     db: Session,
     sid: str,

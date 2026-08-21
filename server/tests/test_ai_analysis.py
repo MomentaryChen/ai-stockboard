@@ -98,22 +98,28 @@ _VALID = {
 # --- the prompt ---------------------------------------------------------------
 
 
+# These read the *rendered* instruction rather than the template. The answer
+# shape is composed in from `ANSWER_SHAPE` so the deep lane can share it, which
+# means the template alone no longer contains everything the model is told --
+# and what the model is told is the thing worth asserting on.
+
+
 def test_system_instruction_still_licenses_hold():
     """The one sentence whose deletion would recreate the twstock defect."""
-    text = prompts.SYSTEM_INSTRUCTION
+    text = prompts.system_instruction("zh-TW")
     assert '"hold" is a correct and expected answer' in text
     assert "Do not manufacture a trade" in text
 
 
 def test_system_instruction_defines_every_size_the_ui_renders():
-    text = prompts.SYSTEM_INSTRUCTION
+    text = prompts.system_instruction("zh-TW")
     for size in ("large", "medium", "small"):
         assert f"{size}   " in text or f"{size}  " in text, size
 
 
 def test_system_instruction_forbids_knowledge_the_model_was_not_given():
     """Nothing here supplies news or fundamentals, so nothing may be cited."""
-    assert "Use only the measurements supplied" in prompts.SYSTEM_INSTRUCTION
+    assert "Use only the measurements supplied" in prompts.system_instruction("zh-TW")
 
 
 def test_prompt_carries_both_the_measurements_and_the_rule_verdict():

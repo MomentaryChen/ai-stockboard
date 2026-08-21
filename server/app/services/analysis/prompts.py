@@ -21,14 +21,12 @@ from app.schemas import AiVerdict, BestFourPointResult, PriceFeatures
 
 PROMPT_VERSION = "v1"
 
-SYSTEM_INSTRUCTION = """\
-You are a disciplined technical analyst reading one Taiwan-listed instrument.
-
-You will be given a set of derived measurements for a single trading day, plus
-the verdict a deterministic rule engine reached from the same bars. Decide what
-a holder should do with their position.
-
-ANSWER SHAPE
+#: The half of the rubric that is a property of the *question* rather than of
+#: the evidence: what the three actions mean, and when each size is warranted.
+#: The deep lane composes this verbatim, so a change to what "large" requires
+#: reaches both lanes at once. What differs between them is the RULES section,
+#: which is about what each lane is allowed to look at.
+ANSWER_SHAPE = """ANSWER SHAPE
 
 action  enter  open or add to a position
         exit   close or reduce a position
@@ -43,7 +41,16 @@ size    How much of a position the action applies to. Use "none" when, and only
         medium  The balance of evidence points one way and you can state the
                 counter-evidence.
         small   A probe or a trim. The signal is thin, volatility is high, or
-                price sits at an extreme where being wrong is expensive.
+                price sits at an extreme where being wrong is expensive."""
+
+SYSTEM_INSTRUCTION = """\
+You are a disciplined technical analyst reading one Taiwan-listed instrument.
+
+You will be given a set of derived measurements for a single trading day, plus
+the verdict a deterministic rule engine reached from the same bars. Decide what
+a holder should do with their position.
+
+{answer_shape}
 
 RULES
 
@@ -88,10 +95,21 @@ class WireVerdict(BaseModel):
     risks: list[str] = Field(description="1-3 things that would make this call wrong.")
 
 
+def language_name(locale: str) -> str:
+    """The reviewed English name of the language to answer in.
+
+    Public because the deep lane fills the same slot in its own instruction,
+    and the set of languages a prompt has been reviewed in is a property of
+    this package rather than of either lane.
+    """
+    return _LANGUAGE.get(locale, _LANGUAGE["zh-TW"])
+
+
 def system_instruction(locale: str) -> str:
     """System turn with the reviewed language name filled in."""
     return SYSTEM_INSTRUCTION.format(
-        language=_LANGUAGE.get(locale, _LANGUAGE["zh-TW"])
+        answer_shape=ANSWER_SHAPE,
+        language=language_name(locale),
     )
 
 

@@ -28,6 +28,15 @@ Gate 1 has its own entrance, `get_cached`, which stops there and returns None
 instead of falling through to gates 2 and 3. `get_or_create` is the door that
 may spend money and so must stay a POST; `get_cached` is the door a page can
 open on render.
+
+**Depth is part of the subject, not a rendering flag.** A quick verdict is drawn
+from the price series; a deep one additionally reads `chip_day` and
+`fundamentals_annual`. They are two different answers about the same trading
+day, so `depth` joins the cache key and both rows coexist -- pressing one button
+must not evict what the other was paid for. Every entrance above takes it:
+a free read asking for one depth must never be served the other's verdict.
+Both spend from the one allowance, because the bill being defended belongs to
+the deployment and does not care which prompt produced the request.
 """
 
 from __future__ import annotations
@@ -36,6 +45,7 @@ import datetime
 import logging
 import zoneinfo
 
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -44,13 +54,19 @@ from app.config import get_settings
 from app.models import AiAnalysis, AiHoldAnalysis, AppUser, DailyPrice
 from app.schemas import (
     AiAnalysisResponse,
+    AiDepth,
     AiQuotaStatus,
     AiVerdict,
     BestFourPointResult,
+    DeepInputs,
     PriceFeatures,
 )
+from app.services import chip as chip_service
+from app.services import fundamentals as fundamentals_service
+from app.services import valuation as valuation_service
+from app.services.analysis import deep_features, deep_prompts
 from app.services.analysis import features as feature_service
-from app.services.analysis import gemini, model_settings, prompts, traditional
+from app.services.analysis import gemini, hold_features, model_settings, prompts, traditional
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +136,41 @@ def quota_status(db: Session, user: AppUser) -> AiQuotaStatus:
     return AiQuotaStatus(used=used, limit=daily_quota(user), resets_at=end)
 
 
+def prompt_version(depth: AiDepth) -> str:
+    """Which wording keys the cache for this depth.
+
+    The two lanes version independently: editing the deep rules must not
+    invalidate every quick verdict in the table, and vice versa.
+    """
+    return deep_prompts.PROMPT_VERSION if depth == "deep" else prompts.PROMPT_VERSION
+
+
+def _deep_inputs(
+    db: Session, sid: str, features: PriceFeatures, rows: list[DailyPrice]
+) -> DeepInputs:
+    """Chip and annual figures for this stock, read and never fetched.
+
+    Cache-only on purpose, and this is the function where that is decided. The
+    deep button sits on watchlist rows as well as the stock page, so a fetching
+    read here would let one board turn into tens of exchange calls queued on
+    the limiter the realtime poll shares. `chip_refresh` warms the market
+    nightly, so the common case is covered anyway; an uncovered stock becomes a
+    coverage gap the prompt is told about, which is the honest answer rather
+    than a stalled request.
+    """
+    return deep_features.extract(
+        as_of=features.as_of,
+        latest_close=features.latest_close,
+        prices=rows,
+        chips=chip_service.read_recent(db, sid, deep_features.CHIP_WINDOW),
+        fundamentals=fundamentals_service.read(db, sid, hold_features.WINDOW_YEARS),
+        # The exchange's own PE, preferred over one derived from last completed
+        # year's EPS -- see `hold_features.fundamentals_features`. `latest` is
+        # cache-only, which is the constraint this whole function is under.
+        valuation=valuation_service.latest(db, sid),
+    )
+
+
 def _row_to_verdict(row: AiAnalysis) -> AiVerdict:
     return AiVerdict(
         action=row.action,
@@ -131,16 +182,65 @@ def _row_to_verdict(row: AiAnalysis) -> AiVerdict:
     )
 
 
+def _stored_deep(row: AiAnalysis) -> DeepInputs | None:
+    """The deep inputs this row was generated from, out of its own audit copy.
+
+    The free readers below serve whatever has already been paid for, and a deep
+    verdict rendered without them would carry the quick lane's disclaimer --
+    which states the opposite of what was read. Re-deriving them would be two
+    more queries per sid, which on a twenty-row board is forty; the row already
+    carries the copy, so this costs nothing.
+
+    Tolerant of a row written before the deep lane existed, or by a future
+    shape: an unreadable audit copy degrades to "no deep block", not to a 500
+    on a page that was only trying to show a cached answer.
+    """
+    if row.depth != "deep":
+        return None
+    try:
+        return DeepInputs.model_validate((row.features or {}).get("deep"))
+    except ValidationError:
+        logger.warning("ai row %s has an unreadable deep audit copy", row.id)
+        return None
+
+
+#: Every wording currently in service. A row keyed under a superseded prompt is
+#: not served for free: it would be presented beside today's measurements as if
+#: it had been drawn from them.
+def _live_prompt_versions() -> tuple[str, str]:
+    return (prompts.PROMPT_VERSION, deep_prompts.PROMPT_VERSION)
+
+
+def _best(rows: list[AiAnalysis]) -> AiAnalysis | None:
+    """The better-informed of the verdicts stored for one subject.
+
+    Depth is an input where it costs money and an output where it does not:
+    `get_or_create` is told which depth to pay for, while the free readers
+    serve whichever has already been bought. Refusing to show a deep verdict
+    because the caller did not ask for one would be withholding the better
+    answer for no reason -- nobody is charged either way.
+    """
+    if not rows:
+        return None
+    return next((r for r in rows if r.depth == "deep"), rows[0])
+
+
 def _find(
-    db: Session, sid: str, as_of: datetime.date, locale: str, model: str
+    db: Session,
+    sid: str,
+    as_of: datetime.date,
+    locale: str,
+    model: str,
+    depth: AiDepth,
 ) -> AiAnalysis | None:
     return db.execute(
         select(AiAnalysis).where(
             AiAnalysis.sid == sid,
             AiAnalysis.as_of == as_of,
             AiAnalysis.model == model,
-            AiAnalysis.prompt_version == prompts.PROMPT_VERSION,
+            AiAnalysis.prompt_version == prompt_version(depth),
             AiAnalysis.locale == locale,
+            AiAnalysis.depth == depth,
         )
     ).scalar_one_or_none()
 
@@ -151,6 +251,7 @@ def _response(
     name: str,
     row: AiAnalysis,
     features: PriceFeatures,
+    deep: DeepInputs | None,
     traditional_result: BestFourPointResult,
     cached: bool,
 ) -> AiAnalysisResponse:
@@ -162,9 +263,14 @@ def _response(
         model=row.model,
         prompt_version=row.prompt_version,
         locale=row.locale,
+        depth=row.depth,
         cached=cached,
         verdict=_row_to_verdict(row),
         features=features,
+        # Freshly derived, like `features` and for the same reason: the panel
+        # shows what is true now, while the row's stored copy stays as the
+        # audit trail of what the verdict was actually drawn from.
+        deep=deep,
         traditional=traditional_result,
     )
 
@@ -203,25 +309,37 @@ def get_cached_many(
             AiAnalysis.sid.in_(list(as_of_by_sid)),
             AiAnalysis.as_of.in_({f.as_of for f in as_of_by_sid.values()}),
             AiAnalysis.model == model,
-            AiAnalysis.prompt_version == prompts.PROMPT_VERSION,
+            AiAnalysis.prompt_version.in_(_live_prompt_versions()),
             AiAnalysis.locale == locale,
         )
     ).scalars()
 
-    out: list[AiAnalysisResponse] = []
+    # A sid can now have two rows for one trading day -- one per depth -- so the
+    # basket is grouped before it is rendered and the better one wins. Doing it
+    # in SQL would need a window function for one row per group; the basket is
+    # capped at twenty, so it is cheaper to sort it here.
+    by_sid: dict[str, list[AiAnalysis]] = {}
     for row in stored:
         extracted = as_of_by_sid.get(row.sid)
         # The `as_of` IN clause is a union across the basket, so a row can come
         # back matching *another* sid's trading day. This is the exact match.
         if extracted is None or row.as_of != extracted.as_of:
             continue
-        stock = traditional.build_stock(rows_by_sid[row.sid])
+        by_sid.setdefault(row.sid, []).append(row)
+
+    out: list[AiAnalysisResponse] = []
+    for sid, candidates in by_sid.items():
+        row = _best(candidates)
+        if row is None:
+            continue
+        stock = traditional.build_stock(rows_by_sid[sid])
         out.append(
             _response(
-                sid=row.sid,
-                name=names.get(row.sid, row.sid),
+                sid=sid,
+                name=names.get(sid, sid),
                 row=row,
-                features=extracted,
+                features=as_of_by_sid[sid],
+                deep=_stored_deep(row),
                 traditional_result=traditional.best_four_point(stock),
                 cached=True,
             )
@@ -257,7 +375,20 @@ def get_cached(
     if extracted is None:
         return None
 
-    row = _find(db, sid, extracted.as_of, locale, model_settings.active_model(db))
+    # Both depths, best first -- see `_best`. Not `_find`, which pins a depth
+    # because it backs the metered path where one was explicitly asked for.
+    stored = list(
+        db.execute(
+            select(AiAnalysis).where(
+                AiAnalysis.sid == sid,
+                AiAnalysis.as_of == extracted.as_of,
+                AiAnalysis.model == model_settings.active_model(db),
+                AiAnalysis.prompt_version.in_(_live_prompt_versions()),
+                AiAnalysis.locale == locale,
+            )
+        ).scalars()
+    )
+    row = _best(stored)
     if row is None:
         return None
 
@@ -269,6 +400,7 @@ def get_cached(
         name=name,
         row=row,
         features=extracted,
+        deep=_stored_deep(row),
         traditional_result=traditional_result,
         cached=True,
     )
@@ -283,8 +415,15 @@ def get_or_create(
     user: AppUser,
     locale: str = DEFAULT_LOCALE,
     force: bool = False,
+    depth: AiDepth = "quick",
 ) -> AiAnalysisResponse:
-    """The stored verdict for these bars, generating one only if there is none."""
+    """The stored verdict for these bars, generating one only if there is none.
+
+    `depth` selects how much the model is shown, and is part of the cache key
+    rather than a rendering flag: a quick and a deep verdict for the same stock
+    on the same day are two different answers and both are worth keeping, so
+    pressing one button must never evict the other's result.
+    """
     locale = normalise_locale(locale)
 
     extracted = feature_service.extract(rows)
@@ -302,8 +441,13 @@ def get_or_create(
     # under a model that never ran.
     model = model_settings.active_model(db)
 
+    # Read before the cache lookup rather than only on a miss: a hit returns
+    # these to the panel too, so the reader of someone else's verdict still
+    # sees the flow and the coverage gaps it was drawn from.
+    deep = _deep_inputs(db, sid, extracted, rows) if depth == "deep" else None
+
     if not force:
-        existing = _find(db, sid, extracted.as_of, locale, model)
+        existing = _find(db, sid, extracted.as_of, locale, model, depth)
         if existing is not None:
             return _response(
                 sid=sid,
@@ -314,6 +458,7 @@ def get_or_create(
                 # stays as the audit trail of what the verdict was drawn from.
                 # They differ only if features.py changed since.
                 features=extracted,
+                deep=deep,
                 traditional_result=traditional_result,
                 cached=True,
             )
@@ -322,28 +467,51 @@ def get_or_create(
     if status.used >= status.limit:
         raise QuotaExceeded(status)
 
-    generation = gemini.generate(
-        sid=sid,
-        name=name,
-        features=extracted,
-        traditional=traditional_result,
-        locale=locale,
-        model=model,
-    )
+    if depth == "deep":
+        assert deep is not None  # set above whenever depth is "deep"
+        generation = gemini.generate_deep(
+            sid=sid,
+            name=name,
+            features=extracted,
+            deep=deep,
+            traditional=traditional_result,
+            locale=locale,
+            model=model,
+        )
+    else:
+        generation = gemini.generate(
+            sid=sid,
+            name=name,
+            features=extracted,
+            traditional=traditional_result,
+            locale=locale,
+            model=model,
+        )
 
     row = AiAnalysis(
         sid=sid,
         as_of=extracted.as_of,
         model=model,
-        prompt_version=prompts.PROMPT_VERSION,
+        prompt_version=prompt_version(depth),
         locale=locale,
+        depth=depth,
         action=generation.verdict.action,
         size=generation.verdict.size,
         confidence=generation.verdict.confidence,
         headline=generation.verdict.headline[:500],
         reasons=generation.verdict.reasons,
         risks=generation.verdict.risks,
-        features=extracted.model_dump(mode="json"),
+        # The audit trail of this verdict's input. For a deep call that has to
+        # include the chip and annual blocks, or the stored row would claim the
+        # model saw only a price series.
+        features=(
+            extracted.model_dump(mode="json")
+            if deep is None
+            else {
+                "price": extracted.model_dump(mode="json"),
+                "deep": deep.model_dump(mode="json"),
+            }
+        ),
         input_tokens=generation.input_tokens,
         output_tokens=generation.output_tokens,
         latency_ms=generation.latency_ms,
@@ -360,13 +528,20 @@ def get_or_create(
         # and the call comes out free. Tolerated because `force` is ADMIN-only
         # -- charging it correctly needs an append-only ledger separate from the
         # cache, which is a lot of table for an operator escape hatch.
+        #
+        # Every column of the unique key is matched, `depth` included. Scoping
+        # this to one depth is not a detail: regenerating a deep verdict must
+        # supersede the deep row and leave the quick one alone, and a delete
+        # that named only the quick prompt version would do exactly the
+        # opposite of what was asked.
         db.execute(
             AiAnalysis.__table__.delete().where(
                 AiAnalysis.sid == sid,
                 AiAnalysis.as_of == extracted.as_of,
                 AiAnalysis.model == model,
-                AiAnalysis.prompt_version == prompts.PROMPT_VERSION,
+                AiAnalysis.prompt_version == prompt_version(depth),
                 AiAnalysis.locale == locale,
+                AiAnalysis.depth == depth,
             )
         )
 
@@ -378,15 +553,19 @@ def get_or_create(
         # loser keeps the winner's row rather than its own, so every reader of
         # this trading day sees one verdict.
         db.rollback()
-        existing = _find(db, sid, extracted.as_of, locale, model)
+        existing = _find(db, sid, extracted.as_of, locale, model, depth)
         if existing is None:
             raise
-        logger.info("ai verdict raced for sid=%s as_of=%s", sid, extracted.as_of)
+        logger.info(
+            "ai verdict raced for sid=%s as_of=%s depth=%s",
+            sid, extracted.as_of, depth,
+        )
         return _response(
             sid=sid,
             name=name,
             row=existing,
             features=extracted,
+            deep=deep,
             traditional_result=traditional_result,
             cached=True,
         )
@@ -397,6 +576,7 @@ def get_or_create(
         name=name,
         row=row,
         features=extracted,
+        deep=deep,
         traditional_result=traditional_result,
         cached=False,
     )

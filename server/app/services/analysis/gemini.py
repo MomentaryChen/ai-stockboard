@@ -27,8 +27,8 @@ import time
 from dataclasses import dataclass
 
 from app.config import get_settings
-from app.schemas import AiVerdict, BestFourPointResult, PriceFeatures
-from app.services.analysis import prompts
+from app.schemas import AiVerdict, BestFourPointResult, DeepInputs, PriceFeatures
+from app.services.analysis import deep_prompts, prompts
 from app.throttle import SlidingWindowThrottle
 
 logger = logging.getLogger(__name__)
@@ -113,30 +113,105 @@ def generate(
     admin override). Falling back to the env default keeps unit tests that call
     this directly working without a database session.
     """
+    return generate_verdict(
+        sid=sid,
+        system_instruction=prompts.system_instruction(locale),
+        contents=prompts.user_prompt(
+            sid=sid, name=name, features=features, traditional=traditional
+        ),
+        model=model,
+    )
+
+
+def generate_deep(
+    *,
+    sid: str,
+    name: str,
+    features: PriceFeatures,
+    deep: DeepInputs,
+    traditional: BestFourPointResult,
+    locale: str = "zh-TW",
+    model: str | None = None,
+) -> Generation:
+    """The same call, shown institutional flow and annual figures as well.
+
+    A sibling of `generate` rather than a flag on it: the two send different
+    instructions and budget different answer lengths, and a boolean parameter
+    that switches both is a function whose behaviour you have to read the body
+    to know. They share `generate_verdict` below, which is the part where
+    having one implementation actually matters.
+
+    Its own output ceiling because a deep answer cites more numbers, and a
+    verdict truncated mid-JSON fails the request outright rather than coming
+    back shorter.
+    """
+    return generate_verdict(
+        sid=sid,
+        system_instruction=deep_prompts.system_instruction(locale),
+        contents=deep_prompts.user_prompt(
+            sid=sid,
+            name=name,
+            features=features,
+            deep=deep,
+            traditional=traditional,
+        ),
+        model=model,
+        max_output_tokens=_settings.gemini_deep_max_output_tokens,
+        thinking_budget=_settings.gemini_deep_thinking_budget,
+    )
+
+
+def generate_verdict(
+    *,
+    sid: str,
+    system_instruction: str,
+    contents: str,
+    model: str | None = None,
+    max_output_tokens: int | None = None,
+    thinking_budget: int | None = None,
+) -> Generation:
+    """Transport for any prompt whose answer is a `prompts.WireVerdict`.
+
+    Shared by the quick and deep lanes rather than copied into a sibling
+    adapter, which is the split `hold_gemini.py` uses. The distinction is that
+    the hold lane returns a *different* verdict shape and so genuinely needs its
+    own call; these two return the same object from the same schema and differ
+    only in which instruction is sent and how large an answer is budgeted for.
+    Two copies of this retry loop would be two chances to fix a transport bug
+    once.
+
+    `max_output_tokens` and `thinking_budget` default to the quick lane's
+    settings, so an unparameterised call behaves exactly as before.
+    """
     from google.genai import errors, types
 
     model_name = model or _settings.gemini_model
     client = _client()
     config = types.GenerateContentConfig(
-        system_instruction=prompts.system_instruction(locale),
+        system_instruction=system_instruction,
         temperature=_settings.gemini_temperature,
-        max_output_tokens=_settings.gemini_max_output_tokens,
+        max_output_tokens=(
+            _settings.gemini_max_output_tokens
+            if max_output_tokens is None
+            else max_output_tokens
+        ),
         # Set explicitly rather than left to the model's default. On the 2.5
         # models thinking is on unless told otherwise and its tokens come out of
         # max_output_tokens, so the default risks spending the budget before the
         # JSON starts -- which arrives here as an empty body, not as a worse
         # verdict. See GEMINI_THINKING_BUDGET.
         thinking_config=types.ThinkingConfig(
-            thinking_budget=_settings.gemini_thinking_budget
+            thinking_budget=(
+                _settings.gemini_thinking_budget
+                if thinking_budget is None
+                else thinking_budget
+            )
         ),
         response_mime_type="application/json",
         response_json_schema=prompts.WireVerdict.model_json_schema(),
         http_options=types.HttpOptions(
             timeout=int(_settings.gemini_timeout_seconds * 1000)
         ),
-    )
-    contents = prompts.user_prompt(
-        sid=sid, name=name, features=features, traditional=traditional
     )
 
     last_error: Exception | None = None

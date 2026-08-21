@@ -27,6 +27,7 @@ import type {
   HoldSuitability,
 } from '../api/types'
 import { useI18n } from '../i18n'
+import { GAP_KEY } from '../i18n/coverageGaps'
 import type { MessageKey, TParams, Translate } from '../i18n'
 import { fmtLots, fmtPrice } from '../utils/format'
 
@@ -59,17 +60,6 @@ const SUITABILITY_CLASS: Record<HoldSuitability, string> = {
   ok: 'signal-buy',
   weak: 'signal-hold',
   avoid: 'signal-sell',
-}
-
-const GAP_KEY: Record<string, MessageKey> = {
-  no_annual_fundamentals: 'hold.gapNoFundamentals',
-  short_eps_history: 'hold.gapShortEps',
-  short_roe_history: 'hold.gapShortRoe',
-  no_trailing_pe: 'hold.gapNoPe',
-  tpex_recent_dividends_only: 'hold.gapTpexRecent',
-  dividend_archive_not_warmed: 'hold.gapArchiveNotWarmed',
-  no_dividend_history: 'hold.gapNoDividends',
-  no_daily_bars: 'hold.gapNoBars',
 }
 
 function num(metrics: Record<string, number>, key: string): number | null {
@@ -270,7 +260,7 @@ export default function ChenHoldCard({
       {rules.coverage_gaps.length > 0 && (
         <>
           <span className="ai-block-title">{t('hold.gaps')}</span>
-          <ul className="reason-list hold-gaps">
+          <ul className="reason-list coverage-gaps">
             {rules.coverage_gaps.map((gap) => (
               // An unrecognised key falls through as itself rather than
               // rendering blank -- same contract as serverText.ts.

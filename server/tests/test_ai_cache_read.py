@@ -54,20 +54,29 @@ def _rows(sid: str, n: int = 40, *, end_offset: int = 0) -> list[DailyPrice]:
     ]
 
 
-def _stored(sid: str, as_of: datetime.date, locale: str = "zh-TW") -> AiAnalysis:
+def _stored(
+    sid: str,
+    as_of: datetime.date,
+    locale: str = "zh-TW",
+    depth: str = "quick",
+    features: dict | None = None,
+) -> AiAnalysis:
+    # `depth` is stated rather than left to the column default: that default is
+    # applied on insert, and these rows never reach a database.
     return AiAnalysis(
         sid=sid,
         as_of=as_of,
         model=MODEL,
-        prompt_version=prompts.PROMPT_VERSION,
+        prompt_version=ai.prompt_version(depth),
         locale=locale,
+        depth=depth,
         action="enter",
         size="small",
         confidence="medium",
         headline=f"{sid} headline",
         reasons=["r"],
         risks=["k"],
-        features={},
+        features=features or {},
         created_at=datetime.datetime(2024, 3, 1, tzinfo=datetime.timezone.utc),
     )
 

@@ -228,6 +228,44 @@ export interface AiPriceFeatures {
   bias_3_6: number[]
 }
 
+/** How much the model was shown. Part of the server's cache key, so the two
+ *  depths are separate answers about the same trading day rather than one
+ *  answer rendered two ways. */
+export type AiDepth = 'quick' | 'deep'
+
+export interface DeepChipColumn {
+  streak: 'buy' | 'sell' | 'none'
+  streak_days: number
+  net_5d_shares: number | null
+  net_20d_shares: number | null
+  /** The figure worth showing. A raw share count is not comparable between two
+   *  stocks; a share of the turnover it was accumulated over is. */
+  net_5d_pct_of_volume: number | null
+}
+
+export interface DeepChipFeatures {
+  as_of: string | null
+  /** Zero means the nightly chip job has not covered this stock's sessions --
+   *  a coverage gap, not a quiet net of nought. */
+  days_covered: number
+  foreign: DeepChipColumn
+  trust: DeepChipColumn
+  dealer: DeepChipColumn
+  total: DeepChipColumn
+  margin_balance: number | null
+  margin_change_5d: number | null
+  short_balance: number | null
+  short_change_5d: number | null
+}
+
+/** What a deep verdict was shown beyond the price series. Null on a quick one. */
+export interface DeepInputs {
+  chip: DeepChipFeatures
+  fundamentals: HoldFundamentalsFeatures
+  /** Slugs, rendered from `GAP_KEY` -- shared with the 存股 card. */
+  coverage_gaps: string[]
+}
+
 export interface AiAnalysisResponse {
   sid: string
   name: string
@@ -236,10 +274,13 @@ export interface AiAnalysisResponse {
   model: string
   prompt_version: string
   locale: string
+  depth: AiDepth
   /** False only when this call actually spent a Gemini request. */
   cached: boolean
   verdict: AiVerdict
   features: AiPriceFeatures
+  /** Present exactly when `depth` is "deep". */
+  deep: DeepInputs | null
   /** The rule engine's answer for the same bars, for the side-by-side. */
   traditional: BestFourPointResult
 }

@@ -2,6 +2,7 @@ import { tokenStore } from './tokenStore'
 import type {
   AiAnalysisBatchResponse,
   AiAnalysisResponse,
+  AiDepth,
   AiHoldAnalysisResponse,
   AiModelSettings,
   AiQuotaStatus,
@@ -466,17 +467,22 @@ export const api = {
   /** Ask the AI engine for a position call: enter / exit / hold, and at what size.
    *
    *  POST, and signed in, because a miss costs a Gemini request. The server
-   *  caches per (stock, trading day, model, prompt) and shares that cache across
-   *  accounts, so pressing this twice on the same session is free the second
-   *  time -- `cached` on the response says which of the two happened.
+   *  caches per (stock, trading day, model, prompt, depth) and shares that cache
+   *  across accounts, so pressing this twice on the same session is free the
+   *  second time -- `cached` on the response says which of the two happened.
+   *
+   *  `depth` widens what the model is shown: "deep" adds institutional flow and
+   *  annual fundamentals. It is a separate cached answer rather than a richer
+   *  rendering of the same one, and it draws on the same daily allowance.
    *
    *  There is no `months` parameter on purpose: the history window is part of
    *  what the verdict was computed from, and letting callers vary it would make
    *  the cached answer depend on whoever asked first.
    */
-  generateAiAnalysis: (sid: string, locale: string) =>
+  generateAiAnalysis: (sid: string, locale: string, depth: AiDepth = 'quick') =>
     request<AiAnalysisResponse>(
-      `/api/stocks/${sid}/analysis/ai?locale=${encodeURIComponent(locale)}`,
+      `/api/stocks/${sid}/analysis/ai?locale=${encodeURIComponent(locale)}` +
+        `&depth=${encodeURIComponent(depth)}`,
       { method: 'POST', auth: true, timeoutMs: AI_TIMEOUT_MS },
     ),
 
