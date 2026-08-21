@@ -23,6 +23,39 @@ services:
       timeout: 5s
       retries: 10
 
+  # Nightly pg_dump. Without it the only copy of every account, watchlist and
+  # job history is the stockboard-pgdata volume below -- one `docker compose
+  # down -v`, one corrupt volume, one pruned Docker install and it is gone.
+  #
+  # The dumps land on a *host* directory on purpose. A named volume would be
+  # removed by the same `down -v` that removes the database, which is the one
+  # accident the backups exist to survive.
+  db-backup:
+    # Same image as db: pg_dump refuses to dump a server newer than itself, so
+    # pinning them together is what stops a PostgreSQL upgrade from silently
+    # turning the backups off.
+    image: postgres:16-alpine
+    container_name: ai-stockboard-db-backup
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-stockboard}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-stockboard}
+      PGDATABASE: ${POSTGRES_DB:-stockboard}
+      BACKUP_AT: ${BACKUP_AT:-04:00}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      TZ: ${TZ:-Asia/Taipei}
+    volumes:
+      - ./backup:/opt/backup:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+    # Invoked through sh rather than relying on the execute bit, which a
+    # Windows checkout does not carry.
+    entrypoint: ["/bin/sh", "/opt/backup/scheduler.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+
   server:
     build:
       # Repository root: the API needs ../vendor/twstock alongside server/.

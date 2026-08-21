@@ -18,6 +18,12 @@ COPY vendor/twstock /app/vendor/twstock
 COPY server/pyproject.toml server/uv.lock ./
 RUN uv sync --frozen --no-install-project
 
+# The schema is migrated at startup by app/migrations.py, so the revision
+# scripts have to ship with the code that expects them -- an image whose
+# alembic/ predates its app/ is exactly the mismatch this replaces.
+COPY server/alembic.ini ./alembic.ini
+COPY server/alembic ./alembic
+
 COPY server/app ./app
 RUN uv sync --frozen
 
