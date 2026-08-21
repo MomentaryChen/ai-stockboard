@@ -203,6 +203,9 @@ cd ../server && uv run uvicorn app.main:app --port 8000
 
 server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port 就能跑完整站台。
 
+**不要加 `--workers`。** 服務有數項 process 內狀態，多開一個 worker 會讓對 TWSE 的
+速率變成兩倍，見 [Deployment is single-process](#deployment-is-single-process)。
+
 ---
 
 ## API
@@ -448,7 +451,8 @@ twstock 把上市櫃名冊做成兩個 CSV 打包在套件裡，更新方式是 
 - **新鮮度檢查**：重啟不會重抓，`max(synced_at)` 還在區間內就直接跳過。
 - **不跨 replica 協調**。最壞情況是多抓一次同樣的兩頁，upsert 是冪等的；
   為此在 40 秒的爬取上壓一把鎖不划算。要只讓一個副本跑排程，把其他副本的
-  `JOBS_SCHEDULER_ENABLED` 關掉即可（關掉後仍可手動執行）。
+  `JOBS_SCHEDULER_ENABLED` 關掉即可（關掉後仍可手動執行）。不過本服務目前無論如何
+  都只能跑單一 process，見 [Deployment is single-process](#deployment-is-single-process)。
 - 下市標的**仍可用完整代碼查到**（`get_stock` 照樣解析、線圖照畫），只是不再出現在搜尋的前綴／名稱比對裡。
 
 ### Background jobs
@@ -545,7 +549,8 @@ TWSE 有 **每 5 秒 3 個 request** 的限制，超過會被 ban。分析要跑
 
 實測：2317 抓 12 個月第一次 **17.9 秒**（卡在速率限制），第二次 **瞬回**。
 
-所有對外請求都經過 `server/app/throttle.py` 的滑動視窗限流器。
+所有對外請求都經過 `server/app/throttle.py` 的滑動視窗限流器。該限流器是 process
+內狀態，這也是整個服務只能單 process 部署的主因之一——見 [Deployment is single-process](#deployment-is-single-process)。
 
 ---
 
@@ -667,7 +672,8 @@ ADMIN 不能重設自己的密碼（會被擋成 400），要改自己的密碼�
 
 `JWT_SECRET` 沒設時，server 仍然會啟動，改用一把隨程序產生的隨機密鑰並記一筆 WARNING。
 代價是**每次重啟所有人的 access token 失效**（refresh token 存在資料庫，客戶端會自動換發，使用者無感），
-而且**不能跑多個 uvicorn worker**（各自的密鑰不同，會互相拒絕）。正式環境請設定：
+而且**不能跑多個 uvicorn worker**（各自的密鑰不同，會互相拒絕；這只是其中一項限制，
+完整清單見 [Deployment is single-process](#deployment-is-single-process)）。正式環境請設定：
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -806,8 +812,52 @@ never render and nothing polls.
 
 ---
 
+## Deployment is single-process
+
+**This service can only run as one process.** Not "should preferably" — four
+separate pieces of state live in process memory, and a second process silently
+gets its own copy of each:
+
+| In-process state | Where it lives | What a second process does to it |
+|---|---|---|
+| The TWSE rate-limit window | `server/app/throttle.py` — a module-level `SlidingWindowThrottle`: a `deque` behind a `threading.Lock` | Each process throttles only itself, so N processes hit TWSE at N × `THROTTLE_MAX_CALLS` per `THROTTLE_WINDOW_SECONDS`. The 3 / 5.5 s default is there because TWSE bans clients that exceed 3 requests per 5 seconds — two workers are already over the line. |
+| "Is this job already running?" | `server/app/services/jobs/runner.py` — `_locks: dict[str, threading.Lock]` | `JobBusyError` can only fire against a run in the same process, so two processes will happily run the same job at the same time. |
+| The listed-instrument snapshot (~44k rows) | `server/app/services/codes.py` — `_snapshot` | Every process pays the memory, and `invalidate()` after a sync clears only the caller's copy. A database-backed snapshot has no TTL, so the other processes keep serving the pre-sync listing until they happen to restart. |
+| `JWT_SECRET`, when it is not set | `server/app/security.py` — `secrets.token_urlsafe(48)`, resolved once at import | Each process signs with a different key, so a token minted by one is rejected by the others and the user bounces between signed-in and signed-out. |
+
+The rate limit is the one that matters, because the entire caching design in
+[資料為什麼要落地](#資料為什麼要落地) exists to stay under it. The other three
+degrade; that one gets the deployment banned by the upstream.
+
+Nothing enforces the constraint. `server/Dockerfile` runs `uvicorn` without
+`--workers`, which is correct, but it is correct by convention — no code refuses
+to start when a second process is already live. Setting
+`JOBS_SCHEDULER_ENABLED=false` on the extra replicas covers the scheduler only;
+the throttle, the snapshot and the signing key are untouched by it.
+
+### What horizontal scaling would take
+
+Each item has to move out of process memory before a second process is safe:
+
+- the rate-limit window into a shared counter — Redis, or a timestamp table
+  guarded by a PostgreSQL advisory lock;
+- the per-job lock into a PostgreSQL advisory lock keyed on the job id, which
+  also retires `JOBS_SCHEDULER_ENABLED` as a hand-run leader election;
+- the listing snapshot behind a shared invalidation signal, or a version column
+  each process can check cheaply before serving from its own copy;
+- `JWT_SECRET` into a required setting, dropping the per-process fallback.
+
+None of that is scheduled. At the current size one process with a thread pool is
+enough, and stating the limit is more useful than a scaling story the code does
+not support.
+
+---
+
 ## 已知限制
 
+- **這個服務目前只能單 process 部署。** 限流視窗、job 鎖、名冊快照與未設定時的
+  `JWT_SECRET` 全都是 process 內狀態，跑第二個 process 會直接違反 TWSE 的速率限制。
+  見 [Deployment is single-process](#deployment-is-single-process)。
 - **即時報價需要登入**，未登入只看得到最近一個交易日的收盤（頁面不會被擋掉，見上一節）。
 - **即時報價只在交易時段有效**（週一至週五 09:00–13:30）。非交易時段來源會回最後一筆或空值，UI 有提示。
 - **上櫃（TPEX）資料比上市晚一天**發布，屬於來源行為。
@@ -824,7 +874,9 @@ never render and nothing polls.
   急用可到 `/admin/stock-codes` 按「立即同步」。
 - Scheduling is per process; there is no leader election across replicas. Run with
   `JOBS_SCHEDULER_ENABLED=true` on exactly one of them, or every job runs several
-  times over -- harmless, since they are idempotent, but wasted work.
+  times over -- harmless, since they are idempotent, but wasted work. Note that
+  this switch covers the scheduler only, not the other per-process state: see
+  [Deployment is single-process](#deployment-is-single-process).
 - Run history is capped at the most recent 200 attempts per job and lives only in
   the database. Nothing alerts anywhere; someone has to look at `/admin/jobs`.
 - 四大買賣點只讀成交量、開盤、收盤三個欄位，且只比較最新一根與前一根 K 棒，沒有趨勢或部位概念；
