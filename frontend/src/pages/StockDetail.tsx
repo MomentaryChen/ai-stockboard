@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { ApiError, api } from '../api/client'
 import type { RuleSet } from '../api/types'
+import AiVerdictSection from '../components/AiVerdict'
 import BacktestCard from '../components/BacktestCard'
 import BestFourPointCard from '../components/BestFourPointCard'
 import ChipCard from '../components/ChipCard'
@@ -292,7 +293,8 @@ export default function StockDetail() {
         <div className="stack">
           {analysis.data && (
             <>
-              {/* Labelled explicitly so AI-assisted analysis can sit beside it. */}
+              {/* Rule-based stack first: the free, deterministic answer is on
+                  screen before the metered AI card below it. */}
               <div className="section-label">{t('section.traditional')}</div>
               <BestFourPointCard
                 result={analysis.data.best_four_point}
@@ -324,6 +326,9 @@ export default function StockDetail() {
               ) : null}
             </>
           )}
+
+          <div className="section-label">{t('section.ai')}</div>
+          <AiVerdictSection sid={sid} layout="card" />
 
           {chips.data && chips.data.coverage !== 'none' && (
             <>
