@@ -485,6 +485,50 @@ tr.row-active { background: var(--bg-input); box-shadow: inset 2px 0 0 var(--acc
   opacity: 0.75;
 }
 
+/* ---------- hold checklist (存股) ---------- */
+/* Reuses .card / .signal / .stat-grid so the section reads as a sibling of the
+   two above it. Only the dimension list is new, because a five-item pass /
+   fail / unknown rundown has no equivalent anywhere else on the page. */
+.hold-score-row { align-items: flex-end; margin-bottom: 12px; }
+.hold-score { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.hold-dims { list-style: none; margin: 0; padding: 0; }
+.hold-dim {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.hold-dim:first-child { border-top: none; padding-top: 0; }
+
+/* The mark carries the status at a glance. Unknown is a hollow ring rather
+   than a cross: three of the five dimensions have no data at all until the
+   fundamentals ingest lands, and drawing those as failures would tell the
+   reader the company failed checks nobody ran. */
+.hold-dim-mark {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+}
+.hold-dim-pass .hold-dim-mark { background: var(--up); }
+.hold-dim-fail .hold-dim-mark { background: var(--down); }
+.hold-dim-unknown .hold-dim-mark {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+}
+
+.hold-dim-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hold-dim-name { display: flex; align-items: baseline; gap: 8px; font-weight: 600; }
+.hold-dim-status { font-size: 11px; font-weight: 500; color: var(--text-dim); }
+.hold-dim-unknown .hold-dim-name { color: var(--text-muted); }
+.hold-dim-evidence { font-size: 12px; color: var(--text-muted); }
+
+.hold-stats { margin-top: 14px; }
+.hold-note { margin: 10px 0 0; font-size: 12px; }
+.hold-gaps { font-size: 12px; }
+
 /* ---------- section label ---------- */
 .section-label {
   display: flex;

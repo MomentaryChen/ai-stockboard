@@ -17,9 +17,15 @@ from app.services import auth as auth_service
 from app.services import backtest_store
 from app.services import chip as chip_service
 from app.services import code_sync
+from app.services import dividend as dividend_service
 from app.services.jobs.registry import JobContext, JobResult
 
 logger = logging.getLogger(__name__)
+
+#: Calendar years of TWSE dividend history the warmup keeps. One more than
+#: `hold_features.WINDOW_YEARS` so a ten-year payout streak is bounded by the
+#: company's record rather than by the edge of what was fetched.
+DIVIDEND_WARMUP_YEARS = 11
 
 
 def stock_code_sync(context: JobContext) -> JobResult:
@@ -78,6 +84,28 @@ def chip_refresh(context: JobContext) -> JobResult:
         status, message = "skipped", "Every recent chip report is current"
     else:
         status, message = "skipped", "No trading calendar in daily_price yet"
+    return JobResult(status=status, message=message, stats=stats)
+
+
+def dividend_board_warmup(context: JobContext) -> JobResult:
+    """Pull the board-wide dividend archive so the 存股 lane is not lazy-only.
+
+    One TWSE request covers every listed name for a calendar year, so warming
+    the last decade here is a handful of calls that spares the first visitor to
+    each cold stock the same work on the shared limiter -- and spares a
+    board-level screen from queueing it per row.
+
+    `skipped` means every bucket was already stamped fresh: past years are
+    immutable and never re-fetched, so on any day after the first run of the
+    year only the current year and the TPEX window can have anything to do.
+    """
+    stats = dividend_service.warm_board(
+        context.db, years=DIVIDEND_WARMUP_YEARS, force=context.force
+    )
+    if stats["fetched"]:
+        status, message = "success", None
+    else:
+        status, message = "skipped", "Every dividend bucket is current"
     return JobResult(status=status, message=message, stats=stats)
 
 
