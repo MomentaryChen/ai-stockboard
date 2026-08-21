@@ -209,6 +209,14 @@ export default function StockDetail() {
         )}
       </section>
 
+      {/* Full width, under the price and above the chart: the AI call is what
+          this product leads with, and it spent its life at the bottom of the
+          320px analysis column, below three cards and a table. Here it is
+          across the page and it is still free to look at -- the panel only
+          spends a generation when the button is pressed, so the rule engine's
+          verdict in the stack below has lost nothing by moving down. */}
+      <AiVerdictSection sid={sid} layout="spotlight" />
+
       <div className="grid-detail">
         <section className="card">
           <div className="row-between wrap" style={{ marginBottom: 12 }}>
@@ -293,8 +301,8 @@ export default function StockDetail() {
         <div className="stack">
           {analysis.data && (
             <>
-              {/* Rule-based stack first: the free, deterministic answer is on
-                  screen before the metered AI card below it. */}
+              {/* The evidence column: everything here is deterministic and
+                  free, and it is what the band above is judged against. */}
               <div className="section-label">{t('section.traditional')}</div>
               <BestFourPointCard
                 result={analysis.data.best_four_point}
@@ -326,9 +334,6 @@ export default function StockDetail() {
               ) : null}
             </>
           )}
-
-          <div className="section-label">{t('section.ai')}</div>
-          <AiVerdictSection sid={sid} layout="card" />
 
           {chips.data && chips.data.coverage !== 'none' && (
             <>

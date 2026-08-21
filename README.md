@@ -1107,10 +1107,22 @@ hold. Direction and magnitude are separate fields rather than one seven-valued
 enum, so the card can render 進場/退場 and 大/中/小 independently and an
 evaluation can score direction without having to agree about sizing.
 
-The button lives in three places, all the same endpoint: the expanded watchlist
-row and the stock card on `/realtime` (inline, under the 四大買賣點 chip), and
-the 個股 page at `/stock/:sid` as a card in the analysis stack. It requires a
-sign-in, and answers on POST.
+The button lives in three places, all the same endpoint: the 個股 page at
+`/stock/:sid`, as a full-width band under the price header and above the chart;
+and the expanded watchlist row and the stock card on `/realtime`, inline
+between the 四大買賣點 chip and 開高低收/五檔. It requires a sign-in, and
+answers on POST.
+
+All three used to be the *last* block on their surface, on the principle that
+the free deterministic verdict should be read before the metered one is
+offered. That principle was being applied in the wrong place. The panel
+generates only when the button is pressed, so position on the page has never
+been what decides whether a Gemini request is paid for — the three gates in
+[Spending](#spending) are. What the old order did decide was that the feature
+this product leads with was the thing you had to scroll past 五檔 and a group
+picker to find. It now sits directly beneath the rule engine's verdict and
+above the numbers both were drawn from, so the two answers to "so what do I do
+with this" are read together.
 
 ### Why the model is not shown the bars
 
