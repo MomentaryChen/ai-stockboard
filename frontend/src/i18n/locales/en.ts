@@ -278,6 +278,8 @@ export const en: Messages = {
   'board.groupAssign': 'Group',
   'board.groupNone': 'Ungrouped',
   'board.groupFull': 'At most {max} groups',
+  'board.groupDragHint': 'Drag onto a group to file it',
+  'board.groupEmptyDrop': 'Drop a stock here',
   'realtime.refreshNow': 'Refresh now',
   'realtime.lastUpdated': 'Updated {time}',
   'realtime.watchlistSaveFailed': 'Could not save the watchlist: {message}',
