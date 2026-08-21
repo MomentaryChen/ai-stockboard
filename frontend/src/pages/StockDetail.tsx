@@ -11,6 +11,7 @@ import ChenHoldCard from '../components/ChenHoldCard'
 import ChipCard from '../components/ChipCard'
 import DividendCard from '../components/DividendCard'
 import HoldAiVerdict from '../components/HoldAiVerdict'
+import HoldBacktestCard from '../components/HoldBacktestCard'
 import MaPanel from '../components/MaPanel'
 import PriceChart, { buildChartRows } from '../components/PriceChart'
 import SignInPrompt from '../components/SignInPrompt'
@@ -87,6 +88,17 @@ export default function StockDetail() {
     queryKey: ['chen', sid],
     queryFn: () => api.getChenAnalysis(sid),
     enabled: history.isSuccess && dividends.isSuccess,
+  })
+
+  // The long gradesheet. Same cache-only dependency as the checklist, and the
+  // same reason for waiting. `retry: false` because a stock with under two
+  // years of bars answers 422 for as long as that stays true -- retrying turns
+  // one honest "not enough history" into four.
+  const holdBacktest = useQuery({
+    queryKey: ['hold-backtest', sid],
+    queryFn: () => api.getHoldBacktest(sid),
+    enabled: history.isSuccess && dividends.isSuccess,
+    retry: false,
   })
 
   const rows = useMemo(
@@ -429,6 +441,24 @@ export default function StockDetail() {
               ) : hold.data ? (
                 <>
                   <ChenHoldCard features={hold.data.features} rules={hold.data.rules} />
+                  {/* Under the checklist it grades. This mode's counterpart to
+                      the short backtest in trade mode: two gradesheets, and the
+                      toggle above is what keeps them from being read as one. */}
+                  {holdBacktest.data ? (
+                    <HoldBacktestCard data={holdBacktest.data} />
+                  ) : holdBacktest.isError ? (
+                    <section className="card">
+                      <h2 className="card-title">{t('hbt.title')}</h2>
+                      <p className="dim" style={{ margin: 0 }}>
+                        {holdBacktest.error instanceof ApiError &&
+                        holdBacktest.error.status === 422
+                          ? t('hbt.notEnoughBars')
+                          : t('hbt.failed', {
+                              message: (holdBacktest.error as Error).message,
+                            })}
+                      </p>
+                    </section>
+                  ) : null}
                   <HoldAiVerdict sid={sid} />
                 </>
               ) : (

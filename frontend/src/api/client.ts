@@ -8,6 +8,7 @@ import type {
   AiQuotaStatus,
   BacktestBatchResponse,
   ChenAnalysisResponse,
+  HoldBacktestResponse,
   BacktestResponse,
   Job,
   JobListResponse,
@@ -500,6 +501,12 @@ export const api = {
     request<ChenAnalysisResponse>(`/api/stocks/${sid}/analysis/chen`, {
       timeoutMs: SLOW_TIMEOUT_MS,
     }),
+
+  /** What buying and holding this actually returned, with payouts reinvested.
+   *  Free and cache-only, like the checklist: it replays stored bars and
+   *  dividend rows. 422 when too little history is landed to say anything. */
+  getHoldBacktest: (sid: string) =>
+    request<HoldBacktestResponse>(`/api/stocks/${sid}/analysis/hold-backtest`),
 
   /** Ask the AI whether this is a company to accumulate and hold. Spends from
    *  the same daily allowance as the technical call, which is why the two

@@ -562,6 +562,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/stocks/{sid}/analysis/ai` | The position call already generated for this stock's latest session, or 204. Serves whichever depth was paid for, deep first. Cache-only: never reaches Gemini or the exchange, and never counts against the quota (**需登入**) |
 | GET | `/api/analysis/ai?sids=2330,0050` | The same read for a whole watchlist in one request. A stock with no stored verdict is simply absent from `items` (**需登入**) |
 | POST | `/api/stocks/{sid}/analysis/ai?depth=quick\|deep` | AI position call: enter / exit / hold, and at what size. The metered one -- a miss spends a Gemini request and a quota slot (**需登入**). `depth=deep` additionally reads institutional flow, margin balances and annual fundamentals — see [Two depths](#two-depths) |
+| GET | `/api/stocks/{sid}/analysis/hold-backtest` | What buying and holding actually returned: total return with payouts reinvested, 填息 rate, max drawdown. Cache-only; 422 under two years of bars — see [the two gradesheets](#two-gradesheets-not-one-score) |
 | GET | `/api/stocks/{sid}/analysis/chen` | 存股 checklist: five dimensions, a score over what could be checked, and what could not. Cache-only, so it is public and never calls the exchange — see [hold analysis](#hold-analysis-存股) |
 | POST | `/api/stocks/{sid}/analysis/ai-hold` | AI hold assessment: is this a company to accumulate and hold (**需登入**). Spends from the same daily allowance as `/analysis/ai` |
 | GET | `/api/analysis/ai/quota` | Generations left on this account today, counted across **both** AI lanes (**需登入**) |
@@ -589,6 +590,7 @@ curl 'http://localhost:8000/api/market/open?date=2026-08-20&sids=2330,0050'
 
 # A different question entirely: is this worth holding for the dividend?
 curl 'http://localhost:8000/api/stocks/2880/analysis/chen'
+curl 'http://localhost:8000/api/stocks/2880/analysis/hold-backtest'
 ```
 
 ---
@@ -1089,7 +1091,8 @@ server/app/services/analysis/
 ├── hold_features.py   Pure functions: the 存股 snapshot from dividends + bars + EPS
 ├── chen_rules.py      Rule engine: the five weighted 存股 dimensions
 ├── hold_prompts.py    The 存股 prompt contract, alongside prompts.py
-└── hold_ai.py         Orchestration: shares one daily allowance with ai.py
+├── hold_ai.py         Orchestration: shares one daily allowance with ai.py
+└── hold_backtest.py   The long gradesheet: total return with payouts reinvested
 ```
 
 三者吃同一份 `daily_price` 資料，各自獨立產生結果，端點也分開，
@@ -1394,13 +1397,77 @@ prompt.
 - ~~**Annual EPS and ROE.**~~ Landed -- see [where the numbers come
   from](#where-the-fundamentals-come-from) below. All five dimensions score
   once the backfill has reached a company.
-- **A hold backtest.** The 平測 this lane was built for needs total return
-  including dividends over a multi-year window, not the hit rate the short
-  scorecard uses. Until it lands, the hold section is a checklist and a
-  narrative, and the honest comparison against 四大買賣點 is qualitative.
+- ~~**A hold backtest.**~~ Landed -- see [two gradesheets, not one
+  score](#two-gradesheets-not-one-score).
 - **The qualitative half of the method.** 護城河 and 能傳 need judgement rather
   than arithmetic. They are left to the narrative model; a pass/fail for them
   would be an invented number wearing a checklist's authority.
+
+---
+
+## Two gradesheets, not one score
+
+The stock page now grades the same company twice, and the two grades are
+deliberately not comparable.
+
+| | Short backtest | Hold backtest |
+|---|---|---|
+| Question | Was the signal right? | What did holding return? |
+| Horizon | 5 / 10 / 20 days | Years |
+| Headline | Hit rate vs the base rate of the same days | Total return with payouts reinvested |
+| Risk | Exposure — time actually in the market | Max drawdown, and 填息 |
+| Refuses when | Too few bars to replay | Under two years of history |
+
+Averaging them would be meaningless, and picking one to rank both engines by
+would be rigged. A hit rate over twenty days is the right question for a
+signal and an empty one for a method whose instruction is "buy it and do
+nothing": no trades, no hits, no base rate to beat. The comparison this board
+was built for is reading both, not blending them.
+
+### What the hold replay simulates
+
+One share bought at the first stored close, held to the last. Cash dividends
+buy more shares at the ex-date close; stock dividends raise the share count
+directly.
+
+That second one is not optional book-keeping. `daily_price` is unadjusted, so
+a name paying 股票股利 shows a price drop on the ex-date that never happened to
+its holder — ignoring the share count reports it as a loss. The convention is
+that 股票股利 is quoted in NTD against a 10 NTD face value, so `1.0` means one
+new share per ten held; reading it as one-per-one inflates the return tenfold.
+
+The window is not configurable and not fixed. It is however much history
+`daily_price` holds for that stock, reported back as `start`, `end` and
+`years` — because the route is cache-only like the rest of the hold lane, and
+claiming a ten-year window while replaying eighteen months would be the
+dishonest option.
+
+`years` comes from the calendar, not from dividing the bar count by 240. For a
+thinly traded name — exactly the sort the Liquid dimension fails and someone
+looks at anyway — the gaps make a bar count understate elapsed time, and every
+annualised figure derived from it comes out too high.
+
+### 填息 is a headline, not a footnote
+
+A dividend whose ex-date gap never closes is not income. It is the holder's own
+capital handed back, taxed on the way out. A 6% yield that never fills is worse
+than a 3% one that does, and no yield figure can express the difference — so
+the card reports how many gaps closed, and the median days it took.
+
+Events still inside their six-month window are counted as `pending` and left
+out of the rate, the same way the short backtest excludes a signal whose
+horizon has not elapsed. Counting them as failures would drag the rate down
+every time a company paid recently.
+
+### What it does not model
+
+Tax, 二代健保, brokerage, and the odd-lot reality of reinvesting a few hundred
+dollars of dividend. Each makes the real result slightly worse, so the figure
+is an optimistic bound — said on the card rather than buried here.
+
+It also does not simulate 定期定額. Buying monthly is a money-weighted question
+with a different answer, and mixing the two would produce a number that is
+neither.
 
 ---
 
