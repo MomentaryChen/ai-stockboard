@@ -25,6 +25,7 @@ from app.routers import (
     dividends,
     history,
     jobs,
+    market,
     realtime,
     stocks,
     users,
@@ -102,6 +103,7 @@ app.include_router(history.router)
 app.include_router(dividends.router)
 app.include_router(analysis.router)
 app.include_router(analysis.batch_router)
+app.include_router(market.router)
 app.include_router(realtime.router)
 app.include_router(auth.router)
 app.include_router(users.router)
