@@ -1073,11 +1073,12 @@ per-name chip and return `coverage: none`.
 ```
 server/app/services/analysis/
 ├── __init__.py
-├── traditional.py     規則式：均線 + 四大買賣點
-├── backtest.py        把 traditional 的訊號在歷史上重跑一遍，算命中率與績效
-├── features.py        純函式：從日線算出 AI 要看的衍生指標
-├── gemini.py          唯一知道 provider 存在的模組：提示詞、結構化輸出、限流
-└── ai.py              編排：什麼時候該花一次 Gemini 請求，什麼時候不該
+├── traditional.py     Rule engine: moving averages + Best Four Point
+├── backtest.py        Replay traditional signals over history for hit rate / PnL
+├── features.py        Pure functions: derived measurements for the AI prompt
+├── prompts.py         Provider-agnostic prompt, wire schema, and prompt_version
+├── gemini.py          Gemini adapter: SDK, retries, thinking budget, rate limit
+└── ai.py              Orchestration: when to spend a provider request
 ```
 
 三者吃同一份 `daily_price` 資料，各自獨立產生結果，端點也分開，
@@ -1143,6 +1144,14 @@ conditions ("mixed evidence", "a move that has already happened"), and
 `server/tests/test_ai_analysis.py` asserts that those sentences are still in the
 prompt. Deleting them is a one-line change that would be invisible in every
 other test.
+
+### One prompt package for every provider
+
+`services/analysis/prompts.py` owns the system instruction, user turn,
+structured wire schema, and `PROMPT_VERSION`. Provider adapters (`gemini.py`
+today; Claude or others later) only transport that contract. Edit the wording
+once; swap engines without touching the prompt. Bump `PROMPT_VERSION` when the
+wording or schema changes so cached verdicts stay attributable.
 
 ### Spending
 
