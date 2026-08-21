@@ -229,6 +229,16 @@ body {
 .signal-buy { background: rgba(240, 70, 74, 0.14); color: var(--up); border: 1px solid rgba(240, 70, 74, 0.4); }
 .signal-sell { background: rgba(34, 181, 115, 0.14); color: var(--down); border: 1px solid rgba(34, 181, 115, 0.4); }
 .signal-hold { background: var(--bg-input); color: var(--text-muted); border: 1px solid var(--border-strong); }
+.signal-sm { padding: 4px 10px; font-size: 13px; border-radius: 6px; }
+
+.quote-bfp { margin-top: 10px; }
+.quote-bfp-reasons {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.quote-bfp-reasons li { margin-bottom: 2px; }
 
 .reason-list { margin: 12px 0 0; padding-left: 18px; color: var(--text-muted); }
 .reason-list li { margin-bottom: 4px; }

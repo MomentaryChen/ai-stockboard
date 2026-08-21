@@ -85,6 +85,7 @@ export const zhTW = {
     '自選股即時看板會每 {seconds} 秒向證交所取一次最新成交價、漲跌與委買委賣五檔。報價每次都要向來源取數，額度是全站共用的，所以這一頁保留給有帳號的使用者。',
   'signIn.realtimeBenefit1': '最多 {max} 檔自選股的盤中報價，每 {seconds} 秒自動更新',
   'signIn.realtimeBenefit2': '委買、委賣五檔與單量、總量',
+  'signIn.realtimeBenefit4': '每檔的四大買賣點（Buy / Sell / Don\'t touch）',
   'signIn.realtimeBenefit3': '自選股存在帳號裡，換裝置、換瀏覽器都還在',
   'signIn.realtimeNote': '大盤與個股的歷史 K 線、均線與四大買賣點不需要登入，隨時都能看。',
   'signIn.marketLockedNote':
@@ -165,6 +166,7 @@ export const zhTW = {
 
   // ---------- best four point ----------
   'bfp.title': '四大買賣點',
+  'bfp.loading': '四大買賣點載入中…',
   'bfp.hintBuy': '符合買進條件',
   'bfp.hintSell': '符合賣出條件',
   'bfp.hintHold': '目前無明確訊號',
@@ -374,6 +376,7 @@ export const zhTW = {
   'bfpReason.biasPassedNoBuy': '已通過買點乖離關卡，但四大買點條件皆不符合',
   'bfpReason.biasPassedNoSell': '已通過賣點乖離關卡，但四大賣點條件皆不符合',
   'bfpLabel.insufficient': '資料不足',
+  'bfpReason.noDailyBars': '尚未載入日線，點進個股頁即可補齊',
   'stockMarket.twse': '上市',
   'stockMarket.tpex': '上櫃',
   'stockType.stock': '股票',

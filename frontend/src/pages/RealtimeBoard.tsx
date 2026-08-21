@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../api/client'
+import type { BestFourPointResult } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
-import RealtimeCard from '../components/RealtimeCard'
+import RealtimeCard, { BfpChip } from '../components/RealtimeCard'
 import SignInPrompt from '../components/SignInPrompt'
 import StockSearch from '../components/StockSearch'
 import { POLL_MS } from '../hooks/useLiveQuote'
@@ -40,6 +41,24 @@ export default function RealtimeBoard() {
     staleTime: 0,
   })
 
+  // Daily bars, not ticks: independent of the quote poll so a 10-second refresh
+  // does not re-score 20 stocks. The server still uses the same daily_price
+  // cache the stock page fills.
+  const analysis = useQuery({
+    queryKey: ['analysis', 'traditional', 'batch', watchlist],
+    queryFn: () => api.getTraditionalAnalysisBatch(watchlist),
+    enabled: authenticated && watchlist.length > 0,
+    staleTime: 60 * 60 * 1000,
+  })
+
+  const bfpBySid = useMemo(() => {
+    const map = new Map<string, BestFourPointResult>()
+    for (const item of analysis.data?.items ?? []) {
+      map.set(item.sid, item.best_four_point)
+    }
+    return map
+  }, [analysis.data])
+
   const errorEntries = Object.entries(data?.errors ?? {})
 
   // Restoring a session on a hard refresh -- see the note in RequireAuth: a
@@ -60,6 +79,7 @@ export default function RealtimeBoard() {
         <ul className="reason-list">
           <li>{t('signIn.realtimeBenefit1', { max: MAX_WATCHLIST, seconds })}</li>
           <li>{t('signIn.realtimeBenefit2')}</li>
+          <li>{t('signIn.realtimeBenefit4')}</li>
           <li>{t('signIn.realtimeBenefit3')}</li>
         </ul>
         <p className="dim" style={{ marginTop: 12 }}>
@@ -143,7 +163,13 @@ export default function RealtimeBoard() {
       ) : (
         <div className="quote-grid">
           {(data?.quotes ?? []).map((quote) => (
-            <RealtimeCard key={quote.code} quote={quote} onRemove={remove} />
+            <RealtimeCard
+              key={quote.code}
+              quote={quote}
+              onRemove={remove}
+              bfp={bfpBySid.get(quote.code)}
+              bfpLoading={analysis.isPending}
+            />
           ))}
 
           {/* Watchlist entries the upstream returned nothing for still need a way out. */}
@@ -164,6 +190,7 @@ export default function RealtimeBoard() {
                   {data?.errors?.[code] ??
                     (isFetching ? t('realtime.loading') : t('realtime.noQuote'))}
                 </p>
+                <BfpChip result={bfpBySid.get(code)} loading={analysis.isPending} />
               </article>
             ))}
         </div>

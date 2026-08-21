@@ -43,6 +43,7 @@ const REASON_KEYS: Record<string, MessageKey> = {
   四大賣點條件皆不符合: 'bfpReason.noSellConditions',
   '已通過買點乖離關卡，但四大買點條件皆不符合': 'bfpReason.biasPassedNoBuy',
   '已通過賣點乖離關卡，但四大賣點條件皆不符合': 'bfpReason.biasPassedNoSell',
+  '尚未載入日線，點進個股頁即可補齊': 'bfpReason.noDailyBars',
 }
 
 /** The one reason carrying a number, so it cannot be a plain table lookup. */

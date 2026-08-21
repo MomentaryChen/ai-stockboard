@@ -104,6 +104,28 @@ class TraditionalAnalysisResponse(BaseModel):
     best_four_point: BestFourPointResult
 
 
+class TraditionalAnalysisSummary(BaseModel):
+    """BFP verdict without MA series -- what a watchlist card needs.
+
+    `as_of` is null when we scored from an empty cache (no daily bars yet).
+    """
+
+    sid: str
+    name: str
+    rule_set: Literal["grs", "twstock"]
+    as_of: datetime.date | None
+    sample_size: int
+    latest_close: float | None
+    best_four_point: BestFourPointResult
+
+
+class TraditionalAnalysisBatchResponse(BaseModel):
+    items: list[TraditionalAnalysisSummary]
+    # Per-sid failures that should not take the rest of the batch down
+    # (unknown code, no price rows). Same shape as RealtimeResponse.errors.
+    errors: dict[str, str]
+
+
 class MaSeriesPoint(BaseModel):
     date: datetime.date
     ma5: float | None

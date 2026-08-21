@@ -91,6 +91,7 @@ export const en: Messages = {
   'signIn.realtimeBenefit1':
     'Intraday quotes for up to {max} watchlist stocks, refreshed every {seconds} seconds',
   'signIn.realtimeBenefit2': 'Five levels of bid and ask, plus last-trade and total volume',
+  'signIn.realtimeBenefit4': 'Best Four Point (Buy / Sell / Don\'t touch) on every card',
   'signIn.realtimeBenefit3':
     'The watchlist lives on your account — same list on any device or browser',
   'signIn.realtimeNote':
@@ -176,6 +177,7 @@ export const en: Messages = {
 
   // ---------- best four point ----------
   'bfp.title': 'Best Four Point',
+  'bfp.loading': 'Scoring Best Four Point…',
   'bfp.hintBuy': 'Buy conditions met',
   'bfp.hintSell': 'Sell conditions met',
   'bfp.hintHold': 'No clear signal right now',
@@ -405,6 +407,7 @@ export const en: Messages = {
   'bfpReason.biasPassedNoSell':
     'The sell-side bias gate passed, but none of the four sell conditions is met',
   'bfpLabel.insufficient': 'Not enough data',
+  'bfpReason.noDailyBars': 'No daily bars yet — open the stock page to load them',
   'stockMarket.twse': 'TWSE',
   'stockMarket.tpex': 'TPEx',
   'stockType.stock': 'Stock',

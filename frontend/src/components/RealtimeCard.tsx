@@ -1,12 +1,14 @@
 import { Link } from 'react-router-dom'
 
-import type { RealtimeQuote } from '../api/types'
-import { useI18n } from '../i18n'
+import type { BestFourPointResult, RealtimeQuote } from '../api/types'
+import { translateBfpLabel, translateBfpReason, useI18n } from '../i18n'
 import { direction, fmtInt, fmtPrice, fmtSigned } from '../utils/format'
 
 interface Props {
   quote: RealtimeQuote
   onRemove?: (code: string) => void
+  bfp?: BestFourPointResult
+  bfpLoading?: boolean
 }
 
 function Depth({
@@ -34,7 +36,44 @@ function Depth({
   )
 }
 
-export default function RealtimeCard({ quote, onRemove }: Props) {
+/** Compact 四大買賣點 chip for a watchlist card. */
+export function BfpChip({
+  result,
+  loading,
+}: {
+  result?: BestFourPointResult
+  loading?: boolean
+}) {
+  const { t } = useI18n()
+
+  if (loading && !result) {
+    return (
+      <div className="quote-bfp">
+        <span className="dim" style={{ fontSize: 12 }}>
+          {t('bfp.loading')}
+        </span>
+      </div>
+    )
+  }
+  if (!result) return null
+
+  return (
+    <div className="quote-bfp">
+      <div className={`signal signal-sm signal-${result.signal}`}>
+        {translateBfpLabel(result.label, t)}
+      </div>
+      {result.reasons.length > 0 && (
+        <ul className="quote-bfp-reasons">
+          {result.reasons.map((reason) => (
+            <li key={reason}>{translateBfpReason(reason, t)}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+export default function RealtimeCard({ quote, onRemove, bfp, bfpLoading }: Props) {
   const { t } = useI18n()
   const dir = direction(quote.change)
 
@@ -67,6 +106,8 @@ export default function RealtimeCard({ quote, onRemove }: Props) {
           {quote.change_percent !== null ? ` (${fmtSigned(quote.change_percent)}%)` : ''}
         </span>
       </div>
+
+      <BfpChip result={bfp} loading={bfpLoading} />
 
       <div className="stat-grid" style={{ marginTop: 14 }}>
         <div>

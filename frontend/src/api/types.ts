@@ -98,6 +98,21 @@ export interface TraditionalAnalysisResponse {
   best_four_point: BestFourPointResult
 }
 
+export interface TraditionalAnalysisSummary {
+  sid: string
+  name: string
+  rule_set: RuleSet
+  as_of: string | null
+  sample_size: number
+  latest_close: number | null
+  best_four_point: BestFourPointResult
+}
+
+export interface TraditionalAnalysisBatchResponse {
+  items: TraditionalAnalysisSummary[]
+  errors: Record<string, string>
+}
+
 export interface RealtimeQuote {
   code: string
   name: string
