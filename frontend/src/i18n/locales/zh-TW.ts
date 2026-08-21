@@ -88,10 +88,15 @@ export const zhTW = {
   'register.submit': '註冊',
   'register.haveAccount': '已經有帳號了？',
   'register.loginLink': '登入',
-  'register.approvalNotice': '這個站台的新帳號需要管理員審核，送出後不會立刻登入。',
+  'register.approvalNotice':
+    '這個站台的新帳號需經平台管理者審核開通後才能使用，送出後不會立刻登入。',
+  'register.adminContact':
+    '請與平台管理者聯絡，請對方幫忙開通帳號。目前沒有 Email 自動通知。',
   'register.pendingTitle': '申請已送出',
-  'register.pendingBody': '帳號 {username} 已建立，正在等待管理員核准。核准之後就能登入使用即時報價。',
-  'register.pendingNote': '目前沒有 Email 通知，核准與否請直接與管理員確認。',
+  'register.pendingBody':
+    '帳號 {username} 已建立，正在等待平台管理者核准開通。開通之後就能登入使用即時報價。',
+  'register.pendingNote':
+    '目前沒有 Email 通知，請主動與平台管理者聯絡，請對方幫忙開通帳號。',
   'register.pendingHome': '回到大盤',
 
   // ---------- change password ----------
@@ -176,6 +181,7 @@ export const zhTW = {
     '本次向來源抓取 {fetched} 個月{detail}，由 PostgreSQL 快取提供 {cached} 個月',
   'history.fetchDetail': '（{months}）',
   'section.traditional': '傳統分析',
+  'section.chip': '籌碼',
   'table.last10': '近 10 日',
   'table.date': '日期',
   'table.close': '收盤',
@@ -375,6 +381,25 @@ export const zhTW = {
   'dividendKind.stock': '除權',
   'dividendKind.both': '除權息',
 
+  // ---------- chip flow ----------
+  'chip.title': '籌碼',
+  'chip.asOf': '資料截至 {date}（日結，約盤後公布）',
+  'chip.foreign': '外資',
+  'chip.trust': '投信',
+  'chip.dealer': '自營',
+  'chip.total': '三大法人',
+  'chip.margin': '融資',
+  'chip.short': '融券',
+  'chip.lots': '張',
+  'chip.colDate': '日期',
+  'chip.streakBuy': '連買 {days} 日',
+  'chip.streakSell': '連賣 {days} 日',
+  'chip.streakNone': '無連續',
+  'chip.net5d': '近 5 日 {value} 張',
+  'chip.empty': '還沒有這檔的籌碼日報。盤後排程會補，或等日線載入後再打開一次。',
+  'chip.note':
+    '與四大買賣點獨立，不是買賣訊號。法人買賣超由股改成張顯示；融資融券餘額本身就是張。',
+
   // ---------- charts ----------
   'chart.tooltipOpen': '開',
   'chart.tooltipHigh': '高',
@@ -564,10 +589,16 @@ export const zhTW = {
   'jobName.refresh_token_cleanup': '登入憑證清理',
   'jobDesc.refresh_token_cleanup':
     '刪除已過期、以及撤銷超過保留期的 refresh token。保留期內的撤銷紀錄要留著，重放偵測才抓得到被偷的憑證。',
+  'jobName.chip_refresh': '籌碼日報快取',
+  'jobDesc.chip_refresh':
+    '把最近幾個交易日的三大法人與融資融券日報抓進 chip_day。一份日報涵蓋全市場，個股頁共用；沒有它，第一次打開要現抓。',
   'jobStat.inserted': '新增',
   'jobStat.updated': '更新',
   'jobStat.delisted': '下市',
   'jobStat.pruned': '清除',
   'jobStat.active': '可查詢',
   'jobStat.deleted': '刪除',
+  'jobStat.fetched': '新抓日數',
+  'jobStat.cached': '已快取',
+  'jobStat.rows': '寫入列數',
 }

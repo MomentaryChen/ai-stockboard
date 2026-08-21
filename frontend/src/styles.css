@@ -869,6 +869,10 @@ table.data td select, table.data td .btn { font-size: 12px; }
 table.data td:nth-child(2), table.data td:nth-child(3) { text-align: left; }
 table.data th:nth-child(2), table.data th:nth-child(3) { text-align: left; }
 
+/* Chip flow is numbers; undo the admin-users left-align for this table only. */
+table.chip-table th, table.chip-table td { text-align: right; }
+table.chip-table th:first-child, table.chip-table td:first-child { text-align: left; }
+
 /* The generated password from an ADMIN reset. Monospace with wide tracking so
    it can be read off the screen and typed by hand without misreading a run of
    similar glyphs -- security.py already drops the 0/O and 1/l/I pairs. */

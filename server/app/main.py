@@ -23,6 +23,7 @@ from app.middleware import RequestContextMiddleware
 from app.routers import (
     analysis,
     auth,
+    chips,
     dividends,
     history,
     jobs,
@@ -78,7 +79,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ai-stockboard API",
     description=(
-        "台股看板服務：歷史股價、除權息、即時報價、股票搜尋，"
+        "台股看板服務：歷史股價、除權息、籌碼、即時報價、股票搜尋，"
         "以及規則式技術分析、訊號回測與 AI 進出場評估。行情資料來源為 twstock。"
     ),
     version="0.1.0",
@@ -101,6 +102,7 @@ app.include_router(stocks.router)
 app.include_router(jobs.router)
 app.include_router(history.router)
 app.include_router(dividends.router)
+app.include_router(chips.router)
 app.include_router(analysis.router)
 app.include_router(analysis.batch_router)
 app.include_router(market.router)

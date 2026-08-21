@@ -82,9 +82,14 @@ export default function Register() {
         <h2 className="card-title">{t('register.title')}</h2>
 
         {policy.data?.requires_approval && (
-          <div className="banner banner-warn" style={{ marginTop: 10 }}>
-            {t('register.approvalNotice')}
-          </div>
+          <>
+            <div className="banner banner-warn" style={{ marginTop: 10 }}>
+              {t('register.approvalNotice')}
+            </div>
+            <p className="dim" style={{ marginTop: 10 }}>
+              {t('register.adminContact')}
+            </p>
+          </>
         )}
 
         <form

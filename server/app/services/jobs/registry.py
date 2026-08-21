@@ -37,6 +37,7 @@ settings = get_settings()
 STOCK_CODE_SYNC = "stock_code_sync"
 REFRESH_TOKEN_CLEANUP = "refresh_token_cleanup"
 BACKTEST_REFRESH = "backtest_refresh"
+CHIP_REFRESH = "chip_refresh"
 
 
 @dataclass(frozen=True)
@@ -217,6 +218,36 @@ def build() -> None:
                 "computed": "重算",
                 "skipped": "略過",
                 "failed": "失敗",
+            },
+        )
+    )
+
+    register(
+        JobDefinition(
+            id=CHIP_REFRESH,
+            name="籌碼日報快取",
+            description=(
+                "把最近幾個交易日的三大法人與融資融券日報抓進 chip_day。"
+                "一份日報涵蓋全市場，個股頁共用；沒有它，第一次打開要現抓。"
+            ),
+            handler=handlers.chip_refresh,
+            default_enabled=True,
+            default_kind=SCHEDULE_DAILY,
+            # T86 and MI_MARGN land after the close, typically 18:00–19:40.
+            # Later than that and the card's "as of yesterday" is a cache miss
+            # until someone opens a stock; earlier and we stamp an empty "not
+            # published yet" that then has to expire.
+            default_daily_at="20:30",
+            default_interval_minutes=24 * 60,
+            min_interval_minutes=60,
+            max_interval_minutes=7 * 24 * 60,
+            manual_cooldown_seconds=60,
+            run_on_startup=False,
+            expected_seconds=45,
+            stat_labels={
+                "fetched": "新抓日數",
+                "cached": "已快取",
+                "rows": "寫入列數",
             },
         )
     )

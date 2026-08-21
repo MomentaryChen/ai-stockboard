@@ -244,6 +244,28 @@ describe('request deadline', () => {
     expect(isTimeout(await pending)).toBe(true)
   })
 
+  it('lets an AI generation outlive the default budget', async () => {
+    // Gemini is allowed 45 s per attempt and may retry once; the default 15 s
+    // budget was aborting those calls and surfacing "Request timed out".
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', neverAnswers())
+
+    let settled = false
+    const pending = api
+      .generateAiAnalysis('2330', 'zh-TW')
+      .catch((error: unknown) => error)
+      .then((error) => {
+        settled = true
+        return error
+      })
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(settled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(70_000)
+    expect(isTimeout(await pending)).toBe(true)
+  })
+
   it('leaves a caller-cancelled request an AbortError', async () => {
     // StockSearch aborts on every keystroke. react-query treats AbortError as
     // "ignore this"; turning it into an ApiError would show the user an error

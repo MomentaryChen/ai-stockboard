@@ -6,6 +6,7 @@ import { ApiError, api } from '../api/client'
 import type { RuleSet } from '../api/types'
 import BacktestCard from '../components/BacktestCard'
 import BestFourPointCard from '../components/BestFourPointCard'
+import ChipCard from '../components/ChipCard'
 import DividendCard from '../components/DividendCard'
 import MaPanel from '../components/MaPanel'
 import PriceChart, { buildChartRows } from '../components/PriceChart'
@@ -58,6 +59,14 @@ export default function StockDetail() {
   const dividends = useQuery({
     queryKey: ['dividends', sid],
     queryFn: () => api.getDividends(sid),
+  })
+
+  const chips = useQuery({
+    queryKey: ['chips', sid],
+    queryFn: () => api.getChips(sid),
+    // Dates come from daily_price; without bars there is no trading calendar
+    // to attach T86 to, so wait for history rather than returning empty.
+    enabled: (history.data?.count ?? 0) > 0,
   })
 
   const rows = useMemo(
@@ -313,6 +322,13 @@ export default function StockDetail() {
                   </p>
                 </section>
               ) : null}
+            </>
+          )}
+
+          {chips.data && chips.data.coverage !== 'none' && (
+            <>
+              <div className="section-label">{t('section.chip')}</div>
+              <ChipCard data={chips.data} />
             </>
           )}
 
