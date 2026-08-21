@@ -212,8 +212,9 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/health` | 服務與資料庫狀態 |
 | GET | `/api/stocks/search?q=&limit=` | 代碼／名稱搜尋 |
 | GET | `/api/stocks/{sid}` | 個股基本資料 |
-| GET | `/api/stocks/{sid}/history?months=6&force=false` | 歷史日成交 |
-| GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點 |
+| GET | `/api/stocks/{sid}/history?months=6` | 歷史日成交. `months` 上限 24; 12 without a token, and `force=true` is **ADMIN** -- see [the fetch budget](#the-upstream-fetch-budget) |
+| GET | `/api/stocks/{sid}/dividends?years=5` | 除權息. `years` 上限 10; 5 without a token, `force=true` is **ADMIN**, same reason |
+| GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點. Backfills like `/history`, so the same `months` cap applies |
 | GET | `/api/analysis/traditional?sids=2330,0050` | Batch 四大買賣點 from cached daily bars only (no TWSE fetch, max 20) |
 | GET | `/api/realtime?sids=2330,0050` | 即時報價，最多 20 檔（**需登入**） |
 | GET | `/api/market/open?date=&sids=` | Opening intel for one trading day: gap and drift for the index plus up to 20 watchlist codes. Defaults to today in Taipei; cache-only apart from the index's own backfill |
@@ -614,8 +615,11 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 
 ## 帳號與權限
 
-帳號（username）、Email、密碼為必填，手機選填。角色只有 `ADMIN` 與 `USER` 兩種，
-行情 API 中 `/api/health` 與 `/api/stocks/*` 維持公開，只有 `/api/realtime` 需要登入。
+帳號（username）、Email、密碼為必填，手機選填。角色只有 `ADMIN` 與 `USER` 兩種。
+Every market-data route stays readable without an account. What a token buys is a bigger
+share of the upstream rate limit: `/api/realtime` needs one at all, and the cached routes
+widen their backfill range for a caller who has signed in. See
+[the fetch budget](#the-upstream-fetch-budget).
 
 ### Token
 
@@ -803,6 +807,49 @@ signed out mid-poll.
 password. The frontend never reaches it -- `<PasswordGate>` wraps the whole route
 table, pinning such an account to `/change-password`, so the 大盤 and 個股 pages
 never render and nothing polls.
+
+---
+
+## The upstream fetch budget
+
+Requiring a sign-in for `/api/realtime` only helps if the cached routes cannot be
+used to spend the same budget. They reach TWSE/TPEX too -- just not on every call
+-- and the query parameters below decide how much:
+
+| Knob | Cost of one request | Rule |
+|---|---|---|
+| `force=true` on `/history`, `/dividends` | every bucket in the range, **every time** | **ADMIN** only |
+| `months` on `/history` and `/analysis/traditional` | one request per month **missing from the cache** | 24 signed in, 12 anonymous |
+| `years` on `/dividends` | one report per year missing from the cache | 10 signed in, 5 anonymous |
+
+`force` is the one that mattered. It skips every staleness check, so the answer is
+never cached and the *next* identical request pays in full again. Anonymous
+`?months=24&force=true` queued 24 fetches; at 3 requests per 5 seconds that is
+roughly **44 seconds during which the service has no TWSE allowance left** -- and
+one thread-pool worker parked for the duration. A handful of tabs rotating over
+different codes was enough to starve every signed-in user's quote poll, using the
+public route to walk straight around the sign-in that was protecting it.
+
+Nothing in the UI sends `force`; it is a curl-and-ops affordance, which is why
+restricting it costs nothing. `/api/analysis/traditional` (batch) is unmetered on
+purpose -- it is cache-only by construction and never reaches upstream. The
+anonymous ceilings are the ranges the public chart actually offers (1/3/6/12
+months), so no signed-out visitor meets one by clicking.
+
+An over-budget request is **refused, not quietly trimmed**: the response reports
+the range it answered for, and silently halving it would read as "the exchange has
+no older data".
+
+Presenting a token that is expired or belongs to a disabled account still fails
+these routes rather than falling back to the anonymous tier. That is deliberate --
+otherwise an expired session asking for 24 months would be told "sign in to
+request more than 12 months", which is both wrong and unactionable. The frontend
+sends no token here at all, so it never sees either case.
+
+One upstream path is left public on purpose: `/api/market/open` backfills the
+index, and only the index, for at most two months per requested date, recorded in
+`fetch_log` and a no-op once warm. The sid cannot be varied and the cost of any
+given month is paid once, ever -- see [Why the endpoint is cache-only](#why-the-endpoint-is-cache-only).
 
 ---
 
