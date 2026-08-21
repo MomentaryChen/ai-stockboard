@@ -1,7 +1,7 @@
 """watchlist groups: named folders on the existing 20-stock list
 
-Revision ID: 0006_watchlist_groups
-Revises: 0005_ai_analysis
+Revision ID: 0007_watchlist_groups
+Revises: 0006_chip_flow
 Create Date: 2026-08-21 18:00:00.000000+00:00
 
 One new table, `watchlist_group`, and a nullable `group_id` on `watchlist_item`.
@@ -19,8 +19,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0006_watchlist_groups"
-down_revision: str | None = "0005_ai_analysis"
+revision: str = "0007_watchlist_groups"
+down_revision: str | None = "0006_chip_flow"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
