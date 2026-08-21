@@ -3,17 +3,18 @@ import { Link } from 'react-router-dom'
 
 import { api } from '../api/client'
 import JobRunsTable from '../components/JobRunsTable'
+import { useI18n } from '../i18n'
 import { fmtInt } from '../utils/format'
 import { isStale, runErrorMessage, scheduleLabel, sinceLabel, untilLabel } from '../utils/jobs'
 
 /** The job this page is about. It is one of several in the registry; this view
  *  exists because the listing has consequences the generic console cannot
- *  explain -- a stale sync means 新掛牌的股票查不到, which is a support ticket,
- *  not a red dot. */
+ *  explain -- a stale sync means newly listed stocks cannot be found at all,
+ *  which is a support ticket, not a red dot. */
 const JOB_ID = 'stock_code_sync'
 
 /**
- * 上市櫃名冊同步 -- the listing sync, with the context that only applies to it.
+ * The listing sync, with the context that only applies to it.
  *
  * The schedule and the full history live in the generic console at
  * /admin/jobs/stock_code_sync; this page deliberately does not duplicate the
@@ -24,6 +25,7 @@ const JOB_ID = 'stock_code_sync'
  */
 export default function AdminStockCodes() {
   const queryClient = useQueryClient()
+  const { t } = useI18n()
 
   const query = useQuery({
     queryKey: ['job', JOB_ID],
@@ -55,16 +57,17 @@ export default function AdminStockCodes() {
     <div className="stack">
       <div className="row-between wrap" style={{ gap: 16 }}>
         <h2 className="card-title" style={{ margin: 0 }}>
-          上市櫃名冊同步
+          {t('adminCodes.title')}
         </h2>
         <div className="row wrap" style={{ gap: 10 }}>
           {job?.running && (
             <span className="dim">
-              <span className="spinner" /> 抓取中，約需 {job.expected_seconds} 秒…
+              <span className="spinner" />{' '}
+              {t('adminCodes.syncing', { seconds: job.expected_seconds })}
             </span>
           )}
           <Link to={`/admin/jobs/${JOB_ID}`} className="btn btn-sm">
-            排程設定
+            {t('adminCodes.scheduleSettings')}
           </Link>
           <button
             type="button"
@@ -72,63 +75,65 @@ export default function AdminStockCodes() {
             disabled={!job || job.running || run.isPending}
             onClick={() => run.mutate()}
           >
-            立即同步
+            {t('adminCodes.syncNow')}
           </button>
         </div>
       </div>
 
       {error && (
-        <div className="banner banner-error">操作失敗：{runErrorMessage(error)}</div>
+        <div className="banner banner-error">
+          {t('adminCodes.opFailed', { message: runErrorMessage(error, t) })}
+        </div>
       )}
 
       {run.data && !run.error && job && (
         <div className="banner banner-ok">
-          已開始同步，約需 {job.expected_seconds} 秒，結果會出現在下面的紀錄裡。
+          {t('adminCodes.started', { seconds: job.expected_seconds })}
         </div>
       )}
 
       {job && !job.schedule.enabled && (
         <div className="banner banner-warn">
-          這個工作的排程已停用，名冊不會自動更新新掛牌的標的。
-          可以到<Link to={`/admin/jobs/${JOB_ID}`}>排程設定</Link>重新啟用。
+          {t('adminCodes.scheduleOffBefore')}
+          <Link to={`/admin/jobs/${JOB_ID}`}>{t('adminCodes.scheduleSettings')}</Link>
+          {t('adminCodes.scheduleOffAfter')}
         </div>
       )}
 
       {job && isStale(job) && (
         <div className="banner banner-warn">
-          已經超過兩個排程週期沒有成功同步（{sinceLabel(job.last_success_at, '從未成功')}）。
-          新掛牌的標的目前會查不到，請看下方紀錄的失敗原因。
+          {t('adminCodes.staleNotice', {
+            since: sinceLabel(job.last_success_at, t, 'jobs.neverSucceeded'),
+          })}
         </div>
       )}
 
       {health.data && health.data.stock_codes_synced_at === null && (
-        <div className="banner banner-warn">
-          名冊還沒跟交易所對過，目前用的是 twstock 內建的快照，會漏掉快照日期之後掛牌的標的。
-        </div>
+        <div className="banner banner-warn">{t('adminCodes.neverSyncedNotice')}</div>
       )}
 
       <section className="card">
         <div className="stat-grid">
           <div>
-            <div className="stat-label">可查詢標的</div>
+            <div className="stat-label">{t('adminCodes.statActive')}</div>
             <div className="stat-value">{fmtInt(health.data?.stock_codes_loaded ?? null)}</div>
           </div>
           <div>
-            <div className="stat-label">最後成功同步</div>
+            <div className="stat-label">{t('adminCodes.statLastSuccess')}</div>
             <div className="stat-value">
-              {sinceLabel(job?.last_success_at, '從未成功')}
+              {sinceLabel(job?.last_success_at, t, 'jobs.neverSucceeded')}
             </div>
           </div>
           <div>
-            <div className="stat-label">排程</div>
-            <div className="stat-value">{job ? scheduleLabel(job) : '--'}</div>
+            <div className="stat-label">{t('adminCodes.statSchedule')}</div>
+            <div className="stat-value">{job ? scheduleLabel(job, t) : '--'}</div>
           </div>
           <div>
-            <div className="stat-label">下次執行</div>
-            <div className="stat-value">{job ? untilLabel(job.next_run_at) : '--'}</div>
+            <div className="stat-label">{t('adminCodes.statNextRun')}</div>
+            <div className="stat-value">{job ? untilLabel(job.next_run_at, t) : '--'}</div>
           </div>
           <div>
-            <div className="stat-label">紀錄筆數</div>
+            <div className="stat-label">{t('adminCodes.statRuns')}</div>
             <div className="stat-value">{fmtInt(query.data?.total ?? null)}</div>
           </div>
         </div>
@@ -140,13 +145,14 @@ export default function AdminStockCodes() {
         </div>
       ) : (
         <section className="card">
-          <JobRunsTable job={job} runs={query.data!.runs} emptyNote="還沒有任何同步紀錄" />
+          <JobRunsTable
+            job={job}
+            runs={query.data!.runs}
+            emptyNote={t('adminCodes.noRuns')}
+          />
 
           <p className="dim" style={{ marginTop: 12 }}>
-            只保留最近 200 次。「略過」代表排程醒來時名冊還在間隔內，沒有需要做的事 ——
-            它是這個批次工作還活著的心跳。訊息寫著 Partial 的那幾次，是只有一個市場回應，
-            寫了拿到的部分但刻意沒有退役任何代碼。下市的標的不會被刪除，仍可用完整代碼查到歷史；
-            只有過期超過 30 天的認購(售)權證會被清除。
+            {t('adminCodes.footer')}
           </p>
         </section>
       )}

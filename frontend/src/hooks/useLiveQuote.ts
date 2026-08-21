@@ -2,15 +2,16 @@
  * The headline price for one sid: the live tick while it is worth having, the
  * last daily close otherwise.
  *
- * 大盤 and 個股 need exactly the same decision -- MIS keeps serving the last
+ * The market board and the stock page need exactly the same decision -- MIS
+ * keeps serving the last
  * tick long after the close, so "is there a quote" is not the same question as
  * "is the market open" -- and it was copied between the two pages. Formatting
  * stays with the callers, because an index reads as 44,933.74 and a stock as
  * 512.00.
  *
  * Quotes are signed-in only. Anonymous visitors keep the whole page -- charts,
- * moving averages, 四大買賣點 -- and simply read the last close instead of the
- * live tick, which is the fallback this hook already had for weekends.
+ * moving averages, Best Four Point -- and simply read the last close instead of
+ * the live tick, which is the fallback this hook already had for weekends.
  */
 
 import { useState } from 'react'
@@ -39,9 +40,10 @@ export interface LiveQuote {
   marketOpen: boolean
   /** No account, so no quote: show the close and invite them to sign in. */
   locked: boolean
-  /** What the numbers on screen actually are. Drives the 盤中 / 收盤 badge --
-   *  a locked page during market hours is still showing a close. */
-  sessionLabel: '盤中' | '收盤'
+  /** What the numbers on screen actually are. Drives the open/closed badge --
+   *  a locked page during market hours is still showing a close. Returned as a
+   *  state rather than a label so the caller can translate it. */
+  session: 'open' | 'closed'
   /** Whether the numbers below came from the quote rather than the daily bar. */
   intraday: boolean
   price: number | null
@@ -102,7 +104,7 @@ export function useLiveQuote(sid: string, lastClose: ClosingBar | undefined): Li
     quote,
     marketOpen,
     locked,
-    sessionLabel: intraday ? '盤中' : '收盤',
+    session: intraday ? 'open' : 'closed',
     intraday,
     price: intraday ? quote!.latest_trade_price : (lastClose?.close ?? null),
     change: intraday ? quote!.change : (lastClose?.change ?? null),

@@ -3,27 +3,32 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../api/client'
 import type { Job, ScheduleKind } from '../api/types'
+import { useI18n, type MessageKey, type Translate } from '../i18n'
 import { fmtTime } from '../utils/jobs'
 
 type Unit = 'minutes' | 'hours' | 'days'
 
 const UNIT_MINUTES: Record<Unit, number> = { minutes: 1, hours: 60, days: 1440 }
-const UNIT_LABEL: Record<Unit, string> = { minutes: '分鐘', hours: '小時', days: '天' }
+const UNIT_KEY: Record<Unit, MessageKey> = {
+  minutes: 'schedule.unitMinutes',
+  hours: 'schedule.unitHours',
+  days: 'schedule.unitDays',
+}
 
-/** Show 1440 分鐘 as 1 天. Picks the largest unit that divides evenly, so what
- *  the operator typed is what they see when they come back. */
+/** Show 1440 minutes as 1 day. Picks the largest unit that divides evenly, so
+ *  what the operator typed is what they see when they come back. */
 function splitInterval(minutes: number): { value: number; unit: Unit } {
   if (minutes % 1440 === 0) return { value: minutes / 1440, unit: 'days' }
   if (minutes % 60 === 0) return { value: minutes / 60, unit: 'hours' }
   return { value: minutes, unit: 'minutes' }
 }
 
-function rangeHint(minMinutes: number, maxMinutes: number): string {
+function rangeHint(minMinutes: number, maxMinutes: number, t: Translate): string {
   const format = (minutes: number) => {
     const { value, unit } = splitInterval(minutes)
-    return `${value} ${UNIT_LABEL[unit]}`
+    return t('schedule.amount', { value, unit: t(UNIT_KEY[unit]) })
   }
-  return `允許範圍 ${format(minMinutes)} ～ ${format(maxMinutes)}`
+  return t('schedule.rangeHint', { min: format(minMinutes), max: format(maxMinutes) })
 }
 
 /**
@@ -37,6 +42,7 @@ function rangeHint(minMinutes: number, maxMinutes: number): string {
  */
 export default function JobScheduleForm({ job }: { job: Job }) {
   const queryClient = useQueryClient()
+  const { intlTag, t } = useI18n()
   const { schedule } = job
 
   const initial = splitInterval(schedule.interval_minutes)
@@ -83,9 +89,11 @@ export default function JobScheduleForm({ job }: { job: Job }) {
           className={`btn btn-sm ${schedule.enabled ? 'active' : ''}`}
           disabled={save.isPending}
           onClick={() => save.mutate({ enabled: !schedule.enabled })}
-          title={schedule.enabled ? '停用後這個工作不會自動執行' : '重新啟用排程'}
+          title={
+            schedule.enabled ? t('schedule.disableTitle') : t('schedule.enableTitle')
+          }
         >
-          {schedule.enabled ? '排程啟用中' : '排程已停用'}
+          {schedule.enabled ? t('schedule.enabled') : t('schedule.disabled')}
         </button>
 
         <div className="segmented">
@@ -96,7 +104,9 @@ export default function JobScheduleForm({ job }: { job: Job }) {
               className={`btn btn-sm ${kind === option ? 'active' : ''}`}
               onClick={() => setKind(option)}
             >
-              {option === 'interval' ? '固定間隔' : '每天定時'}
+              {option === 'interval'
+                ? t('schedule.kindInterval')
+                : t('schedule.kindDaily')}
             </button>
           ))}
         </div>
@@ -113,13 +123,13 @@ export default function JobScheduleForm({ job }: { job: Job }) {
             />
             <select
               className="text-input"
-              style={{ maxWidth: 90 }}
+              style={{ maxWidth: 110 }}
               value={unit}
               onChange={(event) => setUnit(event.target.value as Unit)}
             >
               {(['minutes', 'hours', 'days'] as Unit[]).map((option) => (
                 <option key={option} value={option}>
-                  {UNIT_LABEL[option]}
+                  {t(UNIT_KEY[option])}
                 </option>
               ))}
             </select>
@@ -146,29 +156,30 @@ export default function JobScheduleForm({ job }: { job: Job }) {
             )
           }
         >
-          儲存排程
+          {t('schedule.save')}
         </button>
       </div>
 
       <div className="dim">
         {kind === 'interval'
-          ? rangeHint(schedule.min_interval_minutes, schedule.max_interval_minutes)
-          : `以 ${schedule.timezone} 為準`}
+          ? rangeHint(schedule.min_interval_minutes, schedule.max_interval_minutes, t)
+          : t('schedule.timezoneNote', { timezone: schedule.timezone })}
         {schedule.is_default
-          ? ' · 目前是環境變數給的預設值，存檔後就以這裡為準'
+          ? t('schedule.defaultNote')
           : schedule.updated_by &&
-            ` · 上次由 ${schedule.updated_by} 於 ${fmtTime(schedule.updated_at!)} 修改`}
+            t('schedule.updatedBy', {
+              user: schedule.updated_by,
+              time: fmtTime(schedule.updated_at!, intlTag),
+            })}
       </div>
 
       {outOfRange && (
-        <div className="banner banner-warn">
-          這個間隔超出允許範圍，伺服器會拒絕。上市櫃名冊那類會打交易所的工作，間隔太短會被對方封鎖。
-        </div>
+        <div className="banner banner-warn">{t('schedule.outOfRange')}</div>
       )}
 
       {save.error && (
         <div className="banner banner-error">
-          排程沒有存成功：{(save.error as Error).message}
+          {t('schedule.saveFailed', { message: (save.error as Error).message })}
         </div>
       )}
     </div>

@@ -536,6 +536,74 @@ curl localhost:8000/api/watchlist -H "Authorization: Bearer $ACCESS_TOKEN"
 
 ---
 
+## Interface language (i18n)
+
+The UI ships in **Traditional Chinese (default) and English**, switched from the
+top right. The choice is stored in the **browser's localStorage** under
+`ai-stockboard.locale`. A visitor who has never chosen gets one picked from
+`navigator.languages`: `zh*` becomes Chinese, `en*` becomes English, anything
+else falls back to Chinese.
+
+The language is a property of the device somebody reads on, not a column on
+their account -- so it applies before anyone signs in, and the server neither
+stores nor consumes it.
+
+```
+frontend/src/i18n/
+├── locales/zh-TW.ts   the catalogue, and the source MessageKey is derived from
+├── locales/en.ts      typed Record<MessageKey, string> -- a missing key fails the build
+├── I18nProvider.tsx   context + useI18n(); also syncs <html lang> and the tab title
+├── storage.ts         localStorage read/write plus browser-language detection
+└── serverText.ts      lookup for the Chinese vocabulary the API returns
+```
+
+Usage is `const { t, locale, intlTag } = useI18n()`, where `t('key', { name: v })`
+substitutes `{name}` placeholders. Switching language replaces `t` and nothing
+else -- there is no `key` on the tree, so charts keep their zoom and react-query
+keeps its cache across a switch.
+
+No i18n dependency was added. At this size -- around 250 messages, two locales,
+no plural rules in either -- a typed catalogue plus one context is smaller and
+easier to read than i18next, and it buys the compile-time completeness check
+that a runtime library cannot give.
+
+### What the server sends back
+
+Some product copy is owned by the server on purpose: the Best Four Point reasons
+(`services/analysis/traditional.py` plus twstock's `BEST_BUY_WHY` /
+`BEST_SELL_WHY`), the market and instrument types from the exchange ISIN
+listing, and the job names, descriptions and stat columns in
+`services/jobs/registry.py`. Every one of those is a **closed set**, so
+`serverText.ts` translates them by lookup rather than the API growing a
+translation endpoint.
+
+Two rules make that safe:
+
+- **Anything unknown falls through unchanged.** A reason string added by a newer
+  twstock, or a job registered tomorrow, renders in the server's own words
+  instead of going blank.
+- **Job names and stat columns are keyed on the job id and the stats key**, both
+  English identifiers, not on the Chinese label -- so rewording a label upstream
+  cannot silently drop its translation.
+
+### Deliberate trade-offs
+
+- **Company names are not translated.** 台積電 is the name of the instrument;
+  an English reader searching for it needs the string the exchange publishes.
+- **Large numbers use each language's own grouping**: Chinese counts in 萬 (10^4)
+  and 億 (10^8), English in K/M/B (10^3/10^6/10^9). `fmtCompact` and
+  `fmtLotsAxis` in `utils/format.ts` branch on the locale rather than
+  transliterating one into the other.
+- **Dates and times go through `intlTag`**, not a hardcoded `'zh-TW'`.
+
+### Adding a string
+
+Add the key to `locales/zh-TW.ts`; `tsc -b` then fails until `locales/en.ts`
+covers it too. Never hardcode UI copy in a component -- that is what the
+compile-time check exists to catch.
+
+---
+
 ## Realtime quotes require sign-in
 
 `/api/realtime` is the only market-data route behind a sign-in. History, search
@@ -585,6 +653,9 @@ never render and nothing polls.
 - **上櫃（TPEX）資料比上市晚一天**發布，屬於來源行為。
 - 首次查詢 1 年區間需要 12 個對外請求，受速率限制約需 **18 秒**；之後走快取。
 - 四大買賣點需要至少 12 個交易日，不足時回傳「資料不足」。
+- **The English UI covers interface copy only.** Stock names and industry groups
+  stay as the exchange publishes them; server error `detail` strings are already
+  English by convention.
 - 即時報價不寫入資料庫，只有歷史日成交落地（大盤的日線同樣落在 `daily_price`，sid = `t00`）。
 - 大盤看板非交易時段顯示最近一個交易日的收盤。13:30 收盤到 TWSE 發布當日報表之間，
   日線還是前一天，此時改用 MIS 的最後成交值，避免看板倒退一天。

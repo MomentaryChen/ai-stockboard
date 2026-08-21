@@ -4,14 +4,19 @@ import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import type { Job } from '../api/types'
 import JobScheduleForm from '../components/JobScheduleForm'
+import {
+  translateJobDescription,
+  translateJobName,
+  useI18n,
+} from '../i18n'
 import { fmtInt } from '../utils/format'
 import {
-  STATUS_LABEL,
   isStale,
   runErrorMessage,
   scheduleLabel,
   sinceLabel,
   statusClass,
+  statusLabel,
   untilLabel,
 } from '../utils/jobs'
 
@@ -30,6 +35,7 @@ import {
 
 function JobCard({ job }: { job: Job }) {
   const queryClient = useQueryClient()
+  const { t } = useI18n()
 
   const run = useMutation({
     mutationFn: () => api.runJob(job.id),
@@ -51,15 +57,19 @@ function JobCard({ job }: { job: Job }) {
             }`}
             style={!job.schedule.enabled ? { background: 'var(--text-dim)' } : undefined}
             title={
-              !job.schedule.enabled ? '排程已停用' : stale ? '太久沒有成功執行' : '正常'
+              !job.schedule.enabled
+                ? t('jobs.dotDisabled')
+                : stale
+                  ? t('jobs.dotStale')
+                  : t('jobs.dotOk')
             }
           />
           <h3 className="card-title" style={{ margin: 0 }}>
-            {job.name}
+            {translateJobName(job.id, job.name, t)}
           </h3>
           {job.running && (
             <span className="dim">
-              <span className="spinner" /> 執行中
+              <span className="spinner" /> {t('jobs.running')}
             </span>
           )}
         </div>
@@ -70,65 +80,72 @@ function JobCard({ job }: { job: Job }) {
             className="btn btn-sm btn-primary"
             disabled={busy}
             onClick={() => run.mutate()}
-            title={`預計約 ${job.expected_seconds} 秒；同一個工作 ${job.manual_cooldown_seconds} 秒內只能手動執行一次`}
+            title={t('jobs.runNowTitle', {
+              seconds: job.expected_seconds,
+              cooldown: job.manual_cooldown_seconds,
+            })}
           >
-            立即執行
+            {t('jobs.runNow')}
           </button>
           <Link to={`/admin/jobs/${job.id}`} className="btn btn-sm">
-            執行紀錄
+            {t('jobs.runHistory')}
           </Link>
         </div>
       </div>
 
       <p className="dim" style={{ margin: 0 }}>
-        {job.description}
+        {translateJobDescription(job.id, job.description, t)}
       </p>
 
       {stale && (
         <div className="banner banner-warn">
-          已經超過兩個排程週期沒有成功執行
-          {job.last_success_at ? `（最後一次 ${sinceLabel(job.last_success_at)}）` : ''}
-          ，請看執行紀錄裡的失敗原因。
+          {job.last_success_at
+            ? t('jobs.staleNoticeSince', { since: sinceLabel(job.last_success_at, t) })
+            : t('jobs.staleNotice')}
         </div>
       )}
 
       {run.error && (
-        <div className="banner banner-error">{runErrorMessage(run.error)}</div>
+        <div className="banner banner-error">{runErrorMessage(run.error, t)}</div>
       )}
       {run.data && !run.error && (
-        <div className="banner banner-ok">{`已開始執行，約需 ${job.expected_seconds} 秒，結果會出現在執行紀錄裡`}</div>
+        <div className="banner banner-ok">
+          {t('jobs.started', { seconds: job.expected_seconds })}
+        </div>
       )}
 
       <div className="stat-grid">
         <div>
-          <div className="stat-label">排程</div>
-          <div className="stat-value">{scheduleLabel(job)}</div>
+          <div className="stat-label">{t('jobs.statSchedule')}</div>
+          <div className="stat-value">{scheduleLabel(job, t)}</div>
         </div>
         <div>
-          <div className="stat-label">下次執行</div>
-          <div className="stat-value">{untilLabel(job.next_run_at)}</div>
+          <div className="stat-label">{t('jobs.statNextRun')}</div>
+          <div className="stat-value">{untilLabel(job.next_run_at, t)}</div>
         </div>
         <div>
-          <div className="stat-label">上次結果</div>
+          <div className="stat-label">{t('jobs.statLastResult')}</div>
           <div className="stat-value">
             {job.last_run ? (
               <>
                 <span className={statusClass(job.last_run.status)}>
-                  {STATUS_LABEL[job.last_run.status]}
+                  {statusLabel(job.last_run.status, t)}
                 </span>{' '}
-                <span className="dim">{sinceLabel(job.last_run.started_at)}</span>
+                <span className="dim">{sinceLabel(job.last_run.started_at, t)}</span>
               </>
             ) : (
-              <span className="dim">從未執行</span>
+              <span className="dim">{t('jobs.neverRun')}</span>
             )}
           </div>
         </div>
         <div>
-          <div className="stat-label">最後成功</div>
-          <div className="stat-value">{sinceLabel(job.last_success_at, '從未成功')}</div>
+          <div className="stat-label">{t('jobs.statLastSuccess')}</div>
+          <div className="stat-value">
+            {sinceLabel(job.last_success_at, t, 'jobs.neverSucceeded')}
+          </div>
         </div>
         <div>
-          <div className="stat-label">紀錄筆數</div>
+          <div className="stat-label">{t('jobs.statRuns')}</div>
           <div className="stat-value">{fmtInt(job.total_runs)}</div>
         </div>
       </div>
@@ -139,6 +156,8 @@ function JobCard({ job }: { job: Job }) {
 }
 
 export default function AdminJobs() {
+  const { t } = useI18n()
+
   const jobs = useQuery({
     queryKey: ['jobs'],
     queryFn: api.listJobs,
@@ -159,19 +178,22 @@ export default function AdminJobs() {
     <div className="stack">
       <div className="row-between wrap" style={{ gap: 16 }}>
         <h2 className="card-title" style={{ margin: 0 }}>
-          排程作業
+          {t('jobs.title')}
         </h2>
-        <span className="dim">時區 {jobs.data?.timezone}</span>
+        <span className="dim">{t('jobs.timezone', { timezone: jobs.data?.timezone ?? '--' })}</span>
       </div>
 
       {jobs.error && (
-        <div className="banner banner-error">讀取失敗：{(jobs.error as Error).message}</div>
+        <div className="banner banner-error">
+          {t('jobs.loadFailed', { message: (jobs.error as Error).message })}
+        </div>
       )}
 
       {jobs.data && !jobs.data.scheduler_enabled && (
         <div className="banner banner-warn">
-          排程器沒有在這個行程裡執行（<code>JOBS_SCHEDULER_ENABLED=false</code>），
-          下面所有工作都只能手動執行。多開副本時只讓其中一個開排程是正常設定。
+          {t('jobs.schedulerOffBefore')}
+          <code>JOBS_SCHEDULER_ENABLED=false</code>
+          {t('jobs.schedulerOffAfter')}
         </div>
       )}
 
@@ -181,10 +203,7 @@ export default function AdminJobs() {
         ))}
       </div>
 
-      <p className="dim">
-        「略過」代表工作醒來後確認沒事可做 —— 它是排程還活著的心跳，不是失敗。
-        手動執行會記在紀錄裡，並寫下是誰按的。
-      </p>
+      <p className="dim">{t('jobs.footer')}</p>
     </div>
   )
 }

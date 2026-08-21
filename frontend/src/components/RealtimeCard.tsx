@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 
 import type { BestFourPointResult, RealtimeQuote } from '../api/types'
+import { translateBfpLabel, translateBfpReason, useI18n } from '../i18n'
 import { direction, fmtInt, fmtPrice, fmtSigned } from '../utils/format'
 
 interface Props {
@@ -43,11 +44,13 @@ export function BfpChip({
   result?: BestFourPointResult
   loading?: boolean
 }) {
+  const { t } = useI18n()
+
   if (loading && !result) {
     return (
       <div className="quote-bfp">
         <span className="dim" style={{ fontSize: 12 }}>
-          四大買賣點載入中…
+          {t('bfp.loading')}
         </span>
       </div>
     )
@@ -56,11 +59,13 @@ export function BfpChip({
 
   return (
     <div className="quote-bfp">
-      <div className={`signal signal-sm signal-${result.signal}`}>{result.label}</div>
+      <div className={`signal signal-sm signal-${result.signal}`}>
+        {translateBfpLabel(result.label, t)}
+      </div>
       {result.reasons.length > 0 && (
         <ul className="quote-bfp-reasons">
           {result.reasons.map((reason) => (
-            <li key={reason}>{reason}</li>
+            <li key={reason}>{translateBfpReason(reason, t)}</li>
           ))}
         </ul>
       )}
@@ -69,6 +74,7 @@ export function BfpChip({
 }
 
 export default function RealtimeCard({ quote, onRemove, bfp, bfpLoading }: Props) {
+  const { t } = useI18n()
   const dir = direction(quote.change)
 
   return (
@@ -77,7 +83,7 @@ export default function RealtimeCard({ quote, onRemove, bfp, bfpLoading }: Props
         <button
           type="button"
           className="btn-icon remove"
-          title="移除"
+          title={t('realtime.remove')}
           onClick={() => onRemove(quote.code)}
         >
           ×
@@ -105,40 +111,40 @@ export default function RealtimeCard({ quote, onRemove, bfp, bfpLoading }: Props
 
       <div className="stat-grid" style={{ marginTop: 14 }}>
         <div>
-          <div className="stat-label">開盤</div>
+          <div className="stat-label">{t('stat.open')}</div>
           <div className="stat-value">{fmtPrice(quote.open)}</div>
         </div>
         <div>
-          <div className="stat-label">最高</div>
+          <div className="stat-label">{t('stat.high')}</div>
           <div className="stat-value up">{fmtPrice(quote.high)}</div>
         </div>
         <div>
-          <div className="stat-label">最低</div>
+          <div className="stat-label">{t('stat.low')}</div>
           <div className="stat-value down">{fmtPrice(quote.low)}</div>
         </div>
         <div>
-          <div className="stat-label">昨收</div>
+          <div className="stat-label">{t('quote.prevClose')}</div>
           <div className="stat-value">{fmtPrice(quote.yesterday_close)}</div>
         </div>
         <div>
-          <div className="stat-label">總量(張)</div>
+          <div className="stat-label">{t('quote.totalVolume')}</div>
           <div className="stat-value">{fmtInt(quote.accumulate_trade_volume)}</div>
         </div>
         <div>
-          <div className="stat-label">單量(張)</div>
+          <div className="stat-label">{t('quote.tradeVolume')}</div>
           <div className="stat-value">{fmtInt(quote.trade_volume)}</div>
         </div>
       </div>
 
       <div className="depth">
         <Depth
-          title="委買 五檔"
+          title={t('quote.bidDepth')}
           prices={quote.best_bid_price}
           volumes={quote.best_bid_volume}
           className="up"
         />
         <Depth
-          title="委賣 五檔"
+          title={t('quote.askDepth')}
           prices={quote.best_ask_price}
           volumes={quote.best_ask_volume}
           className="down"
@@ -146,7 +152,7 @@ export default function RealtimeCard({ quote, onRemove, bfp, bfpLoading }: Props
       </div>
 
       <p className="dim" style={{ margin: '12px 0 0' }}>
-        報價時間 {quote.time}
+        {t('quote.quotedAt', { time: quote.time })}
       </p>
     </article>
   )

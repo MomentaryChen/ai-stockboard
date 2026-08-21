@@ -3,9 +3,11 @@ import { useQuery } from '@tanstack/react-query'
 
 import { api } from './api/client'
 import { useAuth } from './auth/AuthContext'
+import LanguageSwitcher from './components/LanguageSwitcher'
 import PasswordGate from './components/PasswordGate'
 import RequireAuth from './components/RequireAuth'
 import UserMenu from './components/UserMenu'
+import { useI18n } from './i18n'
 import AdminJobDetail from './pages/AdminJobDetail'
 import AdminJobs from './pages/AdminJobs'
 import AdminStockCodes from './pages/AdminStockCodes'
@@ -18,6 +20,7 @@ import StockDetail from './pages/StockDetail'
 import RealtimeBoard from './pages/RealtimeBoard'
 
 function HealthIndicator() {
+  const { t } = useI18n()
   const { data } = useQuery({
     queryKey: ['health'],
     queryFn: api.health,
@@ -30,7 +33,7 @@ function HealthIndicator() {
   return (
     <span className="row dim" title={`PostgreSQL: ${data.database}`}>
       <span className={`dot ${ok ? 'dot-ok' : 'dot-bad'}`} />
-      {ok ? 'DB 已連線' : 'DB 未連線'}
+      {ok ? t('health.connected') : t('health.disconnected')}
     </span>
   )
 }
@@ -38,35 +41,40 @@ function HealthIndicator() {
 export default function App() {
   const { pathname } = useLocation()
   const { status } = useAuth()
+  const { t } = useI18n()
 
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span>ai</span>-stockboard 台股看板
+          <span>ai</span>
+          {t('app.brandSuffix')}
         </div>
         <nav className="nav">
           <Link to="/" className={pathname === '/' ? 'active' : ''}>
-            大盤
+            {t('nav.market')}
           </Link>
           {/* Any /stock/:sid keeps the tab lit, not just the default 2330. */}
           <Link to="/stock/2330" className={pathname.startsWith('/stock') ? 'active' : ''}>
-            個股分析
+            {t('nav.stock')}
           </Link>
           <Link
             to="/realtime"
             className={pathname.startsWith('/realtime') ? 'active' : ''}
-            title={status === 'anonymous' ? '即時報價需要登入' : undefined}
+            title={status === 'anonymous' ? t('nav.realtimeLockedTitle') : undefined}
           >
-            即時報價
+            {t('nav.realtime')}
             {/* Says so before the click rather than after it. Only once the
                 session is known to be absent -- 'loading' would flash it. */}
-            {status === 'anonymous' && <span className="nav-lock">需登入</span>}
+            {status === 'anonymous' && (
+              <span className="nav-lock">{t('nav.realtimeLocked')}</span>
+            )}
           </Link>
         </nav>
         <div className="topbar-right">
           <HealthIndicator />
           <UserMenu />
+          <LanguageSwitcher />
         </div>
       </header>
 
@@ -122,7 +130,7 @@ export default function App() {
                 </RequireAuth>
               }
             />
-            <Route path="*" element={<div className="center-note">找不到這個頁面</div>} />
+            <Route path="*" element={<div className="center-note">{t('nav.notFound')}</div>} />
           </Routes>
         </PasswordGate>
       </main>
