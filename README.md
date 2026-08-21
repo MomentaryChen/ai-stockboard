@@ -1214,7 +1214,8 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `JWT_SECRET` | （未設，啟動時隨機產生） | access token 的簽章密鑰，見下方「帳號與權限」 |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` / `REFRESH_TOKEN_EXPIRE_DAYS` | `30` / `7` | 兩種 token 的有效期 |
 | `GEMINI_API_KEY` | （未設） | Blank switches AI analysis off: the endpoint answers 503 and the panel says so |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Part of every stored verdict's cache key, so changing it re-generates rather than mixing engines |
+| `GEMINI_MODEL` | `gemini-3.5-flash` | First-boot default only. After an admin picks a model at `/admin/ai`, the `system_setting` row wins across restarts. Part of every stored verdict's cache key |
+| `GEMINI_MODELS` | `gemini-3.5-flash,gemini-3.6-flash,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.5-pro` | Closed set the admin picker may choose from. Add or remove entries here and restart the API |
 | `GEMINI_TEMPERATURE` / `GEMINI_MAX_OUTPUT_TOKENS` / `GEMINI_TIMEOUT_SECONDS` | `0.2` / `2048` / `45` | Low temperature so the same bars give the same call twice |
 | `GEMINI_THINKING_BUDGET` | `0` | Thinking tokens are spent from `GEMINI_MAX_OUTPUT_TOKENS`, so an unbounded budget can consume it before the JSON starts and return an empty body. Raise both together to trade latency for depth |
 | `AI_THROTTLE_MAX_CALLS` / `AI_THROTTLE_WINDOW_SECONDS` | `5` / `60` | Process-wide limiter on Gemini. `THROTTLE_*` protects TWSE's rate limit; this protects a bill |

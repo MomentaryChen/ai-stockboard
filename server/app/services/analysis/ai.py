@@ -42,7 +42,7 @@ from app.schemas import (
     PriceFeatures,
 )
 from app.services.analysis import features as feature_service
-from app.services.analysis import gemini, traditional
+from app.services.analysis import gemini, model_settings, traditional
 
 logger = logging.getLogger(__name__)
 
@@ -110,12 +110,14 @@ def _row_to_verdict(row: AiAnalysis) -> AiVerdict:
     )
 
 
-def _find(db: Session, sid: str, as_of: datetime.date, locale: str) -> AiAnalysis | None:
+def _find(
+    db: Session, sid: str, as_of: datetime.date, locale: str, model: str
+) -> AiAnalysis | None:
     return db.execute(
         select(AiAnalysis).where(
             AiAnalysis.sid == sid,
             AiAnalysis.as_of == as_of,
-            AiAnalysis.model == settings.gemini_model,
+            AiAnalysis.model == model,
             AiAnalysis.prompt_version == gemini.PROMPT_VERSION,
             AiAnalysis.locale == locale,
         )
@@ -168,8 +170,14 @@ def get_or_create(
     stock = traditional.build_stock(rows)
     traditional_result = traditional.best_four_point(stock)
 
+    # Resolved once per call so the cache lookup, the provider request and the
+    # stored row all name the same engine. Re-reading the setting later in the
+    # function would let an admin flip mid-request and produce a row keyed
+    # under a model that never ran.
+    model = model_settings.active_model(db)
+
     if not force:
-        existing = _find(db, sid, extracted.as_of, locale)
+        existing = _find(db, sid, extracted.as_of, locale, model)
         if existing is not None:
             return _response(
                 sid=sid,
@@ -194,12 +202,13 @@ def get_or_create(
         features=extracted,
         traditional=traditional_result,
         locale=locale,
+        model=model,
     )
 
     row = AiAnalysis(
         sid=sid,
         as_of=extracted.as_of,
-        model=settings.gemini_model,
+        model=model,
         prompt_version=gemini.PROMPT_VERSION,
         locale=locale,
         action=generation.verdict.action,
@@ -229,7 +238,7 @@ def get_or_create(
             AiAnalysis.__table__.delete().where(
                 AiAnalysis.sid == sid,
                 AiAnalysis.as_of == extracted.as_of,
-                AiAnalysis.model == settings.gemini_model,
+                AiAnalysis.model == model,
                 AiAnalysis.prompt_version == gemini.PROMPT_VERSION,
                 AiAnalysis.locale == locale,
             )
@@ -243,7 +252,7 @@ def get_or_create(
         # loser keeps the winner's row rather than its own, so every reader of
         # this trading day sees one verdict.
         db.rollback()
-        existing = _find(db, sid, extracted.as_of, locale)
+        existing = _find(db, sid, extracted.as_of, locale, model)
         if existing is None:
             raise
         logger.info("ai verdict raced for sid=%s as_of=%s", sid, extracted.as_of)

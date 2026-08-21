@@ -225,10 +225,17 @@ def generate(
     features: PriceFeatures,
     traditional: BestFourPointResult,
     locale: str = "zh-TW",
+    model: str | None = None,
 ) -> Generation:
-    """Ask Gemini for a position call. Blocks; callers run in the threadpool."""
+    """Ask Gemini for a position call. Blocks; callers run in the threadpool.
+
+    `model` is the concrete id the caller already resolved (env default or the
+    admin override). Falling back to the env default keeps unit tests that call
+    this directly working without a database session.
+    """
     from google.genai import errors, types
 
+    model_name = model or _settings.gemini_model
     client = _client()
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_INSTRUCTION.format(
@@ -258,7 +265,7 @@ def generate(
         started = time.monotonic()
         try:
             response = client.models.generate_content(
-                model=_settings.gemini_model, contents=contents, config=config
+                model=model_name, contents=contents, config=config
             )
             body = response.text
             if not body:
