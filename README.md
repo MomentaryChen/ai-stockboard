@@ -341,6 +341,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/stocks/{sid}/dividends?years=5` | 除權息. `years` 上限 10; 5 without a token, `force=true` is **ADMIN**, same reason |
 | GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點. Backfills like `/history`, so the same `months` cap applies |
 | GET | `/api/analysis/traditional?sids=2330,0050` | Batch 四大買賣點 from cached daily bars only (no TWSE fetch, max 20) |
+| GET | `/api/analysis/backtest?sids=2330,0050&months=12` | Replays 四大買賣點 over cached bars and scores it against the base rate of the same days — see [how good is the signal](#how-good-is-the-signal-actually). Cache-only, max 20 |
 | GET | `/api/realtime?sids=2330,0050` | 即時報價，最多 20 檔（**需登入**） |
 | GET | `/api/market/open?date=&sids=` | Opening intel for one trading day: gap and drift for the index plus up to 20 watchlist codes. Defaults to today in Taipei; cache-only apart from the index's own backfill |
 | GET | `/api/auth/registration-policy` | Whether signing up needs an ADMIN's approval. Public, read before the form renders |
@@ -436,6 +437,65 @@ twstock 版在兩萬組裡**沒有一次回傳 Don't touch**，而且與 grs 版
 
 有一個差異刻意保留：grs 的均線四捨五入到小數 6 位，twstock 是 2 位。只在極接近的平手情況下才有差別，
 要對齊得連 `Analytics` 一起 fork，不值得。
+
+---
+
+## How good is the signal, actually?
+
+四大買賣點 reads three columns — volume, open, close — and compares the two most
+recent bars. There is no trend term, no position sizing, no institutional flow.
+That is a narrow view of a market by construction, so before the signal is used
+as a benchmark for anything else, it needs a number rather than a reputation.
+
+`GET /api/analysis/backtest` produces one. It replays the exact function the
+stock page calls (`traditional.best_four_point`) over the bars already in
+`daily_price`, and reports what happened over the next 5 / 10 / 20 trading days.
+
+**The base rate is the point.** A hit rate on its own is unreadable: the reader
+has to supply a reference, and the one they supply is 50 %. It is almost never
+50 %. In a window where 58 % of all days closed higher 20 bars later, a Buy rule
+that is right 55 % of the time lost to owning the stock and ignoring the board.
+So every response carries `baseline` — the same horizons measured over *every*
+judged day, signal or not — beside the signal's own rates, and `edges` does the
+subtraction:
+
+```
+edges[].buy_edge   = buy win rate  - baseline up rate
+edges[].sell_edge  = sell win rate - baseline down rate   # not up rate
+```
+
+The sell side is spelled out because it is the step that gets quietly wrong: a
+Sell is a get-out, so it competes with the days that *fell*, and its excess
+return is the drop it avoided (baseline minus signal, the other way round).
+
+**Pool before you conclude.** One stock's year fires a handful of signals, and a
+rate off a handful moves twenty points on a single trade. Passing several codes
+returns `pooled`, which sums wins and samples across the basket — sums, never an
+average of per-stock rates, so a stock with forty signals does not get the same
+vote as one with two. `pooled[].buy_edge` over a watchlist is the number that
+actually answers whether the rule beats doing nothing.
+
+Three things keep the replay honest, each pinned by a test in
+`server/tests/test_backtest.py` because a wrong backtest still returns tidy
+percentages and nothing downstream can tell:
+
+- **No look-ahead.** A verdict is computed from bar `i`'s close, so it cannot be
+  traded until bar `i+1` opens. Every simulated order fills at the next open.
+- **Unfinished business stays unfinished.** A Buy four days before the window
+  ends has no 20-day outcome; it is counted as `pending` and kept out of the
+  rate rather than scored as though the horizon had elapsed. A position still
+  open at the end is reported separately from completed trades.
+- **The same engine.** Signals come from the function the card on the page
+  calls. A backtest of a reimplementation measures the reimplementation.
+
+A stock with too little history is listed with a `note` instead of being
+dropped, and contributes nothing to `pooled` — otherwise a pooled rate drawn
+from eleven stocks would present itself as covering the twenty that were asked
+for.
+
+The route is cache-only, like the traditional batch: twenty cold codes would
+otherwise queue tens of month-fetches on the limiter the realtime poll shares.
+Open a stock's page first to fill its bars.
 
 ---
 
