@@ -62,6 +62,23 @@ class Settings(BaseSettings):
     stock_code_sync_enabled: bool = True
     stock_code_sync_interval_hours: int = 24
 
+    # --- Logging ---
+    log_level: str = "INFO"
+    # text | json. JSON is one object per line for a log shipper; text is what
+    # you want when the log is being read by a person in `docker compose logs`.
+    log_format: str = "text"
+
+    # --- Health / backup reporting ---
+    # Path *inside this process* to the directory the db-backup container
+    # writes dumps into. Distinct from the compose-side BACKUP_DIR, which is a
+    # host path and means nothing in here. Unset -> /api/health reports the
+    # backup as "unchecked" rather than missing, which is right for a server
+    # run outside Docker.
+    backup_status_dir: str = ""
+    # A daily dump older than this is a fault worth reporting. 36h rather than
+    # 24h so one late run, or the hour the clock changes, is not an alert.
+    backup_max_age_hours: int = 36
+
     # --- Auth / JWT ---
     # JWT_SECRET deliberately has no usable default: when it is blank,
     # app/security.py generates an ephemeral per-process secret and logs a

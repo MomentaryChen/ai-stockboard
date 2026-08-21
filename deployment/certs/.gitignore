@@ -1,0 +1,6 @@
+# A private key must never reach the repository. Whitelist the explanation and
+# ignore the rest of the directory -- including anything a future certbot run
+# or a stray `openssl` invocation drops in here.
+*
+!.gitignore
+!README.md

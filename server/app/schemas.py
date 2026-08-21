@@ -343,13 +343,45 @@ class MarketOpenResponse(BaseModel):
     errors: dict[str, str]
 
 
+class JobHealth(BaseModel):
+    """Which background jobs are currently in a failed state."""
+
+    # Judged on each job's most recent attempt only: a failure that the retry
+    # already fixed is history, not a fault.
+    failing: list[str] = []
+    last_failure_at: datetime.datetime | None = None
+
+
+class BackupHealth(BaseModel):
+    """Age of the newest database dump on disk.
+
+    "unchecked" is not a fault: it means BACKUP_STATUS_DIR is unset, which is
+    the normal state for a server running outside Docker.
+    """
+
+    status: Literal["ok", "stale", "missing", "unchecked"]
+    taken_at: datetime.datetime | None = None
+    age_hours: float | None = None
+
+
 class HealthResponse(BaseModel):
+    # The rollup an uptime monitor should watch. "degraded" covers an
+    # unreachable database *and* the quieter faults below -- a failing nightly
+    # job or a backup that stopped happening are exactly the things nobody
+    # notices for a fortnight, so they have to move this field.
     status: Literal["ok", "degraded"]
     database: str
     stock_codes_loaded: int
     # None until `stock_code` has been reconciled with the exchanges at least
     # once -- i.e. the listing on offer is still twstock's bundled snapshot.
     stock_codes_synced_at: datetime.datetime | None = None
+
+    jobs: JobHealth = JobHealth()
+    backup: BackupHealth = BackupHealth(status="unchecked")
+    # One human-readable line per reason `status` is not "ok"; empty when it
+    # is. A monitor that can only match on text has something to match on, and
+    # whoever reads the alert has the reason in the alert body.
+    alerts: list[str] = []
 
 
 class CodeSyncResponse(BaseModel):

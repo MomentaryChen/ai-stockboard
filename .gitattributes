@@ -3,3 +3,8 @@
 # with core.autocrlf=true -- /bin/sh reads a CRLF script as commands that end in
 # a stray \r and fails with "not found" on the first line.
 *.sh text eol=lf
+
+# nginx reads these inside the container. Same reason as above: a CRLF that
+# arrived from a Windows checkout ends up inside directive values, and the
+# failure ("unknown directive") points at the wrong thing entirely.
+*.conf text eol=lf
