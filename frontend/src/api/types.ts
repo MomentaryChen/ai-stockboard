@@ -250,6 +250,135 @@ export interface AiQuotaStatus {
   resets_at: string
 }
 
+
+// --- Hold analysis (存股) ------------------------------------------------------
+//
+// The two engines above ask what to do with a position over days. This one asks
+// whether the company is worth accumulating and holding for its dividend over
+// years, so it shares no vocabulary with them: no action, no size, and a
+// scorecard that cannot be compared to a 5/10/20-day hit rate.
+
+export interface HoldDividendFeatures {
+  coverage: 'history' | 'recent' | 'none'
+  window_years: number
+  /** Calendar years the archive was actually pulled for -- not the same as
+   *  `coverage`, which says what the exchange publishes. A streak that runs
+   *  back to the oldest observed year is a floor, not a record. */
+  years_observed: number
+  years_with_cash: number
+  /** Counted back from the last judged year; see the server's hold_features. */
+  consecutive_years_with_cash: number
+  ttm_cash: number | null
+  cash_yield_pct: number | null
+  avg_cash_per_year: number | null
+  avg_yield_pct: number | null
+  latest_ex_date: string | null
+  years_with_stock_dividend: number
+}
+
+export interface HoldLiquidityFeatures {
+  trading_days: number
+  avg_daily_shares: number | null
+  avg_daily_turnover: number | null
+  no_trade_days: number
+}
+
+export interface HoldFundamentalsFeatures {
+  /** Zero until the fundamentals ingest lands, which is why the card has to
+   *  render an unscored state rather than assuming these are present. */
+  years_available: number
+  eps_years_checked: number
+  eps_positive_years: number | null
+  latest_eps: number | null
+  latest_eps_year: number | null
+  avg_eps: number | null
+  avg_roe_pct: number | null
+  roe_stdev_pct: number | null
+  roe_years_checked: number
+  trailing_pe: number | null
+}
+
+export interface HoldPriceFeatures {
+  latest_close: number | null
+  window_high: number | null
+  window_low: number | null
+  position_pct: number | null
+  drawdown_from_high_pct: number | null
+  return_1y_pct: number | null
+}
+
+export interface HoldFeatures {
+  sid: string
+  name: string
+  as_of: string | null
+  industry: string
+  dividend: HoldDividendFeatures
+  liquidity: HoldLiquidityFeatures
+  fundamentals: HoldFundamentalsFeatures
+  price: HoldPriceFeatures
+}
+
+export type ChenDimensionKey = 'earn' | 'efficient' | 'cheap' | 'collect' | 'liquid'
+/** `unknown` shrinks the denominator; it is not a failure. */
+export type ChenStatus = 'pass' | 'fail' | 'unknown'
+export type HoldSuitability = 'strong' | 'ok' | 'weak' | 'avoid'
+
+export interface ChenDimension {
+  key: ChenDimensionKey
+  status: ChenStatus
+  weight: number
+  /** English, for a prompt and a log. The card renders `metrics` through its
+   *  own catalogue instead, so both locales get a sentence they can read. */
+  evidence: string
+  metrics: Record<string, number>
+}
+
+export interface ChenRuleResult {
+  /** Null when nothing could be scored -- distinct from a score of 0, which
+   *  would say the company failed everything rather than that we checked
+   *  nothing. */
+  score: number | null
+  suitability: HoldSuitability | null
+  dimensions: ChenDimension[]
+  known_weight: number
+  total_weight: number
+  /** Stable identifiers, rendered from the catalogue. */
+  coverage_gaps: string[]
+}
+
+export interface ChenAnalysisResponse {
+  sid: string
+  name: string
+  as_of: string | null
+  features: HoldFeatures
+  rules: ChenRuleResult
+}
+
+export interface AiHoldVerdict {
+  suitability: HoldSuitability
+  confidence: 'high' | 'medium' | 'low'
+  headline: string
+  reasons: string[]
+  risks: string[]
+  /** Null when the checklist reached no verdict to agree with. */
+  agrees_with_rules: boolean | null
+}
+
+export interface AiHoldAnalysisResponse {
+  sid: string
+  name: string
+  as_of: string
+  generated_at: string
+  model: string
+  prompt_version: string
+  locale: string
+  /** False only when this call actually spent a Gemini request. */
+  cached: boolean
+  verdict: AiHoldVerdict
+  features: HoldFeatures
+  rules: ChenRuleResult
+}
+
 /** How a signal type scored over one forward horizon.
  *
  *  `samples` counts only signals whose horizon has fully elapsed; `pending` is

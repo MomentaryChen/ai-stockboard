@@ -427,3 +427,113 @@ def get_dividends(
         ).scalars()
     )
     return events, coverage, _latest_close(db, sid)
+
+
+def observed_years(db: Session, years: list[int]) -> set[int]:
+    """Calendar years the TWSE archive has actually been pulled for.
+
+    The difference between this and `coverage` is the whole point. `coverage`
+    says what the *exchange* publishes -- TWSE has a yearly archive, so it is
+    "history" for every listed name. This says what *we* fetched, which on a
+    fresh database is whatever the dividend card asked for and nothing more.
+
+    Without it a company whose table holds four years reads as a company with a
+    four-year payout record, and a continuity rule fails it for a gap that is
+    ours rather than theirs.
+
+    A bucket stamped with zero rows does not count: a board-wide yearly report
+    always returns thousands, so an empty one is a failed fetch that
+    `_is_stale` will retry, not a year in which nobody paid.
+    """
+    logged = {
+        log.bucket
+        for log in db.execute(
+            select(DividendFetchLog).where(
+                DividendFetchLog.source == "twse", DividendFetchLog.row_count > 0
+            )
+        ).scalars()
+    }
+    return {year for year in years if str(year) in logged}
+
+
+def read_events(
+    db: Session, sid: str, years: int
+) -> tuple[list[DividendEvent], str, set[int]]:
+    """Stored ex-dividend events for one sid. Never fetches.
+
+    The cache-only sibling of `get_dividends`, for callers that need a decade
+    of payout history but must not spend a decade of yearly TWSE reports to
+    get it -- the 存股 checklist backs a card on a page anyone can open, and
+    one anonymous visitor to a cold stock would otherwise queue eleven
+    board-wide reports on the limiter the realtime poll shares.
+
+    What fills the table instead: the `dividend_board_warmup` job, and the
+    dividend card on the same page, which asks for the years an anonymous
+    caller is allowed to spend.
+
+    Returns the years actually pulled alongside the events, because `coverage`
+    alone cannot tell a caller how far back this table really reaches -- see
+    `observed_years`.
+    """
+    if market_index.is_index(sid):
+        return [], "none", set()
+
+    info = codes_service.get_stock(sid)
+    source = info.data_source if info is not None else "twse"
+    coverage = "recent" if source == "tpex" else "history"
+
+    years_list = year_range(years)
+    start = datetime.date(years_list[0], 1, 1)
+    events = list(
+        db.execute(
+            select(DividendEvent)
+            .where(DividendEvent.sid == sid, DividendEvent.ex_date >= start)
+            .order_by(DividendEvent.ex_date.desc())
+        ).scalars()
+    )
+    # TPEX has no yearly archive to have pulled, so it observes nothing: its
+    # rows accumulate from a rolling window whose depth nobody can state.
+    pulled = observed_years(db, years_list) if source != "tpex" else set()
+    return events, coverage, pulled
+
+
+def warm_board(db: Session, years: int, force: bool = False) -> dict[str, int]:
+    """Pull every dividend bucket the board needs, without being asked for a sid.
+
+    `get_dividends` fills the table lazily, one stock page at a time, and that
+    is enough while dividends are a display card. It stops being enough once a
+    yield and a payout streak decide a 存股 score: the first visitor to a cold
+    name would wait out up to eleven yearly TWSE reports on the shared limiter,
+    and a board-level screen would queue that for every row at once.
+
+    The buckets are the same ones the lazy path writes, so this job and a stock
+    page cannot disagree -- it only moves the cost to a quiet hour. `fetched`
+    counts buckets that actually went upstream; the rest were already stamped
+    fresh, which on a weekday afternoon is the expected answer.
+    """
+    before = {
+        (log.source, log.bucket)
+        for log in db.execute(select(DividendFetchLog)).scalars()
+    }
+
+    _ensure_twse(db, year_range(years), force=force)
+    _ensure_tpex(db, force=force)
+
+    logs = list(db.execute(select(DividendFetchLog)).scalars())
+    now = datetime.datetime.now(datetime.timezone.utc)
+    # A bucket counts as fetched by this run if it is new, or if its stamp is
+    # younger than this call. Reading the log rather than counting inside the
+    # ensure helpers keeps those two on the one code path the stock page uses.
+    fetched = 0
+    for log in logs:
+        fetched_at = log.fetched_at
+        if fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=datetime.timezone.utc)
+        if (log.source, log.bucket) not in before or (now - fetched_at).total_seconds() < 60:
+            fetched += 1
+
+    return {
+        "buckets": len(logs),
+        "fetched": fetched,
+        "events": sum(log.row_count for log in logs),
+    }

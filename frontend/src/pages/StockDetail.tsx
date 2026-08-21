@@ -7,8 +7,10 @@ import type { RuleSet } from '../api/types'
 import AiVerdictSection from '../components/AiVerdict'
 import BacktestCard from '../components/BacktestCard'
 import BestFourPointCard from '../components/BestFourPointCard'
+import ChenHoldCard from '../components/ChenHoldCard'
 import ChipCard from '../components/ChipCard'
 import DividendCard from '../components/DividendCard'
+import HoldAiVerdict from '../components/HoldAiVerdict'
 import MaPanel from '../components/MaPanel'
 import PriceChart, { buildChartRows } from '../components/PriceChart'
 import SignInPrompt from '../components/SignInPrompt'
@@ -68,6 +70,21 @@ export default function StockDetail() {
     // Dates come from daily_price; without bars there is no trading calendar
     // to attach T86 to, so wait for history rather than returning empty.
     enabled: (history.data?.count ?? 0) > 0,
+  })
+
+  // Free, and independent of the `months` selector above: the hold snapshot
+  // reads a fixed multi-year window, because "is this cheap" over a decade
+  // must not change when somebody switches the chart to one month.
+  //
+  // Waits for the two queries whose caches it reads. The endpoint is
+  // cache-only -- it never calls the exchange, which is what makes it public --
+  // so running it first on a cold stock would score a company off no bars and
+  // no dividends, then leave that on screen. Those two requests are what fill
+  // the stores, and they are already on their way.
+  const hold = useQuery({
+    queryKey: ['chen', sid],
+    queryFn: () => api.getChenAnalysis(sid),
+    enabled: history.isSuccess && dividends.isSuccess,
   })
 
   const rows = useMemo(
@@ -329,6 +346,18 @@ export default function StockDetail() {
 
           <div className="section-label">{t('section.ai')}</div>
           <AiVerdictSection sid={sid} layout="card" />
+
+          {/* A different question about the same stock, kept in its own
+              section rather than mixed into the two above: those grade a
+              position over days, this one grades a company over years, and one
+              blended verdict across both horizons would mean nothing. */}
+          {hold.data && (
+            <>
+              <div className="section-label">{t('section.hold')}</div>
+              <ChenHoldCard features={hold.data.features} rules={hold.data.rules} />
+              <HoldAiVerdict sid={sid} />
+            </>
+          )}
 
           {chips.data && chips.data.coverage !== 'none' && (
             <>

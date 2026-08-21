@@ -560,7 +560,9 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | POST | `/api/jobs/{job_id}/run` | Run now; answers 202 and continues server-side (**ADMIN**) |
 | POST | `/api/stocks/sync?force=true` | Sync the listing and wait for it; superseded by the above (**ADMIN**) |
 | POST | `/api/stocks/{sid}/analysis/ai` | AI position call: enter / exit / hold, and at what size (**需登入**) |
-| GET | `/api/analysis/ai/quota` | Generations left on this account today (**需登入**) |
+| GET | `/api/stocks/{sid}/analysis/chen` | 存股 checklist: five dimensions, a score over what could be checked, and what could not. Cache-only, so it is public and never calls the exchange — see [hold analysis](#hold-analysis-存股) |
+| POST | `/api/stocks/{sid}/analysis/ai-hold` | AI hold assessment: is this a company to accumulate and hold (**需登入**). Spends from the same daily allowance as `/analysis/ai` |
+| GET | `/api/analysis/ai/quota` | Generations left on this account today, counted across **both** AI lanes (**需登入**) |
 
 `{sid}` 可以是個股代碼，也可以是大盤 `t00`。
 
@@ -582,6 +584,9 @@ curl 'http://localhost:8000/api/realtime?sids=2330,6488' -H "Authorization: Bear
 # 當日開盤情報 -- today by default, any past trading day with ?date=
 curl 'http://localhost:8000/api/market/open?sids=2330,0050'
 curl 'http://localhost:8000/api/market/open?date=2026-08-20&sids=2330,0050'
+
+# A different question entirely: is this worth holding for the dividend?
+curl 'http://localhost:8000/api/stocks/2880/analysis/chen'
 ```
 
 ---
@@ -1077,7 +1082,11 @@ server/app/services/analysis/
 ├── backtest.py        把 traditional 的訊號在歷史上重跑一遍，算命中率與績效
 ├── features.py        純函式：從日線算出 AI 要看的衍生指標
 ├── gemini.py          唯一知道 provider 存在的模組：提示詞、結構化輸出、限流
-└── ai.py              編排：什麼時候該花一次 Gemini 請求，什麼時候不該
+├── ai.py              編排：什麼時候該花一次 Gemini 請求，什麼時候不該
+├── hold_features.py   純函式：從配息、日線與年度財報算出存股要看的衍生指標
+├── chen_rules.py      規則式：陳重銘存股檢查表，五個面向加權計分
+├── hold_gemini.py     存股專用提示詞與結構化輸出（沿用同一個 client 與限流）
+└── hold_ai.py         編排：與技術面共用同一份每日額度
 ```
 
 三者吃同一份 `daily_price` 資料，各自獨立產生結果，端點也分開，
@@ -1174,6 +1183,137 @@ different engines together and report the difference as a change in the market.
 `GEMINI_API_KEY` blank switches the feature off cleanly: the endpoint answers
 503 and the panel says so rather than offering a button that always fails. Get a
 key from <https://aistudio.google.com/apikey>.
+
+## Hold analysis (存股)
+
+Everything above asks the same kind of question: given these bars, what should
+happen to a position over the next few days. This section asks a different one
+-- **is this a company worth accumulating and holding for its dividend over
+years** -- and it is kept in its own lane, with its own endpoints, its own
+vocabulary and its own scorecard, for a reason worth being explicit about.
+
+A holding strategy graded on a 5/10/20-day hit rate would lose to a short
+signal every time, and would deserve to: it is not trying to be right about
+next week. Comparing methods honestly means **two gradesheets, not one blended
+score**. So the stock page shows four engines in three sections, and the hold
+section is scored on payout continuity and coverage rather than on hit rate.
+
+| Lane | Question | Verdict |
+|---|---|---|
+| 四大買賣點 | Is there a short-horizon volume/price signal today? | buy / sell / hold |
+| AI position call | Get in, get out, or leave it alone -- at what size? | enter / exit / hold + 大/中/小 |
+| 存股 checklist | Does this company pass a long-horizon holding method? | score + strong / ok / weak / avoid |
+| AI hold assessment | Same question, judged rather than counted | strong / ok / weak / avoid |
+
+### The checklist
+
+The method encoded is the public **陳重銘存股術** framing -- pick a good
+company, buy it when it is cheap, hold it, reinvest the dividends -- turned
+into five weighted questions in `services/analysis/chen_rules.py`:
+
+| Dimension | Asks | Reads |
+|---|---|---|
+| Earn (年年賺錢) | Has it earned in essentially every year? | `fundamentals_annual.eps` |
+| Efficient (資本效率) | Is the return on equity good *and* steady? | `fundamentals_annual.roe` |
+| Cheap (買得便宜) | Is the trailing PE inside its sector's band? | EPS + `daily_price` |
+| Collect (穩定配息) | Does it pay, without gaps, at a yield worth having? | `dividend_event` |
+| Liquid (買得到) | Can a position be built a little at a time? | `daily_price` |
+
+The thresholds are named constants at the top of that module, not literals
+inside an `if`. Retuning them is the point of having a deterministic lane at
+all: it is the half of the comparison that can be changed and re-measured
+without touching a prompt.
+
+### `unknown` is not `fail`
+
+This is the part that shapes everything else. There is no fundamentals ingest
+yet -- `fundamentals_annual` ships empty and a provider has not been chosen --
+so for most stocks today, Earn, Efficient and Cheap have no data at all.
+
+Scoring those as failures would report the entire board as unsuitable, and
+would then make every score "improve" the day the ingest lands, for reasons
+having nothing to do with the companies. Instead an unknown dimension leaves
+**both** sides of the fraction: the score is out of the weight that could
+actually be checked, `known_weight` says how much that was, and
+`coverage_gaps` names what was skipped. A name judged on two of five
+dimensions cannot be labelled `strong`, however well it did on those two.
+
+The card draws unknown as a hollow ring rather than a red cross, for the same
+reason.
+
+### Why the endpoint is cache-only
+
+`/analysis/chen` reads a fixed two-year price window and eleven years of
+dividend history -- far more upstream work than any other single-stock route --
+and it backs a card on a page anyone can open. Fetched lazily, one anonymous
+visitor to a cold stock would queue tens of exchange calls on the limiter the
+realtime poll shares.
+
+So it never calls the exchange, which is also what makes it public: there is no
+upstream budget for an anonymous window to protect. Capping it with one would
+have been worse than useless, since the window it reads is wider than
+`ANONYMOUS_MAX_MONTHS` and every signed-out reader would simply have been
+refused.
+
+What fills the stores instead is the **`dividend_board_warmup`** job: TWSE
+publishes ex-dividend history as one report per calendar year covering every
+listed name, so warming a decade is a handful of calls at 21:10 rather than
+eleven per stock on first view. The stock page's own history and dividend
+requests fill the rest, and the client waits for them before asking for the
+checklist.
+
+TPEx has no equivalent yearly archive -- only a current window and an
+announcement calendar -- so OTC coverage is `recent`, an empty payout record
+there is reported as `unknown` rather than as a company that pays nothing, and
+the card says so.
+
+**Until that job has run, Collect reports `unknown` too.** `coverage` says what
+the exchange publishes; it does not say what we pulled, and on a fresh database
+that is the five years the dividend card asked for. A company paying in every
+one of them has a five-year streak that is a floor, not a record -- so a streak
+running back to the oldest year in `dividend_fetch_log` is never scored as a
+failure to be continuous. Failing it there would be failing the company for our
+gap rather than its own, which is the same mistake `unknown` exists to prevent
+on the fundamentals side. The card names the job to run.
+
+### The AI half
+
+`/analysis/ai-hold` is the same shape as `/analysis/ai`: POST, signed in, a
+shared cache keyed on (sid, trading day, model, prompt version, locale). It
+shares the Gemini client and the process-wide limiter, and it shares the
+**daily allowance** -- `/api/analysis/ai/quota` counts rows from both tables,
+because the budget being defended is one bill, and two counters would have
+meant that shipping this lane silently doubled what every existing account
+could spend.
+
+It shares nothing else. Its own `PROMPT_VERSION` (`hold-v1`, prefixed so the
+two can never collide in an evaluation reading both), its own table
+(`ai_hold_analysis`), and no `enter`/`exit`/`size` anywhere -- position sizing
+has no meaning over a ten-year hold.
+
+The failure mode it guards is not the technical lane's. There, the risk is a
+model that always finds a trade. Here it is a model that supplies the
+fundamentals it was not given: it has read about these companies, and
+"profitable for a decade" is a sentence it can produce with nothing behind it.
+So the checklist's `coverage_gaps` are handed over explicitly rather than left
+implied by absent fields, the rubric caps confidence when they are non-empty,
+and `server/tests/test_hold_ai.py` asserts those sentences are still in the
+prompt.
+
+### What is not here yet
+
+- **Annual EPS and ROE.** The tables, the read path and the upsert seam exist;
+  no provider is wired. Until one is, three of five dimensions stay `unknown`
+  and the card says so.
+- **A hold backtest.** The 平測 this lane was built for needs total return
+  including dividends over a multi-year window, not the hit rate the short
+  scorecard uses. Until it lands, the hold section is a checklist and a
+  narrative, and the honest comparison against 四大買賣點 is qualitative.
+- **The qualitative half of the method.** 護城河 and 能傳 need judgement rather
+  than arithmetic. They are left to the narrative model; a pass/fail for them
+  would be an invented number wearing a checklist's authority.
+
+---
 
 ## vendor/twstock
 

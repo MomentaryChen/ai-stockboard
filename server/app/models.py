@@ -27,6 +27,13 @@ came from, so a second stock for the same date is a cache hit.
 `app_user`, `refresh_token`, `watchlist_item` and `watchlist_group` carry the
 account system: who may sign in, which refresh tokens are still live, what each
 user watches, and the named folders they sort that list into.
+
+`fundamentals_annual` is one company-year of EPS and ROE, with
+`fundamentals_fetch_log` stamping the pulls that filled it; together with
+`dividend_event` they are what the 存股 lane scores a company on.
+`ai_hold_analysis` is that lane's verdict cache -- the same shape as
+`ai_analysis` and a separate table, because suitability-over-years and
+action-at-a-size share no columns worth merging.
 """
 
 import datetime
@@ -709,5 +716,137 @@ class AiAnalysis(Base):
         # enter/exit without one would leave the card unable to render 大/中/小.
         CheckConstraint(
             "(action = 'hold') = (size is null)", name="ck_ai_analysis_size_matches_action"
+        ),
+    )
+
+
+class FundamentalsAnnual(Base):
+    """One company-year of the numbers a 存股 checklist is built from.
+
+    Annual rather than quarterly on purpose. The questions this feeds -- has it
+    earned every year, is the return on equity respectable, is the price cheap
+    against what it earns -- are asked over a decade, and a quarterly series
+    would quadruple the rows to answer them with a seasonally noisier number.
+
+    Every column except the key is nullable because the providers disagree
+    about what they publish: EPS is universal, ROE often is not, and net income
+    and equity are here so a suspicious ROE can be audited rather than trusted.
+    Missing means the dimension it feeds reports `unknown`, which is a distinct
+    answer from `fail` all the way to the card.
+    """
+
+    __tablename__ = "fundamentals_annual"
+
+    sid: Mapped[str] = mapped_column(String(16), primary_key=True)
+    year: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+
+    eps: Mapped[float | None] = mapped_column(Numeric(16, 4))
+    roe: Mapped[float | None] = mapped_column(Numeric(10, 4))  # percent
+    net_income: Mapped[float | None] = mapped_column(Numeric(20, 2))
+    equity: Mapped[float | None] = mapped_column(Numeric(20, 2))
+
+    source: Mapped[str] = mapped_column(String(16), default="manual")
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class FundamentalsFetchLog(Base):
+    """Cache stamp for one fundamentals pull, shaped like `dividend_fetch_log`.
+
+    `bucket` is whatever the provider's unit of work is -- a calendar year for
+    a board-wide annual report, a sid for a per-company one -- so the same
+    table serves both without the ingest having to be chosen up front.
+    """
+
+    __tablename__ = "fundamentals_fetch_log"
+
+    source: Mapped[str] = mapped_column(String(16), primary_key=True)
+    bucket: Mapped[str] = mapped_column(String(16), primary_key=True)
+
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    fetched_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AiHoldAnalysis(Base):
+    """One generated 存股 verdict: is this worth accumulating and holding.
+
+    Deliberately not a row in `ai_analysis`. That table answers enter/exit/hold
+    at a size, over days; this one answers suitability over years. The only
+    columns they could share are the cache key and the cost fields, and folding
+    them together would make every verdict column nullable and every reader
+    responsible for knowing which half of the row applies to it.
+
+    The key is the same shape for the same reason -- (sid, trading day, model,
+    prompt version, locale) identifies a verdict completely, so the second
+    reader of one pays nothing -- and `prompt_version` carries its own `hold-`
+    prefix so the two lanes can never collide in an evaluation that reads both.
+
+    `rule_score` / `rule_suitability` record what the deterministic checklist
+    said about the same snapshot. Storing them is what makes "does the model
+    agree with the rules, and when it does not, who was right" answerable later
+    without re-deriving rules as they stood on the day.
+    """
+
+    __tablename__ = "ai_hold_analysis"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    sid: Mapped[str] = mapped_column(String(16))
+    as_of: Mapped[datetime.date] = mapped_column(Date)
+
+    model: Mapped[str] = mapped_column(String(64))
+    prompt_version: Mapped[str] = mapped_column(String(16))
+    locale: Mapped[str] = mapped_column(String(8))
+
+    suitability: Mapped[str] = mapped_column(String(8))  # strong / ok / weak / avoid
+    confidence: Mapped[str] = mapped_column(String(8))  # high / medium / low
+    headline: Mapped[str] = mapped_column(String(500))
+    reasons: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    risks: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    agrees_with_rules: Mapped[bool | None] = mapped_column(Boolean)
+
+    rule_score: Mapped[int | None] = mapped_column(Integer)
+    rule_suitability: Mapped[str | None] = mapped_column(String(8))
+
+    features: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+
+    requested_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index(
+            "ux_ai_hold_analysis_subject",
+            "sid",
+            "as_of",
+            "model",
+            "prompt_version",
+            "locale",
+            unique=True,
+        ),
+        # The shared daily quota counts this account's rows in both AI tables.
+        Index("ix_ai_hold_analysis_requested_by_created", "requested_by", "created_at"),
+        CheckConstraint(
+            "suitability in ('strong', 'ok', 'weak', 'avoid')",
+            name="ck_ai_hold_analysis_suitability",
+        ),
+        CheckConstraint(
+            "confidence in ('high', 'medium', 'low')",
+            name="ck_ai_hold_analysis_confidence",
+        ),
+        CheckConstraint(
+            "rule_suitability is null or rule_suitability in "
+            "('strong', 'ok', 'weak', 'avoid')",
+            name="ck_ai_hold_analysis_rule_suitability",
         ),
     )

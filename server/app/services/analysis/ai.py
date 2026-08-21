@@ -13,7 +13,9 @@ Three gates, in order:
    sit on every watchlist card without the cost scaling with the board.
 2. **The per-account daily quota**, counted from rows this account actually paid
    for. Cache hits are free and are not counted -- otherwise a user would be
-   charged for reading someone else's answer.
+   charged for reading someone else's answer. One allowance covers every AI
+   lane: `quota_status` counts `ai_hold_analysis` alongside this table, because
+   the budget belongs to the deployment's bill rather than to a prompt.
 3. **The process-wide rate limiter** in `gemini.py`, which is the last line and
    protects the deployment's quota rather than any one account's.
 
@@ -33,7 +35,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import AiAnalysis, AppUser, DailyPrice
+from app.models import AiAnalysis, AiHoldAnalysis, AppUser, DailyPrice
 from app.schemas import (
     AiAnalysisResponse,
     AiQuotaStatus,
@@ -90,12 +92,25 @@ def daily_quota(user: AppUser) -> int:
 
 
 def quota_status(db: Session, user: AppUser) -> AiQuotaStatus:
+    """One allowance across every AI lane, not one per lane.
+
+    Rows are counted from both `ai_analysis` and `ai_hold_analysis` because the
+    budget being defended is the deployment's Gemini bill, which does not care
+    which prompt produced the request. Counting them separately would mean that
+    adding a second lane silently doubled what every existing account could
+    spend, without anyone deciding to raise the limit.
+
+    Cache hits are still free in both: only rows an account actually paid for
+    carry its id.
+    """
     start, end = _day_bounds()
-    used = db.execute(
-        select(func.count())
-        .select_from(AiAnalysis)
-        .where(AiAnalysis.requested_by == user.id, AiAnalysis.created_at >= start)
-    ).scalar_one()
+    used = 0
+    for table in (AiAnalysis, AiHoldAnalysis):
+        used += db.execute(
+            select(func.count())
+            .select_from(table)
+            .where(table.requested_by == user.id, table.created_at >= start)
+        ).scalar_one()
     return AiQuotaStatus(used=used, limit=daily_quota(user), resets_at=end)
 
 

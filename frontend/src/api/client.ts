@@ -1,8 +1,10 @@
 import { tokenStore } from './tokenStore'
 import type {
   AiAnalysisResponse,
+  AiHoldAnalysisResponse,
   AiQuotaStatus,
   BacktestBatchResponse,
+  ChenAnalysisResponse,
   BacktestResponse,
   Job,
   JobListResponse,
@@ -449,9 +451,29 @@ export const api = {
       { method: 'POST', auth: true, timeoutMs: AI_TIMEOUT_MS },
     ),
 
-  /** Generations left today. Read up front so the button can explain itself
-   *  before it is pressed, rather than answering 429 afterwards. */
+  /** Generations left today, across every AI lane -- the server counts one
+   *  allowance for the technical and hold verdicts together. Read up front so
+   *  the button can explain itself before it is pressed, rather than answering
+   *  429 afterwards. */
   getAiQuota: () => request<AiQuotaStatus>('/api/analysis/ai/quota', { auth: true }),
+
+  /** The 存股 checklist: five dimensions, a score, and what could not be
+   *  checked. Free and cached-first like the rule-based technical analysis --
+   *  but a cold sid backfills two years of bars and a decade of dividend
+   *  reports, so it takes the slow timeout. */
+  getChenAnalysis: (sid: string) =>
+    request<ChenAnalysisResponse>(`/api/stocks/${sid}/analysis/chen`, {
+      timeoutMs: SLOW_TIMEOUT_MS,
+    }),
+
+  /** Ask the AI whether this is a company to accumulate and hold. Spends from
+   *  the same daily allowance as the technical call, which is why the two
+   *  buttons share one quota query. */
+  generateHoldAnalysis: (sid: string, locale: string) =>
+    request<AiHoldAnalysisResponse>(
+      `/api/stocks/${sid}/analysis/ai-hold?locale=${encodeURIComponent(locale)}`,
+      { method: 'POST', auth: true, timeoutMs: AI_TIMEOUT_MS },
+    ),
 
   /** Signed in only -- the one market-data route that is not public. `auth`
    *  also buys the refresh-and-retry, which a 10-second poll needs. */
