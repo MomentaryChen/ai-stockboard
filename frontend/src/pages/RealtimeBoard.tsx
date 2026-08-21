@@ -25,6 +25,7 @@ import { useDocumentPip } from '../hooks/useDocumentPip'
 import { useGroupDrop } from '../hooks/useGroupDrop'
 import { POLL_MS } from '../hooks/useLiveQuote'
 import { useWatchlist } from '../hooks/useWatchlist'
+import { WatchlistDragProvider } from '../hooks/watchlistDrag'
 import { useI18n } from '../i18n'
 import { errorMessage } from '../utils/errors'
 import { isMarketOpen } from '../utils/market'
@@ -32,7 +33,23 @@ import { MINI_WINDOW, miniUrl, useMiniView } from '../utils/view'
 import { groupSections } from '../utils/watchlistGroups'
 import { MAX_WATCHLIST } from '../watchlistStorage'
 
+/**
+ * One provider around the whole page, including the floating window's portal.
+ *
+ * Every drop target on this page -- the chip bar, the board's section headings,
+ * the card grid -- has to learn about a pickup that happened in a different
+ * one of them, and the bar is rendered up to twice (here and inside the PiP
+ * portal). A provider at the root is the only place all of them share.
+ */
 export default function RealtimeBoard() {
+  return (
+    <WatchlistDragProvider>
+      <RealtimeBoardView />
+    </WatchlistDragProvider>
+  )
+}
+
+function RealtimeBoardView() {
   const { status } = useAuth()
   const { intlTag, locale, t } = useI18n()
   const queryClient = useQueryClient()
@@ -282,8 +299,6 @@ export default function RealtimeBoard() {
           groups={groups}
           groupId={groupBySid[entry.code] ?? null}
           onAssign={assign}
-          dragging={cardDrop.dragging === entry.code}
-          onDragStateChange={cardDrop.setDragging}
           bfp={entry.bfp}
           bfpLoading={analysis.isPending}
           aiBatched
@@ -326,6 +341,15 @@ export default function RealtimeBoard() {
             <h3 className="group-section-title">
               {section.name}
               <span className="group-count">{section.items.length}</span>
+              {target.current && (
+                <span className="group-section-hint">{t('board.groupHere')}</span>
+              )}
+              {target.over && (
+                <span className="group-section-hint">{t('board.groupDropHere')}</span>
+              )}
+              {target.droppable && !target.over && (
+                <span className="group-section-hint muted">{t('board.groupDroppable')}</span>
+              )}
             </h3>
             {section.items.length === 0 ? (
               <p className="group-section-empty">{t('board.groupEmptyDrop')}</p>
