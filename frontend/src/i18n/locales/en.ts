@@ -95,12 +95,14 @@ export const en: Messages = {
   'register.haveAccount': 'Already have an account?',
   'register.loginLink': 'Sign in',
   'register.approvalNotice':
-    'New accounts on this site are reviewed by an administrator, so signing up will not sign you in.',
+    'New accounts on this site need a platform administrator to approve and activate them, so signing up will not sign you in.',
+  'register.adminContact':
+    'Please contact a platform administrator and ask them to activate your account. There is no automatic email notification.',
   'register.pendingTitle': 'Request submitted',
   'register.pendingBody':
-    'The account {username} has been created and is waiting for an administrator to approve it. You can sign in and use realtime quotes once it is approved.',
+    'The account {username} has been created and is waiting for a platform administrator to approve and activate it. You can sign in and use realtime quotes once it is activated.',
   'register.pendingNote':
-    'There is no email notification -- check with your administrator for the outcome.',
+    'There is no email notification -- contact a platform administrator and ask them to activate your account.',
   'register.pendingHome': 'Back to the market',
 
   // ---------- change password ----------
