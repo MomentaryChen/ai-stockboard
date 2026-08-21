@@ -1214,8 +1214,9 @@ Three deliberate trade-offs:
   nginx in front of the API *and* publishes the API's own port on the host, so
   anything reaching that port directly could otherwise present as a fresh client
   on every request. `TRUSTED_PROXY_IPS` defaults to loopback plus the private
-  ranges; narrow it to the proxy's address if that port is exposed beyond the
-  machine.
+  ranges, which is safe to trust only because `SERVER_BIND` keeps that port on
+  loopback -- the two settings have to be widened together. Narrow this one to
+  the proxy's address if you publish the API beyond the machine.
 
 The knobs are all in `deployment/.env` -- `LOGIN_MAX_FAILURES`,
 `LOGIN_LOCKOUT_MINUTES`, `LOGIN_IP_MAX_FAILURES`, `LOGIN_IP_WINDOW_MINUTES`,
