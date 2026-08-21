@@ -17,6 +17,7 @@ import { useMutation } from '@tanstack/react-query'
 
 import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
+import { errorMessage } from '../utils/errors'
 import {
   MIN_PASSWORD_LENGTH,
   passwordProblem,
@@ -125,7 +126,7 @@ export default function ChangePassword() {
 
           {submit.isError && (
             <div className="banner banner-error">
-              {t('changePassword.failed', { message: (submit.error as Error).message })}
+              {t('changePassword.failed', { message: errorMessage(submit.error, t) })}
             </div>
           )}
 

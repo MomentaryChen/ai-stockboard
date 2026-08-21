@@ -9,6 +9,7 @@ import {
   translateJobName,
   useI18n,
 } from '../i18n'
+import { errorMessage } from '../utils/errors'
 import { fmtInt } from '../utils/format'
 import {
   isStale,
@@ -188,7 +189,7 @@ export default function AdminJobs() {
 
       {jobs.error && (
         <div className="banner banner-error">
-          {t('jobs.loadFailed', { message: (jobs.error as Error).message })}
+          {t('jobs.loadFailed', { message: errorMessage(jobs.error, t) })}
         </div>
       )}
 
