@@ -17,10 +17,15 @@ from app.services import auth as auth_service
 from app.services import backtest_store
 from app.services import chip as chip_service
 from app.services import code_sync
+from app.services import codes as codes_service
 from app.services import dividend as dividend_service
+from app.services import fundamentals as fundamentals_service
+from app.services import valuation as valuation_service
+from app.config import get_settings
 from app.services.jobs.registry import JobContext, JobResult
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 #: Calendar years of TWSE dividend history the warmup keeps. One more than
 #: `hold_features.WINDOW_YEARS` so a ten-year payout streak is bounded by the
@@ -132,3 +137,65 @@ def refresh_token_cleanup(context: JobContext) -> JobResult:
         message=None if deleted else "No dead tokens to clear",
         stats={"deleted": deleted},
     )
+
+
+def fundamentals_refresh(context: JobContext) -> JobResult:
+    """Pull the exchanges' valuation board and their current annual EPS.
+
+    Four requests, all keyless: BWIBBU and the TPEx equivalent for PE / PBR /
+    yield, then `t187ap14` from each exchange for the annual figure.
+
+    `skipped` here means every bucket was already stamped fresh. Expect it on
+    most days: the valuation snapshot expires daily but the EPS report only
+    changes when a new quarter lands, and only its Q4 rows are ever written.
+    """
+    valuation_stats = valuation_service.refresh(context.db, force=context.force)
+    eps_stats = fundamentals_service.refresh_exchange(context.db, force=context.force)
+
+    stats = {
+        "valuations": valuation_stats["rows"],
+        "annuals": eps_stats["rows"],
+        "fetched": valuation_stats["fetched"] + eps_stats["fetched"],
+        "cached": valuation_stats["cached"] + eps_stats["cached"],
+    }
+    if stats["fetched"]:
+        status, message = "success", None
+    else:
+        status, message = "skipped", "Every valuation and EPS bucket is current"
+    return JobResult(status=status, message=message, stats=stats)
+
+
+def fundamentals_backfill(context: JobContext) -> JobResult:
+    """Fill the decade of annual EPS and ROE the exchanges do not publish.
+
+    Works through the listing a slice at a time and stamps each company as it
+    goes, so the board fills over a week of nightly runs instead of one sweep
+    that would exhaust an hourly quota halfway and leave no record of where it
+    stopped.
+
+    `skipped` means every listed company already carries a stamp -- the steady
+    state once the sweep has finished, and the heartbeat that says the job is
+    alive rather than that it has work it is failing to do.
+    """
+    sids = [info.code for info in codes_service.all_stocks()]
+    stats = fundamentals_service.backfill_history(
+        context.db,
+        sids,
+        years=settings.fundamentals_history_years,
+        limit=settings.finmind_backfill_batch,
+    )
+
+    if stats["stocks"]:
+        # Partial failures are counted, not raised: one delisted code must not
+        # cost the rest of the batch its turn.
+        status = "success"
+        message = (
+            f"{stats['failed']} company(ies) could not be fetched"
+            if stats["failed"]
+            else None
+        )
+    elif stats["failed"]:
+        status, message = "failed", "Every company in this batch failed"
+    else:
+        status, message = "skipped", "Every listed company already has history"
+    return JobResult(status=status, message=message, stats=stats)

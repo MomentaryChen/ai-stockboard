@@ -12,10 +12,17 @@ at all. A single module would be two prompts in a trench coat, and the first
 edit to either would risk the other.
 
 Bump `PROMPT_VERSION` whenever the system instruction, the user turn, or the
-wire schema changes. It is part of the `ai_hold_analysis` unique key, so a bump
-re-generates on demand and keeps old verdicts attributable to the wording that
-produced them. The `hold-` prefix keeps it from ever colliding with the
-technical lane's version in an evaluation that reads both tables.
+wire schema changes -- and also when a supplied measurement changes what it
+*means*, which is a subtler trigger worth naming. It is part of the
+`ai_hold_analysis` unique key, so a bump re-generates on demand and keeps old
+verdicts attributable to the inputs that produced them. The `hold-` prefix
+keeps it from ever colliding with the technical lane's version in an
+evaluation that reads both tables.
+
+`hold-v2` is an example of the second kind: the wording below is unchanged
+from v1, but `trailing_pe` stopped being "last completed year's annual EPS
+against today's close" and became the exchange's own daily published figure. A
+verdict citing a PE has to stay attributable to which PE it was shown.
 """
 
 from __future__ import annotations
@@ -27,7 +34,7 @@ from pydantic import BaseModel, Field
 from app.schemas import AiHoldVerdict, ChenRuleResult, HoldFeatures
 from app.services.analysis import chen_rules
 
-PROMPT_VERSION = "hold-v1"
+PROMPT_VERSION = "hold-v2"
 
 SYSTEM_INSTRUCTION = """\
 You are assessing whether one Taiwan-listed company suits a long-horizon
