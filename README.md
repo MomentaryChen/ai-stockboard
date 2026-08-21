@@ -806,6 +806,86 @@ never render and nothing polls.
 
 ---
 
+## Getting an account, and how often you may guess
+
+The section above is the reason this one exists. Gating realtime quotes behind a
+sign-in is only worth anything if an account means something -- and until this
+was added, it did not: registration was open, so ten seconds at the signup form
+bought anyone a share of the upstream budget, and the login endpoint accepted
+guesses forever.
+
+### Registration is reviewed
+
+`POST /api/auth/register` creates the account **dormant** and issues no tokens.
+An ADMIN activates it at `/admin/users`; only then can the person sign in.
+
+- The response is `201` either way, with `pending` in the body saying which
+  happened. There is no session to hand back for an account that may not be
+  used, and a token whose every request answered 403 would leave the client
+  looking signed in while nothing worked.
+- Activating **is** approving. There is no separate approve endpoint -- one
+  switch means the queue cannot drift out of step with who can actually sign in.
+- Two dormant states have to be told apart, which is why `pending_approval`
+  exists next to `is_active`: waiting for a first review and suspended by an
+  admin are the same `is_active = false`, and they need different words in the
+  UI and a different action from the operator.
+- The Register page reads `GET /api/auth/registration-policy` before it renders,
+  so it can say up front that submitting will not sign you in. Finding that out
+  afterwards reads as a broken signup.
+- Set `REGISTRATION_REQUIRES_APPROVAL=false` to go back to open registration.
+  That is for a local database, not for anything reachable from elsewhere.
+
+There is no email delivery in this service, so there is no "your account was
+approved" notification either -- the same constraint that shapes the ADMIN
+password reset above. The Register page says so rather than leaving the user
+watching an inbox.
+
+### Sign-in is limited on two dimensions
+
+Either limit alone has an obvious way around it, so both are enforced:
+
+| | Counts | Stored in | Why there |
+|---|---|---|---|
+| Per account | Consecutive failures against one account | `app_user.failed_login_count` / `locked_until` | A lockout that a container restart clears is a lockout the attacker can clear |
+| Per source IP | Failures against *any* account from one address | Process memory (`services/login_guard.py`) | An attacker who can rotate addresses defeats a shared table just as easily, so the write would buy nothing |
+
+The account lock stops one password list being ground against one account, and
+does nothing about the same attacker trying `admin`, `test`, `victor`... one
+guess each. The IP limit stops that, and does nothing about a botnet with one
+guess per address. Together both shapes cost something, which is all a login
+endpoint can honestly promise.
+
+Both answer **429 with `Retry-After`**, which the UI renders as a countdown --
+the difference between "try again later" and "try again in 12 minutes" is
+whether the user keeps hammering the endpoint for the whole window. A locked
+account refuses the **correct** password too; letting it through would defeat
+the point of the lock.
+
+Three deliberate trade-offs:
+
+- **The account lock is a denial-of-service surface.** Anyone who knows a
+  username can spend five wrong passwords to keep its owner out for the window.
+  That is accepted knowingly: the window is minutes rather than permanent, an
+  ADMIN can lift it from `/admin/users` without touching the password, and the
+  alternative is an unlimited guessing budget.
+- **The per-IP window is per process.** Several uvicorn workers would each hold
+  their own counters, multiplying the allowance by the worker count.
+  `server/Dockerfile` runs one worker; the account lock is the half that still
+  holds if that changes.
+- **`X-Real-IP` is only read from a trusted peer.** `docker-compose.yml` puts
+  nginx in front of the API *and* publishes the API's own port on the host, so
+  anything reaching that port directly could otherwise present as a fresh client
+  on every request. `TRUSTED_PROXY_IPS` defaults to loopback plus the private
+  ranges; narrow it to the proxy's address if that port is exposed beyond the
+  machine.
+
+The knobs are all in `deployment/.env` -- `LOGIN_MAX_FAILURES`,
+`LOGIN_LOCKOUT_MINUTES`, `LOGIN_IP_MAX_FAILURES`, `LOGIN_IP_WINDOW_MINUTES`,
+`REGISTER_IP_MAX_PER_HOUR`, `TRUSTED_PROXY_IPS` -- and `.env.example` explains
+each one where it is set.
+
+---
+
 ## 已知限制
 
 - **即時報價需要登入**，未登入只看得到最近一個交易日的收盤（頁面不會被擋掉，見上一節）。

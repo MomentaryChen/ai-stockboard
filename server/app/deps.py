@@ -41,10 +41,19 @@ bearer_scheme = HTTPBearer(auto_error=False, description="Bearer <access_token>"
 
 _UNAUTHENTICATED = {"WWW-Authenticate": "Bearer"}
 
-# The frontend narrows on this exact string to redirect to the change-password
-# page, so it is part of the contract -- do not reword it without updating
-# frontend/src/api/client.ts.
+# The frontend narrows on these exact strings rather than showing them, so they
+# are part of the contract -- do not reword one without updating
+# frontend/src/api/client.ts, which keeps a copy of each.
+#
+#   * PASSWORD_RESET_REQUIRED -> redirect to the change-password page
+#   * ACCOUNT_PENDING_APPROVAL -> "waiting for an administrator", not "wrong
+#     password" and not "you were banned"
+#   * ACCOUNT_LOCKED / TOO_MANY_ATTEMPTS -> a countdown, from the Retry-After
+#     header that accompanies both
 PASSWORD_RESET_REQUIRED = "Password reset required"
+ACCOUNT_PENDING_APPROVAL = "Account is awaiting approval"
+ACCOUNT_LOCKED = "Account temporarily locked"
+TOO_MANY_ATTEMPTS = "Too many sign-in attempts"
 
 
 def get_authenticated_user(

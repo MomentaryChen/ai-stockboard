@@ -45,6 +45,7 @@ export const en: Messages = {
   'admin.schedulerOff': 'Disabled -- jobs can only be run by hand',
   'admin.usersTitle': 'Users',
   'admin.usersDesc': 'Roles, deactivation, password resets.',
+  'admin.usersPending': '{count} waiting for approval',
   'admin.usersStat': '{count} accounts',
   'admin.jobsTitle': 'Jobs',
   'admin.jobsDesc': 'Schedules, run history, manual runs.',
@@ -65,6 +66,13 @@ export const en: Messages = {
   'login.submit': 'Sign in',
   'login.noAccount': 'No account yet?',
   'login.registerLink': 'Create one',
+  'login.pendingApproval':
+    'Your account has been created and is waiting for an administrator to approve it. These credentials will work once it is.',
+  'login.locked': 'Too many attempts -- this account is temporarily locked. Try again shortly.',
+  'login.lockedIn':
+    'Too many attempts -- this account is temporarily locked. Try again in {minutes} minutes.',
+  'login.throttled': 'Too many sign-in attempts. Try again shortly.',
+  'login.throttledIn': 'Too many sign-in attempts. Try again in {minutes} minutes.',
 
   // ---------- register ----------
   'register.title': 'Sign up',
@@ -80,6 +88,14 @@ export const en: Messages = {
   'register.submit': 'Sign up',
   'register.haveAccount': 'Already have an account?',
   'register.loginLink': 'Sign in',
+  'register.approvalNotice':
+    'New accounts on this site are reviewed by an administrator, so signing up will not sign you in.',
+  'register.pendingTitle': 'Request submitted',
+  'register.pendingBody':
+    'The account {username} has been created and is waiting for an administrator to approve it. You can sign in and use realtime quotes once it is approved.',
+  'register.pendingNote':
+    'There is no email notification -- check with your administrator for the outcome.',
+  'register.pendingHome': 'Back to the market',
 
   // ---------- change password ----------
   'changePassword.title': 'Change password',
@@ -292,6 +308,12 @@ export const en: Messages = {
   // ---------- admin: users ----------
   'adminUsers.title': 'User management',
   'adminUsers.searchPlaceholder': 'Search username or email',
+  'adminUsers.pendingOnly': 'Awaiting approval only',
+  'adminUsers.pendingBanner':
+    '{count} account(s) are waiting for approval. Approve one to let that person sign in.',
+  'adminUsers.approve': 'Approve',
+  'adminUsers.lockedUntil': 'Locked until {when}',
+  'adminUsers.unlock': 'Unlock',
   'adminUsers.opFailed': 'Action failed: {message}',
   'adminUsers.colUsername': 'Username',
   'adminUsers.colEmail': 'Email',

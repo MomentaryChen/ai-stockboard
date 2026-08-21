@@ -32,6 +32,23 @@ _PATCHES: tuple[tuple[str, str], ...] = (
         "alter table app_user "
         "add column if not exists must_change_password boolean not null default false",
     ),
+    # Defaults false, so every account that already exists reads as reviewed
+    # rather than appearing in the admin's approval queue on the next boot.
+    (
+        "app_user.pending_approval",
+        "alter table app_user "
+        "add column if not exists pending_approval boolean not null default false",
+    ),
+    (
+        "app_user.failed_login_count",
+        "alter table app_user "
+        "add column if not exists failed_login_count integer not null default 0",
+    ),
+    (
+        "app_user.locked_until",
+        "alter table app_user "
+        "add column if not exists locked_until timestamptz",
+    ),
 )
 
 

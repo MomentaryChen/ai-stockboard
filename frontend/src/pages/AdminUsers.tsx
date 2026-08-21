@@ -12,10 +12,11 @@ export default function AdminUsers() {
   const { intlTag, t } = useI18n()
   const queryClient = useQueryClient()
   const [q, setQ] = useState('')
+  const [pendingOnly, setPendingOnly] = useState(false)
 
   const users = useQuery({
-    queryKey: ['users', q],
-    queryFn: () => api.listUsers(q),
+    queryKey: ['users', q, pendingOnly],
+    queryFn: () => api.listUsers(q, pendingOnly),
   })
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['users'] })
@@ -36,6 +37,11 @@ export default function AdminUsers() {
     onSuccess: invalidate,
   })
 
+  const unlock = useMutation({
+    mutationFn: (id: number) => api.unlockUser(id),
+    onSuccess: invalidate,
+  })
+
   // The generated password, held only in this component's state and only until
   // the admin dismisses it. Never written to storage or a query cache: the
   // server keeps no copy, so anything that outlives the page is a leak with no
@@ -51,7 +57,13 @@ export default function AdminUsers() {
   })
 
   const error =
-    users.error ?? update.error ?? remove.error ?? resetPassword.error
+    users.error ??
+    update.error ??
+    remove.error ??
+    unlock.error ??
+    resetPassword.error
+
+  const pendingTotal = users.data?.pending_total ?? 0
 
   return (
     <div className="stack">
@@ -62,14 +74,33 @@ export default function AdminUsers() {
         <h2 className="card-title" style={{ margin: 0 }}>
           {t('adminUsers.title')}
         </h2>
-        <input
-          className="text-input"
-          style={{ maxWidth: 260 }}
-          placeholder={t('adminUsers.searchPlaceholder')}
-          value={q}
-          onChange={(event) => setQ(event.target.value)}
-        />
+        <div className="row wrap" style={{ gap: 10 }}>
+          <label className="row dim" style={{ gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={pendingOnly}
+              onChange={(event) => setPendingOnly(event.target.checked)}
+            />
+            {t('adminUsers.pendingOnly')}
+          </label>
+          <input
+            className="text-input"
+            style={{ maxWidth: 260 }}
+            placeholder={t('adminUsers.searchPlaceholder')}
+            value={q}
+            onChange={(event) => setQ(event.target.value)}
+          />
+        </div>
       </div>
+
+      {/* The queue is the one thing on this page with a deadline attached --
+          somebody is waiting on the other end of it -- so it is stated above
+          the table rather than left to be noticed in a row. */}
+      {pendingTotal > 0 && (
+        <div className="banner banner-warn">
+          {t('adminUsers.pendingBanner', { count: pendingTotal })}
+        </div>
+      )}
 
       {error && (
         <div className="banner banner-error">
@@ -109,7 +140,16 @@ export default function AdminUsers() {
                 // offering an action that cannot succeed.
                 const isSelf = row.id === me?.id
                 const busy =
-                  update.isPending || remove.isPending || resetPassword.isPending
+                  update.isPending ||
+                  remove.isPending ||
+                  unlock.isPending ||
+                  resetPassword.isPending
+                // Compared against now rather than trusted as a flag: the
+                // timestamp is in the past for most of its life, and a row
+                // cached from before it expired would otherwise still claim
+                // the account is locked.
+                const locked =
+                  row.locked_until !== null && new Date(row.locked_until) > new Date()
 
                 return (
                   <tr key={row.id}>
@@ -135,9 +175,19 @@ export default function AdminUsers() {
                       </select>
                     </td>
                     <td>
+                      {/* Approving and activating are the same switch on the
+                          server, so they are one button here too -- only the
+                          wording changes, because "啟用" does not tell an
+                          admin that somebody is waiting on the answer. */}
                       <button
                         type="button"
-                        className={`btn btn-sm ${row.is_active ? 'active' : ''}`}
+                        className={`btn btn-sm ${
+                          row.pending_approval
+                            ? 'btn-primary'
+                            : row.is_active
+                              ? 'active'
+                              : ''
+                        }`}
                         disabled={isSelf || busy}
                         onClick={() =>
                           update.mutate({
@@ -146,19 +196,45 @@ export default function AdminUsers() {
                           })
                         }
                       >
-                        {row.is_active
-                          ? t('adminUsers.statusActive')
-                          : t('adminUsers.statusInactive')}
+                        {row.pending_approval
+                          ? t('adminUsers.approve')
+                          : row.is_active
+                            ? t('adminUsers.statusActive')
+                            : t('adminUsers.statusInactive')}
                       </button>
                     </td>
                     <td className="dim">
-                      {row.must_change_password ? t('adminUsers.pendingReset') : '—'}
+                      {locked
+                        ? t('adminUsers.lockedUntil', {
+                            when: new Date(row.locked_until as string).toLocaleTimeString(
+                              intlTag,
+                              { hour: '2-digit', minute: '2-digit' },
+                            ),
+                          })
+                        : row.must_change_password
+                          ? t('adminUsers.pendingReset')
+                          : '—'}
                     </td>
                     <td className="dim tabular">
                       {new Date(row.created_at).toLocaleDateString(intlTag)}
                     </td>
                     <td>
                       <div className="row" style={{ gap: 6 }}>
+                        {/* Offered only while it would do something. Unlike
+                            the others this one is allowed on your own row: an
+                            admin locked out in one browser can still be signed
+                            in in another, and that is exactly when they need
+                            it. */}
+                        {locked && (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            disabled={busy}
+                            onClick={() => unlock.mutate(row.id)}
+                          >
+                            {t('adminUsers.unlock')}
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="btn btn-sm"

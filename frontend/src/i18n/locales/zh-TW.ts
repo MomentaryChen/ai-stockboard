@@ -42,6 +42,7 @@ export const zhTW = {
   'admin.schedulerOff': '已停用，所有工作只能手動執行',
   'admin.usersTitle': '使用者管理',
   'admin.usersDesc': '角色、停用帳號、重設密碼。',
+  'admin.usersPending': '{count} 個帳號等待審核',
   'admin.usersStat': '{count} 個帳號',
   'admin.jobsTitle': '排程作業',
   'admin.jobsDesc': '背景工作的排程、紀錄與手動執行。',
@@ -62,6 +63,11 @@ export const zhTW = {
   'login.submit': '登入',
   'login.noAccount': '還沒有帳號？',
   'login.registerLink': '註冊一個',
+  'login.pendingApproval': '帳號已建立，正在等待管理員審核。核准後就能用這組帳密登入。',
+  'login.locked': '嘗試次數過多，此帳號已暫時鎖定，請稍後再試。',
+  'login.lockedIn': '嘗試次數過多，此帳號已暫時鎖定，請於 {minutes} 分鐘後再試。',
+  'login.throttled': '登入嘗試過於頻繁，請稍後再試。',
+  'login.throttledIn': '登入嘗試過於頻繁，請於 {minutes} 分鐘後再試。',
 
   // ---------- register ----------
   'register.title': '註冊',
@@ -77,6 +83,11 @@ export const zhTW = {
   'register.submit': '註冊',
   'register.haveAccount': '已經有帳號了？',
   'register.loginLink': '登入',
+  'register.approvalNotice': '這個站台的新帳號需要管理員審核，送出後不會立刻登入。',
+  'register.pendingTitle': '申請已送出',
+  'register.pendingBody': '帳號 {username} 已建立，正在等待管理員核准。核准之後就能登入使用即時報價。',
+  'register.pendingNote': '目前沒有 Email 通知，核准與否請直接與管理員確認。',
+  'register.pendingHome': '回到大盤',
 
   // ---------- change password ----------
   'changePassword.title': '變更密碼',
@@ -275,6 +286,11 @@ export const zhTW = {
   // ---------- admin: users ----------
   'adminUsers.title': '使用者管理',
   'adminUsers.searchPlaceholder': '搜尋帳號或 Email',
+  'adminUsers.pendingOnly': '只看待審核',
+  'adminUsers.pendingBanner': '有 {count} 個帳號等待審核。按下「核准」即可讓對方登入。',
+  'adminUsers.approve': '核准',
+  'adminUsers.lockedUntil': '已鎖定至 {when}',
+  'adminUsers.unlock': '解鎖',
   'adminUsers.opFailed': '操作失敗：{message}',
   'adminUsers.colUsername': '帳號',
   'adminUsers.colEmail': 'Email',

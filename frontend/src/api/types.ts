@@ -219,6 +219,18 @@ export interface User {
    * holds them on /change-password.
    */
   must_change_password: boolean
+  /**
+   * True between self-service registration and an ADMIN activating the
+   * account. Together with `is_active` it separates the two dormant states
+   * the admin console has to word differently: waiting to be let in
+   * (`is_active` false, this true) and let in then suspended (both false).
+   */
+  pending_approval: boolean
+  /**
+   * ISO timestamp the account stops being locked out after repeated failed
+   * sign-ins, or null when it is not locked. Only ever set by the server.
+   */
+  locked_until: string | null
   created_at: string
 }
 
@@ -233,7 +245,28 @@ export interface TokenResponse {
 
 export interface UserListResponse {
   total: number
+  /** Accounts awaiting approval across the whole table, not just this page --
+   *  it is a badge, so a filtered or paginated count would be misleading. */
+  pending_total: number
   users: User[]
+}
+
+/** What signing up currently does, read before the Register form renders. */
+export interface RegistrationPolicy {
+  open: boolean
+  requires_approval: boolean
+}
+
+/** POST /api/auth/register, in one of two shapes.
+ *
+ *  `tokens` is present exactly when `pending` is false. Under review the
+ *  server deliberately issues nothing: the account exists and may not be used
+ *  yet, so there is no session to adopt.
+ */
+export interface RegisterResponse {
+  pending: boolean
+  user: User
+  tokens: TokenResponse | null
 }
 
 /** The one response in the API that carries a secret. */
