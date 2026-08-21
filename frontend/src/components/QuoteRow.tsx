@@ -15,6 +15,7 @@ import { usePriceFlash } from '../hooks/usePriceFlash'
 import { useI18n } from '../i18n'
 import { direction, fmtInt, fmtPrice, fmtSigned } from '../utils/format'
 import { lastPrice } from '../utils/openIntel'
+import AiVerdictSection from './AiVerdict'
 import BfpChip, { BfpDot } from './BfpChip'
 import QuoteDetail from './QuoteDetail'
 
@@ -147,6 +148,11 @@ export default function QuoteRow({
                   {entry.error ?? t('realtime.noQuote')}
                 </p>
               )}
+              {/* Below the rule verdict on purpose: the free, deterministic
+                  answer is already on screen before anyone is offered a paid
+                  one, and the AI panel reads as a second opinion rather than
+                  the headline. */}
+              <AiVerdictSection sid={entry.code} />
             </div>
           </td>
         </tr>

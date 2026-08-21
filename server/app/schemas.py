@@ -126,6 +126,154 @@ class TraditionalAnalysisBatchResponse(BaseModel):
     errors: dict[str, str]
 
 
+# --- AI analysis -------------------------------------------------------------
+#
+# The rule engine above answers buy/sell/hold. The AI engine answers a *position*
+# question -- get in, get out, or leave it alone, and at what size -- so it needs
+# its own vocabulary rather than an extra label on BestFourPointResult.
+
+
+class MaFeatures(BaseModel):
+    """Moving averages plus where the close sits relative to each one.
+
+    The percentages matter more to a language model than the raw averages: a
+    prompt that says "close is 3.2% above MA20" needs no arithmetic done on it,
+    and models are markedly worse at arithmetic than at reading a number.
+    """
+
+    ma5: float | None
+    ma10: float | None
+    ma20: float | None
+    ma60: float | None
+    close_vs_ma5_pct: float | None
+    close_vs_ma20_pct: float | None
+    close_vs_ma60_pct: float | None
+    # bullish = MA5 > MA10 > MA20 (多頭排列), bearish = the reverse, mixed = neither.
+    alignment: Literal["bullish", "bearish", "mixed", "unknown"]
+
+
+class VolumeFeatures(BaseModel):
+    latest_shares: int | None
+    avg5_shares: int | None
+    avg20_shares: int | None
+    # Ratios rather than differences: "1.8x the 5-day average" is scale free,
+    # so the same prompt reads the same way for 台積電 and for a 30-dollar stock.
+    ratio_to_avg5: float | None
+    ratio_to_avg20: float | None
+    trend: Literal["expanding", "contracting", "steady", "unknown"]
+
+
+class MomentumFeatures(BaseModel):
+    return_1d_pct: float | None
+    return_5d_pct: float | None
+    return_20d_pct: float | None
+    return_60d_pct: float | None
+    # Signed: positive = that many consecutive up days, negative = down days.
+    consecutive_days: int
+    gap_pct: float | None
+
+
+class RangeFeatures(BaseModel):
+    """Where the close sits inside the window -- 位階.
+
+    `position_pct` is 0 at the window low and 100 at its high. Entry size is a
+    question about how much room is left, and a bare close cannot answer it.
+    """
+
+    window_days: int
+    high: float | None
+    low: float | None
+    position_pct: float | None
+    drawdown_from_high_pct: float | None
+
+
+class VolatilityFeatures(BaseModel):
+    # Standard deviation of daily returns over the window, in percent.
+    stdev_20d_pct: float | None
+    # Mean absolute daily move, a plainer statistic for a prompt to reason about.
+    avg_abs_move_20d_pct: float | None
+
+
+class PriceFeatures(BaseModel):
+    """Everything the AI engine is allowed to see, derived from stored bars only.
+
+    Deliberately a *closed* structure rather than raw OHLCV: the prompt is built
+    from these fields, so what the model reasons about is reviewable, diffable
+    and reproducible. Handing it 60 rows of numbers would make every answer
+    depend on the model's own arithmetic, which is the part it is worst at.
+    """
+
+    as_of: datetime.date
+    sample_size: int
+    latest_close: float
+    ma: MaFeatures
+    volume: VolumeFeatures
+    momentum: MomentumFeatures
+    range: RangeFeatures
+    volatility: VolatilityFeatures
+    # The last five 3-day-vs-6-day MA bias readings: the same series the 四大買賣點
+    # gate pivots on, so the model can be asked to agree or disagree with it.
+    bias_3_6: list[float]
+
+
+#: What to do. `hold` is a first-class answer, not a fallback -- see AiVerdict.
+AiAction = Literal["enter", "exit", "hold"]
+#: How much of a position the action applies to. Null exactly when action is hold.
+AiSize = Literal["large", "medium", "small"]
+
+
+class AiVerdict(BaseModel):
+    """The position call.
+
+    `size` is null if and only if `action` is "hold". Keeping direction and
+    magnitude in separate fields (rather than one seven-valued enum) is what
+    lets the UI render 進場/退場 and 大/中/小 independently, and lets a backtest
+    score direction without having to agree about sizing.
+
+    A model asked for a recommendation will nearly always produce one. twstock's
+    broken 四大買賣點 never returned Don't touch in 20 000 draws and that was a
+    bug; an AI engine that never says hold has the same defect, so the prompt
+    names hold as a valid answer and the schema keeps it cheap to express.
+    """
+
+    action: AiAction
+    size: AiSize | None
+    confidence: Literal["high", "medium", "low"]
+    # One sentence, shown on the card before anything is expanded.
+    headline: str
+    reasons: list[str]
+    risks: list[str]
+
+
+class AiAnalysisResponse(BaseModel):
+    sid: str
+    name: str
+    # The trading day the bars end on -- what the verdict is *about*, and the
+    # cache key. `generated_at` is when the model was asked, which differs after
+    # a weekend and is what the card timestamps.
+    as_of: datetime.date
+    generated_at: datetime.datetime
+    model: str
+    prompt_version: str
+    locale: str
+    #: False only when this call actually spent a Gemini request.
+    cached: bool
+    verdict: AiVerdict
+    features: PriceFeatures
+    # The rule engine's answer for the same bars, so the card can put the
+    # deterministic and the generated verdict side by side -- the comparison the
+    # project was built to make.
+    traditional: BestFourPointResult
+
+
+class AiQuotaStatus(BaseModel):
+    """What is left of the caller's daily generation allowance."""
+
+    used: int
+    limit: int
+    resets_at: datetime.datetime
+
+
 class MaSeriesPoint(BaseModel):
     date: datetime.date
     ma5: float | None

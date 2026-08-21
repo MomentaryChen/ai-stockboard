@@ -76,6 +76,38 @@ class Settings(BaseSettings):
     admin_email: str = ""
     admin_password: str = ""
 
+    # --- AI analysis (Google Gemini) ---
+    # Blank disables the feature outright: the endpoint answers 503 and the
+    # frontend hides the button. There is no fallback model, because a service
+    # that silently swaps in a different engine would invalidate every stored
+    # verdict's `model` column without saying so.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    # Generation is capped rather than sampled at 1.0: this is a position call,
+    # and the same bars giving a different answer on each press would be read as
+    # the market changing when it is only the sampler.
+    gemini_temperature: float = 0.2
+    gemini_max_output_tokens: int = 2048
+    gemini_timeout_seconds: float = 45.0
+    # Thinking tokens are billed against max_output_tokens, so a model left to
+    # think freely can spend the whole budget before it starts the JSON and
+    # return a truncated body -- a hard failure, not a worse answer. Off by
+    # default because the reasoning here is shallow: roughly thirty
+    # pre-computed numbers read against a rubric spelled out in the prompt.
+    # Raise it (and max_output_tokens with it) to trade latency for depth.
+    gemini_thinking_budget: int = 0
+
+    # Same shape as the TWSE limiter, for the same reason: an upstream budget
+    # the whole process shares. This one also costs money, so it is deliberately
+    # tighter than Gemini's own quota would require.
+    ai_throttle_max_calls: int = 5
+    ai_throttle_window_seconds: float = 60.0
+
+    # Generations one account may pay for per calendar day, in SCHEDULER_TIMEZONE.
+    # A cache hit is free and never counted -- see services/analysis/ai.py.
+    ai_daily_quota: int = 20
+    ai_admin_daily_quota: int = 200
+
     @property
     def sqlalchemy_url(self) -> str:
         if self.database_url:

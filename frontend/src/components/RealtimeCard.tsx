@@ -15,6 +15,7 @@ import { usePriceFlash } from '../hooks/usePriceFlash'
 import { useI18n } from '../i18n'
 import { direction, fmtPrice, fmtSigned } from '../utils/format'
 import { lastPrice } from '../utils/openIntel'
+import AiVerdictSection from './AiVerdict'
 import BfpChip from './BfpChip'
 import QuoteDetail from './QuoteDetail'
 
@@ -68,6 +69,8 @@ export default function RealtimeCard({ quote, onRemove, bfp, bfpLoading }: Props
       <div style={{ marginTop: 14 }}>
         <QuoteDetail quote={quote} />
       </div>
+
+      <AiVerdictSection sid={quote.code} />
     </article>
   )
 }
