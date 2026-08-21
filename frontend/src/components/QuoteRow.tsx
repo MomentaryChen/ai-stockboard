@@ -10,7 +10,7 @@
 
 import { Link } from 'react-router-dom'
 
-import type { BestFourPointResult, RealtimeQuote } from '../api/types'
+import type { BestFourPointResult, RealtimeQuote, WatchlistGroup } from '../api/types'
 import { usePriceFlash } from '../hooks/usePriceFlash'
 import { useI18n } from '../i18n'
 import { direction, fmtInt, fmtPrice, fmtSigned } from '../utils/format'
@@ -44,6 +44,9 @@ interface Props {
   expanded: boolean
   onToggle: (code: string) => void
   onRemove?: (code: string) => void
+  groups?: WatchlistGroup[]
+  groupId?: number | null
+  onAssign?: (code: string, groupId: number | null) => void
   bfpLoading?: boolean
   /** Quotes are still on their way in, so "no quote" is premature. */
   fetching?: boolean
@@ -54,6 +57,9 @@ export default function QuoteRow({
   expanded,
   onToggle,
   onRemove,
+  groups,
+  groupId,
+  onAssign,
   bfpLoading,
   fetching,
 }: Props) {
@@ -147,6 +153,28 @@ export default function QuoteRow({
                 <p className="dim" style={{ margin: 0 }}>
                   {entry.error ?? t('realtime.noQuote')}
                 </p>
+              )}
+              {onAssign && groups && groups.length > 0 && (
+                <label className="group-assign">
+                  {t('board.groupAssign')}
+                  <select
+                    className="text-input group-assign-select"
+                    value={groupId ?? ''}
+                    onChange={(event) =>
+                      onAssign(
+                        entry.code,
+                        event.target.value === '' ? null : Number(event.target.value),
+                      )
+                    }
+                  >
+                    <option value="">{t('board.groupNone')}</option>
+                    {groups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               )}
               {/* Below the rule verdict on purpose: the free, deterministic
                   answer is already on screen before anyone is offered a paid

@@ -573,10 +573,33 @@ export const api = {
 
   getWatchlist: () => request<WatchlistResponse>('/api/watchlist', { auth: true }),
 
-  putWatchlist: (sids: string[]) =>
+  putWatchlist: (sids: string[], groupBySid?: Record<string, number | null>) =>
     request<WatchlistResponse>('/api/watchlist', {
       method: 'PUT',
-      body: { sids },
+      body:
+        groupBySid === undefined
+          ? { sids }
+          : { sids, group_by_sid: groupBySid },
+      auth: true,
+    }),
+
+  createWatchlistGroup: (name: string) =>
+    request<WatchlistResponse>('/api/watchlist/groups', {
+      method: 'POST',
+      body: { name },
+      auth: true,
+    }),
+
+  renameWatchlistGroup: (groupId: number, name: string) =>
+    request<WatchlistResponse>(`/api/watchlist/groups/${groupId}`, {
+      method: 'PATCH',
+      body: { name },
+      auth: true,
+    }),
+
+  deleteWatchlistGroup: (groupId: number) =>
+    request<WatchlistResponse>(`/api/watchlist/groups/${groupId}`, {
+      method: 'DELETE',
       auth: true,
     }),
 }

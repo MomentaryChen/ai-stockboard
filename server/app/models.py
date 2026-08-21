@@ -24,8 +24,9 @@ signal would have performed over the trailing window, recomputed from
 session; `chip_fetch_log` stamps the all-market daily reports those rows
 came from, so a second stock for the same date is a cache hit.
 
-`app_user`, `refresh_token` and `watchlist_item` carry the account system: who
-may sign in, which refresh tokens are still live, and what each user watches.
+`app_user`, `refresh_token`, `watchlist_item` and `watchlist_group` carry the
+account system: who may sign in, which refresh tokens are still live, what each
+user watches, and the named folders they sort that list into.
 """
 
 import datetime
@@ -42,6 +43,7 @@ from sqlalchemy import (
     Numeric,
     SmallInteger,
     String,
+    UniqueConstraint,
     func,
     text,
 )
@@ -561,12 +563,45 @@ class RefreshToken(Base):
     __table_args__ = (Index("ix_refresh_token_user_expires", "user_id", "expires_at"),)
 
 
+class WatchlistGroup(Base):
+    """A named folder on one user's 自選股.
+
+    Groups partition the same 20-stock list -- they are not extra lists. The
+    realtime quote budget is already spent at 20, and a second list that quoted
+    another 20 would blow it. A stock belongs to at most one group;
+    `watchlist_item.group_id` is null for the leftovers.
+
+    Integer id rather than BigInteger so a SQLite test fixture autoincrements
+    (SQLite will not autoincrement BIGINT, which is why `tests.helpers.add_user`
+    stamps ids by hand). Ten groups per account will never approach 2^31.
+    """
+
+    __tablename__ = "watchlist_group"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="CASCADE")
+    )
+    name: Mapped[str] = mapped_column(String(20))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_watchlist_group_user_name"),
+        Index("ix_watchlist_group_user_position", "user_id", "position"),
+    )
+
+
 class WatchlistItem(Base):
     """One stock on one user's 自選股.
 
     (user_id, sid) is naturally unique, so it doubles as the primary key and
     dedupes for free -- the same shape `daily_price` uses. `position` preserves
-    the order the user arranged them in.
+    the order the user arranged them in. `group_id` is the optional folder; it
+    is SET NULL when the group is deleted so removing a label never removes
+    the stock.
 
     Rows are cleaned up by the database's ON DELETE CASCADE; deliberately no
     relationship() is declared, matching the rest of this module. If one is ever
@@ -582,6 +617,9 @@ class WatchlistItem(Base):
     sid: Mapped[str] = mapped_column(String(16), primary_key=True)
 
     position: Mapped[int] = mapped_column(Integer, default=0)
+    group_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("watchlist_group.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

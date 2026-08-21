@@ -566,9 +566,18 @@ export interface PasswordResetResponse {
   temp_password: string
 }
 
+export interface WatchlistGroup {
+  id: number
+  name: string
+  position: number
+}
+
 export interface WatchlistResponse {
   count: number
   sids: string[]
+  groups: WatchlistGroup[]
+  /** Assigned sids only; a missing key means ungrouped. */
+  group_by_sid: Record<string, number>
 }
 
 /** --- 背景排程作業（ADMIN） --- */

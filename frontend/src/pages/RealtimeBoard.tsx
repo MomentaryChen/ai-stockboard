@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -6,12 +6,20 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { BestFourPointResult } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
-import { readBoardView, saveBoardView, type BoardView } from '../boardPrefs'
+import {
+  readBoardGroup,
+  readBoardView,
+  saveBoardGroup,
+  saveBoardView,
+  type BoardView,
+  type GroupFilter,
+} from '../boardPrefs'
 import type { BoardEntry } from '../components/QuoteRow'
 import RealtimeCard from '../components/RealtimeCard'
 import SignInPrompt from '../components/SignInPrompt'
 import StockSearch from '../components/StockSearch'
 import WatchBoard from '../components/WatchBoard'
+import WatchlistGroups from '../components/WatchlistGroups'
 import { useDocumentPip } from '../hooks/useDocumentPip'
 import { POLL_MS } from '../hooks/useLiveQuote'
 import { useWatchlist } from '../hooks/useWatchlist'
@@ -34,8 +42,14 @@ export default function RealtimeBoard() {
   // plain string[], so the poll below is unaffected by which one is in play.
   const {
     sids: watchlist,
+    groups,
+    groupBySid,
     add,
     remove,
+    assign,
+    createGroup,
+    renameGroup,
+    deleteGroup,
     isFull,
     isLoading: watchlistLoading,
     error: watchlistError,
@@ -45,6 +59,14 @@ export default function RealtimeBoard() {
   // it on.
   const [live, setLive] = useState(isMarketOpen)
   const [view, setView] = useState<BoardView>(readBoardView)
+  const [filter, setFilter] = useState<GroupFilter>(readBoardGroup)
+
+  useEffect(() => {
+    if (filter.kind === 'group' && !groups.some((group) => group.id === filter.id)) {
+      setFilter({ kind: 'all' })
+      saveBoardGroup({ kind: 'all' })
+    }
+  }, [filter, groups])
 
   const { data, error, isFetching, dataUpdatedAt, refetch } = useQuery({
     queryKey: ['realtime', watchlist],
@@ -95,6 +117,18 @@ export default function RealtimeBoard() {
     })
   }, [watchlist, data, bfpBySid])
 
+  /**
+   * The quote poll still asks for every sid. Filtering here only hides rows,
+   * so switching groups never drops a request that was already paid for.
+   */
+  const visible = useMemo(() => {
+    if (filter.kind === 'all') return entries
+    if (filter.kind === 'ungrouped') {
+      return entries.filter((entry) => groupBySid[entry.code] == null)
+    }
+    return entries.filter((entry) => groupBySid[entry.code] === filter.id)
+  }, [entries, filter, groupBySid])
+
   const errorEntries = Object.entries(data?.errors ?? {})
 
   // Restoring a session on a hard refresh -- see the note in RequireAuth: a
@@ -130,6 +164,13 @@ export default function RealtimeBoard() {
     saveBoardView(next)
   }
 
+  function setBoardGroup(next: GroupFilter) {
+    setFilter(next)
+    saveBoardGroup(next)
+  }
+
+  const addingTo = filter.kind === 'group' ? filter.id : null
+
   const liveButton = (
     <button
       type="button"
@@ -140,13 +181,34 @@ export default function RealtimeBoard() {
     </button>
   )
 
+  const groupBar = (
+    <WatchlistGroups
+      groups={groups}
+      groupBySid={groupBySid}
+      sids={watchlist}
+      filter={filter}
+      onFilter={setBoardGroup}
+      onCreate={async (name) => {
+        const result = await createGroup(name)
+        const created = result.groups[result.groups.length - 1]
+        if (created) setBoardGroup({ kind: 'group', id: created.id })
+      }}
+      onRename={renameGroup}
+      onDelete={deleteGroup}
+      compact={mini || pip.pipWindow !== null}
+    />
+  )
+
   // The floating window and the mini window are both too narrow for the search
   // box and the full header, so curating the list stays a job for the full
   // board and those two only watch it.
   const board = (
     <WatchBoard
-      entries={entries}
+      entries={visible}
       onRemove={remove}
+      groups={groups}
+      groupBySid={groupBySid}
+      onAssign={assign}
       bfpLoading={analysis.isPending}
       fetching={isFetching}
       compact={mini || pip.pipWindow !== null}
@@ -155,12 +217,15 @@ export default function RealtimeBoard() {
 
   const cards = (
     <div className="quote-grid">
-      {entries.map((entry) =>
+      {visible.map((entry) =>
         entry.quote ? (
           <RealtimeCard
             key={entry.code}
             quote={entry.quote}
             onRemove={remove}
+            groups={groups}
+            groupId={groupBySid[entry.code] ?? null}
+            onAssign={assign}
             bfp={entry.bfp}
             bfpLoading={analysis.isPending}
           />
@@ -185,6 +250,13 @@ export default function RealtimeBoard() {
     </div>
   )
 
+  const emptyNote =
+    watchlist.length === 0
+      ? t('realtime.empty')
+      : filter.kind === 'ungrouped'
+        ? t('realtime.emptyUngrouped')
+        : t('realtime.emptyGroup')
+
   if (mini) {
     return (
       <div className="stack mini-stack">
@@ -197,9 +269,10 @@ export default function RealtimeBoard() {
             {t('board.backToFull')}
           </Link>
         </div>
-        {watchlist.length === 0 ? (
+        {groupBar}
+        {watchlist.length === 0 || visible.length === 0 ? (
           <div className="center-note">
-            {watchlistLoading ? <span className="spinner" /> : t('realtime.empty')}
+            {watchlistLoading ? <span className="spinner" /> : emptyNote}
           </div>
         ) : (
           board
@@ -212,7 +285,7 @@ export default function RealtimeBoard() {
     <div className="stack">
       <div className="row-between wrap" style={{ gap: 16 }}>
         <StockSearch
-          onSelect={(stock) => add(stock.code)}
+          onSelect={(stock) => add(stock.code, addingTo)}
           placeholder={t('search.placeholderWatchlist')}
           autoClearOnSelect
         />
@@ -281,6 +354,8 @@ export default function RealtimeBoard() {
         </div>
       </div>
 
+      {groupBar}
+
       {error && (
         <div className="banner banner-error">
           {t('error.loadFailed', { message: errorMessage(error, t) })}
@@ -330,6 +405,8 @@ export default function RealtimeBoard() {
             {t('board.popIn')}
           </button>
         </div>
+      ) : visible.length === 0 ? (
+        <div className="center-note">{emptyNote}</div>
       ) : view === 'card' ? (
         cards
       ) : (
@@ -351,7 +428,12 @@ export default function RealtimeBoard() {
                 {t('board.popIn')}
               </button>
             </div>
-            {board}
+            {groupBar}
+            {visible.length === 0 ? (
+              <div className="center-note">{emptyNote}</div>
+            ) : (
+              board
+            )}
           </div>,
           pip.pipWindow.document.body,
         )}
