@@ -26,7 +26,7 @@ from google.genai import errors
 
 from app.models import DailyPrice
 from app.schemas import BestFourPointResult
-from app.services.analysis import ai, features, gemini
+from app.services.analysis import ai, features, gemini, prompts
 
 SID = "2330"
 START = datetime.date(2024, 1, 2)
@@ -100,24 +100,24 @@ _VALID = {
 
 def test_system_instruction_still_licenses_hold():
     """The one sentence whose deletion would recreate the twstock defect."""
-    text = gemini.SYSTEM_INSTRUCTION
+    text = prompts.SYSTEM_INSTRUCTION
     assert '"hold" is a correct and expected answer' in text
     assert "Do not manufacture a trade" in text
 
 
 def test_system_instruction_defines_every_size_the_ui_renders():
-    text = gemini.SYSTEM_INSTRUCTION
+    text = prompts.SYSTEM_INSTRUCTION
     for size in ("large", "medium", "small"):
         assert f"{size}   " in text or f"{size}  " in text, size
 
 
 def test_system_instruction_forbids_knowledge_the_model_was_not_given():
     """Nothing here supplies news or fundamentals, so nothing may be cited."""
-    assert "Use only the measurements supplied" in gemini.SYSTEM_INSTRUCTION
+    assert "Use only the measurements supplied" in prompts.SYSTEM_INSTRUCTION
 
 
 def test_prompt_carries_both_the_measurements_and_the_rule_verdict():
-    prompt = gemini._prompt(
+    prompt = prompts.user_prompt(
         sid=SID, name="台積電", features=_features(), traditional=_traditional()
     )
 
@@ -133,35 +133,35 @@ def test_prompt_carries_both_the_measurements_and_the_rule_verdict():
 
 
 def test_wire_schema_is_json_schema_serialisable_with_closed_enums():
-    """What Gemini is handed as response_json_schema."""
-    schema = gemini._WireVerdict.model_json_schema()
+    """What every provider is handed as the structured-output schema."""
+    schema = prompts.WireVerdict.model_json_schema()
     json.dumps(schema)  # must not raise
 
     props = schema["properties"]
     assert set(props["action"]["enum"]) == {"enter", "exit", "hold"}
-    # "none" rather than a nullable union -- see _WireVerdict's docstring.
+    # "none" rather than a nullable union -- see WireVerdict's docstring.
     assert set(props["size"]["enum"]) == {"large", "medium", "small", "none"}
     assert set(props["confidence"]["enum"]) == {"high", "medium", "low"}
 
 
 def test_hold_never_carries_a_size_and_a_trade_always_does():
     """Mirrors ck_ai_analysis_size_matches_action, corrected rather than rejected."""
-    held = gemini._to_verdict(
-        gemini._WireVerdict(**{**_VALID, "action": "hold", "size": "large"})
+    held = prompts.to_verdict(
+        prompts.WireVerdict(**{**_VALID, "action": "hold", "size": "large"})
     )
     assert held.action == "hold"
     assert held.size is None
 
-    probed = gemini._to_verdict(
-        gemini._WireVerdict(**{**_VALID, "action": "exit", "size": "none"})
+    probed = prompts.to_verdict(
+        prompts.WireVerdict(**{**_VALID, "action": "exit", "size": "none"})
     )
     assert probed.action == "exit"
     assert probed.size == "small"  # the most cautious reading of "unspecified"
 
 
 def test_blank_reasons_and_risks_are_dropped_not_rendered():
-    verdict = gemini._to_verdict(
-        gemini._WireVerdict(**{**_VALID, "reasons": ["  ", "量能放大"], "risks": [""]})
+    verdict = prompts.to_verdict(
+        prompts.WireVerdict(**{**_VALID, "reasons": ["  ", "量能放大"], "risks": [""]})
     )
     assert verdict.reasons == ["量能放大"]
     assert verdict.risks == []
@@ -307,4 +307,4 @@ def test_unknown_locales_fall_back_rather_than_being_sent_through():
 
 def test_prompt_version_is_pinned_so_stored_verdicts_stay_attributable():
     """Changing the prompt without bumping this silently mixes two engines."""
-    assert gemini.PROMPT_VERSION == "v1"
+    assert prompts.PROMPT_VERSION == "v1"

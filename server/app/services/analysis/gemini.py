@@ -1,26 +1,23 @@
-"""The Gemini call, and the only module that knows a provider exists.
+"""The Gemini adapter: transport only.
 
-Everything provider-specific is behind `generate()`: the SDK import, the prompt,
-the wire schema, the retry policy and the rate limiter. `ai.py` above it deals
-in `AiVerdict` and never sees a `google.genai` type, so replacing the engine is
-a rewrite of this file rather than a search across the service.
+Prompt wording, the wire schema, and `PROMPT_VERSION` live in `prompts.py`.
+This module owns the SDK import, retries, thinking budget, and rate limiter so
+`ai.py` deals in `AiVerdict` and never sees a `google.genai` type. Replacing
+the engine is a sibling adapter that imports the same prompts package.
 
 Three constraints shape what is here.
 
 **The output has to be a fixed shape.** Free text would have to be parsed, and a
 parser for prose written by a model is a parser for prose written by a *future*
-model too. The verdict is requested as JSON against a schema the API enforces.
+model too. The verdict is requested as JSON against the shared wire schema.
 
 **The budget is shared and metered.** A Gemini request costs money and the quota
 belongs to the deployment, not to the caller -- exactly the situation
 `app/throttle.py` already exists for, so the same sliding window is reused with
 its own numbers.
 
-**`hold` has to be cheap to say.** A model asked for a recommendation will
-produce one; twstock's 四大買賣點 never returned Don't touch across 20 000 draws
-and that was the bug this project was built to document. The prompt names hold
-as a correct answer and the rubric gives it conditions, rather than leaving it
-as the option the model reaches for only when it has nothing at all.
+**`hold` has to be cheap to say.** That rule is spelled in `prompts.py`; the
+adapter only has to deliver the instruction and schema intact.
 """
 
 from __future__ import annotations
@@ -28,21 +25,13 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Literal
-
-from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.schemas import AiVerdict, BestFourPointResult, PriceFeatures
+from app.services.analysis import prompts
 from app.throttle import SlidingWindowThrottle
 
 logger = logging.getLogger(__name__)
-
-#: Bumped whenever the prompt or the rubric below changes. It is part of the
-#: `ai_analysis` unique key, so a bump invalidates nothing and re-generates on
-#: demand -- and, more to the point, keeps old verdicts attributable to the
-#: wording that produced them.
-PROMPT_VERSION = "v1"
 
 _settings = get_settings()
 
@@ -81,73 +70,6 @@ class Generation:
     latency_ms: int
 
 
-class _WireVerdict(BaseModel):
-    """What the model is asked to fill in.
-
-    Kept separate from `AiVerdict` on purpose. `size` is a plain enum including
-    "none" rather than a nullable field: a union in the response schema is one
-    more thing for the API to get right, and mapping "none" to null here costs a
-    single line. The public shape stays null-when-hold regardless of what any
-    provider prefers to emit.
-    """
-
-    action: Literal["enter", "exit", "hold"]
-    size: Literal["large", "medium", "small", "none"]
-    confidence: Literal["high", "medium", "low"]
-    headline: str = Field(description="One sentence stating the call and its single strongest justification.")
-    reasons: list[str] = Field(description="2-4 findings, each citing a number from the supplied data.")
-    risks: list[str] = Field(description="1-3 things that would make this call wrong.")
-
-
-SYSTEM_INSTRUCTION = """\
-You are a disciplined technical analyst reading one Taiwan-listed instrument.
-
-You will be given a set of derived measurements for a single trading day, plus
-the verdict a deterministic rule engine reached from the same bars. Decide what
-a holder should do with their position.
-
-ANSWER SHAPE
-
-action  enter  open or add to a position
-        exit   close or reduce a position
-        hold   leave the position alone
-
-size    How much of a position the action applies to. Use "none" when, and only
-        when, action is "hold".
-
-        large   Trend, volume and price location all point the same way and the
-                risks you can name are minor. This is the rare case; do not
-                reach for it because the move looks obvious.
-        medium  The balance of evidence points one way and you can state the
-                counter-evidence.
-        small   A probe or a trim. The signal is thin, volatility is high, or
-                price sits at an extreme where being wrong is expensive.
-
-RULES
-
-1. Use only the measurements supplied. You have no news, no earnings, no
-   institutional flow and no broker data. Do not invent any, and do not reason
-   from what you remember about this company.
-2. "hold" is a correct and expected answer. Mixed evidence is a reason to hold,
-   and so is a move that has already happened. Do not manufacture a trade.
-3. Every entry in `reasons` must cite a number you were given. "Volume is 1.8x
-   its 5-day average" is a reason; "momentum looks strong" is not.
-4. `risks` must name what would make this call wrong, not generic warnings about
-   market conditions.
-5. You may agree or disagree with the rule engine. If you disagree, say so in
-   `reasons` and say what it is missing.
-6. Confidence describes the evidence, not your enthusiasm. Thin or contradictory
-   measurements mean low confidence even when the action seems clear.
-
-Write every string in {language}. Be specific and brief; no disclaimers, no
-preamble, no restating the question."""
-
-_LANGUAGE = {
-    "zh-TW": "Traditional Chinese (Taiwan)",
-    "en": "English",
-}
-
-
 def is_configured() -> bool:
     """Whether a key is present. The router turns 503 on this, not on a failure."""
     return bool(_settings.gemini_api_key)
@@ -164,29 +86,6 @@ def _client():
     return genai.Client(api_key=_settings.gemini_api_key)
 
 
-def _prompt(
-    *,
-    sid: str,
-    name: str,
-    features: PriceFeatures,
-    traditional: BestFourPointResult,
-) -> str:
-    """The user turn: the facts, as JSON, with nothing inferred.
-
-    The measurements go in as the same JSON the API returns to the browser, so
-    what the model saw and what the card shows cannot drift apart.
-    """
-    return (
-        f"Instrument: {sid} {name}\n"
-        f"Trading day: {features.as_of.isoformat()}\n\n"
-        f"Measurements:\n{features.model_dump_json(indent=2)}\n\n"
-        f"Rule engine (四大買賣點) verdict for the same bars:\n"
-        f"  signal: {traditional.signal}\n"
-        f"  label: {traditional.label}\n"
-        f"  reasons: {'; '.join(traditional.reasons) or '(none given)'}\n"
-    )
-
-
 def _finish_reason(response) -> str:
     """Why the model stopped, for the log line that explains an empty body.
 
@@ -197,25 +96,6 @@ def _finish_reason(response) -> str:
     if not candidates:
         return "no-candidates"
     return str(getattr(candidates[0], "finish_reason", "unknown"))
-
-
-def _to_verdict(wire: _WireVerdict) -> AiVerdict:
-    # The schema lets the model emit a size alongside hold, or "none" alongside
-    # enter. The database has a CHECK constraint for the same pair of mistakes;
-    # this is where they are corrected rather than rejected, because a usable
-    # answer with an inconsistent size is not worth failing the request over.
-    size = None if wire.action == "hold" else wire.size
-    if size == "none":
-        size = "small"
-
-    return AiVerdict(
-        action=wire.action,
-        size=size,
-        confidence=wire.confidence,
-        headline=wire.headline.strip(),
-        reasons=[r.strip() for r in wire.reasons if r.strip()],
-        risks=[r.strip() for r in wire.risks if r.strip()],
-    )
 
 
 def generate(
@@ -231,9 +111,7 @@ def generate(
 
     client = _client()
     config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_INSTRUCTION.format(
-            language=_LANGUAGE.get(locale, _LANGUAGE["zh-TW"])
-        ),
+        system_instruction=prompts.system_instruction(locale),
         temperature=_settings.gemini_temperature,
         max_output_tokens=_settings.gemini_max_output_tokens,
         # Set explicitly rather than left to the model's default. On the 2.5
@@ -245,12 +123,14 @@ def generate(
             thinking_budget=_settings.gemini_thinking_budget
         ),
         response_mime_type="application/json",
-        response_json_schema=_WireVerdict.model_json_schema(),
+        response_json_schema=prompts.WireVerdict.model_json_schema(),
         http_options=types.HttpOptions(
             timeout=int(_settings.gemini_timeout_seconds * 1000)
         ),
     )
-    contents = _prompt(sid=sid, name=name, features=features, traditional=traditional)
+    contents = prompts.user_prompt(
+        sid=sid, name=name, features=features, traditional=traditional
+    )
 
     last_error: Exception | None = None
     for attempt in range(MAX_ATTEMPTS):
@@ -269,7 +149,7 @@ def generate(
                 raise AiFailed(
                     f"empty response (finish_reason={_finish_reason(response)})"
                 )
-            wire = _WireVerdict.model_validate_json(body)
+            wire = prompts.WireVerdict.model_validate_json(body)
         except errors.APIError as exc:
             last_error = exc
             code = getattr(exc, "code", None)
@@ -290,7 +170,7 @@ def generate(
 
         usage = response.usage_metadata
         return Generation(
-            verdict=_to_verdict(wire),
+            verdict=prompts.to_verdict(wire),
             input_tokens=getattr(usage, "prompt_token_count", None) if usage else None,
             output_tokens=(
                 getattr(usage, "candidates_token_count", None) if usage else None
