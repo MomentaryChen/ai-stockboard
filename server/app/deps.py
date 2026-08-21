@@ -187,6 +187,38 @@ def force_refresh(
     return True
 
 
+def regenerate_ai(
+    regenerate: bool = Query(
+        False, description="忽略已存的判讀，重新請 AI 生成一次（需 ADMIN）"
+    ),
+    user: AppUser | None = Depends(get_optional_user),
+) -> bool:
+    """The AI equivalent of `force_refresh`, and ADMIN-only for the same reason.
+
+    An AI verdict is cached per (stock, trading day, model, prompt), which is
+    what stops a watchlist board from billing once per card per visitor.
+    `regenerate` is the switch that turns that cached route back into a metered
+    one -- except the meter here is a bill rather than a rate limit, so it is
+    kept away from the ordinary daily quota entirely.
+
+    Its legitimate use is checking a prompt change against a stock whose verdict
+    is already stored, which is an operator's job, not a reader's.
+    """
+    if not regenerate:
+        return False
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Sign in as ADMIN to regenerate an AI verdict",
+            headers=_UNAUTHENTICATED,
+        )
+    if user.role != ROLE_ADMIN:
+        raise HTTPException(
+            status_code=403, detail="Only an ADMIN may regenerate an AI verdict"
+        )
+    return True
+
+
 def limit_anonymous_window(
     user: AppUser | None, requested: int, anonymous_max: int, unit: str
 ) -> None:

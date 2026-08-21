@@ -113,6 +113,101 @@ export interface TraditionalAnalysisBatchResponse {
   errors: Record<string, string>
 }
 
+// --- AI analysis ---
+//
+// The rule engine answers buy/sell/hold. The AI engine answers a position
+// question, so it has its own vocabulary: what to do, and with how much.
+
+/** `size` is null exactly when the action is `hold`. */
+export type AiAction = 'enter' | 'exit' | 'hold'
+export type AiSize = 'large' | 'medium' | 'small'
+
+export interface AiVerdict {
+  action: AiAction
+  size: AiSize | null
+  confidence: 'high' | 'medium' | 'low'
+  headline: string
+  reasons: string[]
+  risks: string[]
+}
+
+export interface AiMaFeatures {
+  ma5: number | null
+  ma10: number | null
+  ma20: number | null
+  ma60: number | null
+  close_vs_ma5_pct: number | null
+  close_vs_ma20_pct: number | null
+  close_vs_ma60_pct: number | null
+  alignment: 'bullish' | 'bearish' | 'mixed' | 'unknown'
+}
+
+export interface AiVolumeFeatures {
+  latest_shares: number | null
+  avg5_shares: number | null
+  avg20_shares: number | null
+  ratio_to_avg5: number | null
+  ratio_to_avg20: number | null
+  trend: 'expanding' | 'contracting' | 'steady' | 'unknown'
+}
+
+export interface AiMomentumFeatures {
+  return_1d_pct: number | null
+  return_5d_pct: number | null
+  return_20d_pct: number | null
+  return_60d_pct: number | null
+  consecutive_days: number
+  gap_pct: number | null
+}
+
+export interface AiRangeFeatures {
+  window_days: number
+  high: number | null
+  low: number | null
+  position_pct: number | null
+  drawdown_from_high_pct: number | null
+}
+
+export interface AiVolatilityFeatures {
+  stdev_20d_pct: number | null
+  avg_abs_move_20d_pct: number | null
+}
+
+/** Exactly what the model was shown -- rendered so a verdict can be checked. */
+export interface AiPriceFeatures {
+  as_of: string
+  sample_size: number
+  latest_close: number
+  ma: AiMaFeatures
+  volume: AiVolumeFeatures
+  momentum: AiMomentumFeatures
+  range: AiRangeFeatures
+  volatility: AiVolatilityFeatures
+  bias_3_6: number[]
+}
+
+export interface AiAnalysisResponse {
+  sid: string
+  name: string
+  as_of: string
+  generated_at: string
+  model: string
+  prompt_version: string
+  locale: string
+  /** False only when this call actually spent a Gemini request. */
+  cached: boolean
+  verdict: AiVerdict
+  features: AiPriceFeatures
+  /** The rule engine's answer for the same bars, for the side-by-side. */
+  traditional: BestFourPointResult
+}
+
+export interface AiQuotaStatus {
+  used: number
+  limit: number
+  resets_at: string
+}
+
 /** How a signal type scored over one forward horizon.
  *
  *  `samples` counts only signals whose horizon has fully elapsed; `pending` is

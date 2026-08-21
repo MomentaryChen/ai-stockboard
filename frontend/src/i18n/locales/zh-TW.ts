@@ -265,6 +265,43 @@ export const zhTW = {
   'bfp.twstockWarning':
     'twstock 1.5.1 的移植缺陷讓乖離轉折關卡失效，訊號會明顯偏多，僅供對照。',
 
+  // ---------- AI position call ----------
+  'ai.title': 'AI 進出場評估',
+  'ai.run': 'AI 評估',
+  'ai.running': '評估中…',
+  'ai.rerun': '重新評估',
+  // Each combination gets its own message: Chinese puts the size before the
+  // action (大量進場) and English after it (Enter — large), so composing the
+  // label from two fragments would read wrong in one language or the other.
+  'ai.callEnterLarge': '大量進場',
+  'ai.callEnterMedium': '中量進場',
+  'ai.callEnterSmall': '小量進場',
+  'ai.callExitLarge': '大量退場',
+  'ai.callExitMedium': '中量退場',
+  'ai.callExitSmall': '小量退場',
+  'ai.callHold': '觀望',
+  'ai.confidence': '信心',
+  'ai.confidenceHigh': '高',
+  'ai.confidenceMedium': '中',
+  'ai.confidenceLow': '低',
+  'ai.reasons': '判斷依據',
+  'ai.risks': '風險',
+  'ai.agreesWithRule': '與四大買賣點一致（{label}）',
+  'ai.differsFromRule': '四大買賣點為 {label}，AI 判讀不同',
+  'ai.asOf': '依據 {date} 收盤',
+  'ai.generatedAt': '{time} 生成',
+  'ai.cached': '沿用已生成的判讀',
+  'ai.modelNote': '{model}・提示詞 {version}',
+  'ai.quotaLeft': '今日還可評估 {left} 次',
+  'ai.quotaSpent': '今日評估次數已用完，{time} 後重置',
+  'ai.empty': '按下按鈕，讓 AI 依價量資料給出進出場與部位建議。',
+  'ai.unavailable': '此伺服器未設定 AI 評估（缺少 GEMINI_API_KEY）。',
+  'ai.insufficient': '歷史資料不足，無法評估。',
+  'ai.failed': 'AI 評估失敗：{message}',
+  'ai.signIn': '登入後可使用 AI 評估。',
+  'ai.disclaimer':
+    '本評估由 AI 依歷史價量資料生成，未含基本面、法人與新聞，僅供研究參考，不構成投資建議。',
+
   // ---------- signal backtest ----------
   'bt.title': '訊號回測',
   'bt.loading': '回測計算中…',

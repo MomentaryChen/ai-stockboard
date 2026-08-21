@@ -525,3 +525,89 @@ class WatchlistItem(Base):
     )
 
     __table_args__ = (Index("ix_watchlist_item_user_position", "user_id", "position"),)
+
+
+class AiAnalysis(Base):
+    """One generated position call, kept so the same one is never paid for twice.
+
+    The natural key is (sid, as_of, model, prompt_version, locale) and it is
+    enforced as a unique index, which makes this table a **shared** cache rather
+    than a per-user log: twenty people watching 2330 on the same session get one
+    Gemini request between them. `requested_by` records whichever account
+    happened to press the button first, and is what the daily quota counts --
+    so a cache hit costs its reader nothing, which is the whole point.
+
+    `model` and `prompt_version` are part of the key rather than plain columns
+    because a verdict is only comparable to another verdict produced the same
+    way. Changing the prompt has to produce a new row, or the next evaluation
+    run would average two different engines together and call it a trend.
+
+    `features` stores the exact input the model saw. Without it a bad verdict is
+    unexplainable after the fact: the bars can be re-read, but the derived
+    numbers depend on whatever `features.py` looked like that day.
+    """
+
+    __tablename__ = "ai_analysis"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    sid: Mapped[str] = mapped_column(String(16))
+    # The trading day the bars ended on -- what the verdict is about. Not the
+    # day it was generated: asking again on Sunday about Friday's close must hit
+    # the row written on Friday, not produce a second one.
+    as_of: Mapped[datetime.date] = mapped_column(Date)
+
+    model: Mapped[str] = mapped_column(String(64))
+    prompt_version: Mapped[str] = mapped_column(String(16))
+    locale: Mapped[str] = mapped_column(String(8))
+
+    action: Mapped[str] = mapped_column(String(8))  # enter / exit / hold
+    size: Mapped[str | None] = mapped_column(String(8))  # large / medium / small
+    confidence: Mapped[str] = mapped_column(String(8))  # high / medium / low
+    headline: Mapped[str] = mapped_column(String(500))
+    reasons: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    risks: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+
+    features: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+
+    # What the call cost. Null when the provider did not report usage; the
+    # column exists so "what is this feature spending" is a query rather than a
+    # trawl through logs.
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+
+    # SET NULL rather than CASCADE: deleting an account must not delete the
+    # spending record, and the verdict itself was never that account's property.
+    requested_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index(
+            "ux_ai_analysis_subject",
+            "sid",
+            "as_of",
+            "model",
+            "prompt_version",
+            "locale",
+            unique=True,
+        ),
+        # The quota check counts one account's rows for today.
+        Index("ix_ai_analysis_requested_by_created", "requested_by", "created_at"),
+        CheckConstraint(
+            "action in ('enter', 'exit', 'hold')", name="ck_ai_analysis_action"
+        ),
+        CheckConstraint(
+            "size is null or size in ('large', 'medium', 'small')",
+            name="ck_ai_analysis_size",
+        ),
+        # hold means no position change, so a size on it would be meaningless;
+        # enter/exit without one would leave the card unable to render 大/中/小.
+        CheckConstraint(
+            "(action = 'hold') = (size is null)", name="ck_ai_analysis_size_matches_action"
+        ),
+    )

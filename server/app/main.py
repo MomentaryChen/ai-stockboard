@@ -79,7 +79,7 @@ app = FastAPI(
     title="ai-stockboard API",
     description=(
         "台股看板服務：歷史股價、除權息、即時報價、股票搜尋，"
-        "以及傳統技術分析（AI 分析開發中）。行情資料來源為 twstock。"
+        "以及規則式技術分析、訊號回測與 AI 進出場評估。行情資料來源為 twstock。"
     ),
     version="0.1.0",
     lifespan=lifespan,
