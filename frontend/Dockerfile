@@ -1,5 +1,5 @@
 # Build context is frontend/. The result is a static bundle served by nginx,
-# which also proxies /api to the FastAPI container (see nginx.conf).
+# which also proxies /api to the FastAPI container (see nginx/).
 FROM node:22-alpine AS build
 
 # corepack pins pnpm to the "packageManager" version in package.json, so the
