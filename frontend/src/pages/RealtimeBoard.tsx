@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../api/client'
 import type { BestFourPointResult } from '../api/types'
@@ -14,6 +14,7 @@ import {
   type BoardView,
   type GroupFilter,
 } from '../boardPrefs'
+import { aiVerdictKey } from '../components/AiVerdict'
 import type { BoardEntry } from '../components/QuoteRow'
 import RealtimeCard from '../components/RealtimeCard'
 import SignInPrompt from '../components/SignInPrompt'
@@ -31,7 +32,8 @@ import { MAX_WATCHLIST } from '../watchlistStorage'
 
 export default function RealtimeBoard() {
   const { status } = useAuth()
-  const { intlTag, t } = useI18n()
+  const { intlTag, locale, t } = useI18n()
+  const queryClient = useQueryClient()
   const authenticated = status === 'authenticated'
   // `?view=mini` is the chrome-free variant, meant to be opened in its own
   // small window; App drops the topbar for it.
@@ -85,6 +87,44 @@ export default function RealtimeBoard() {
     enabled: authenticated && watchlist.length > 0,
     staleTime: 60 * 60 * 1000,
   })
+
+  /**
+   * Verdicts the board already has, in one request instead of one per card.
+   *
+   * The card view mounts an AI panel per row, and each would otherwise read its
+   * own -- twenty connections asking twenty questions that one query answers.
+   * Nothing here can generate anything: `/api/analysis/ai` is cache-only, so a
+   * board load stays free however many rows it has.
+   *
+   * Keyed on the locale as well as the watchlist because a verdict is prose the
+   * model wrote in one language, and the panels key their cache the same way.
+   */
+  const aiVerdicts = useQuery({
+    queryKey: ['ai-verdict', 'batch', watchlist, locale],
+    queryFn: () => api.getAiAnalysisBatch(watchlist, locale),
+    enabled: authenticated && watchlist.length > 0,
+    staleTime: 60 * 60 * 1000,
+  })
+
+  // Seeded into the per-panel keys rather than passed down as a prop: the panel
+  // writes that same key when the button is pressed, so one place holds the
+  // verdict whether it was read or paid for.
+  useEffect(() => {
+    const items = aiVerdicts.data?.items
+    if (!items) return
+    const found = new Set(items.map((item) => item.sid))
+    for (const item of items) {
+      queryClient.setQueryData(aiVerdictKey(item.sid, locale), item)
+    }
+    // An absent sid is a real answer -- "nobody has generated one" -- and has
+    // to be written too, or the panel would fall back to reading it alone and
+    // the batch would have saved nothing.
+    for (const code of watchlist) {
+      if (!found.has(code)) {
+        queryClient.setQueryData(aiVerdictKey(code, locale), null)
+      }
+    }
+  }, [aiVerdicts.data, watchlist, locale, queryClient])
 
   const bfpBySid = useMemo(() => {
     const map = new Map<string, BestFourPointResult>()
@@ -228,6 +268,11 @@ export default function RealtimeBoard() {
             onAssign={assign}
             bfp={entry.bfp}
             bfpLoading={analysis.isPending}
+            aiBatched
+            // `isLoading`, not `isPending`: this one gates a button, and a
+            // disabled query is pending forever -- which would leave the panel
+            // unclickable rather than merely un-spinnered.
+            aiLoading={aiVerdicts.isLoading}
           />
         ) : (
           // Watchlist entries the upstream returned nothing for still need a way out.

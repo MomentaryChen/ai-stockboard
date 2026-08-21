@@ -21,6 +21,11 @@ Three gates, in order:
 `force` re-generates past gate 1. It is ADMIN-only at the router, for the same
 reason `force` on the history routes is: it is the one knob that turns a cached
 endpoint back into a metered one.
+
+Gate 1 has its own entrance, `get_cached`, which stops there and returns None
+instead of falling through to gates 2 and 3. `get_or_create` is the door that
+may spend money and so must stay a POST; `get_cached` is the door a page can
+open on render.
 """
 
 from __future__ import annotations
@@ -146,6 +151,111 @@ def _response(
         verdict=_row_to_verdict(row),
         features=features,
         traditional=traditional_result,
+    )
+
+
+def get_cached_many(
+    db: Session,
+    *,
+    names: dict[str, str],
+    rows_by_sid: dict[str, list[DailyPrice]],
+    locale: str = DEFAULT_LOCALE,
+) -> list[AiAnalysisResponse]:
+    """`get_cached` over a basket, in one lookup instead of one per sid.
+
+    Sids with nothing stored are dropped rather than reported: on a watchlist
+    that is the ordinary state of most rows, and the caller's job is to show
+    what has been paid for, not to enumerate what has not.
+
+    The `as_of` each sid is keyed under differs -- a stock that did not trade
+    on the latest session ends on an earlier bar -- so the row filter cannot be
+    pushed entirely into SQL. It is one indexed read over the basket plus a
+    dictionary match, which is still a single round trip.
+    """
+    locale = normalise_locale(locale)
+
+    as_of_by_sid: dict[str, PriceFeatures] = {}
+    for sid, rows in rows_by_sid.items():
+        extracted = feature_service.extract(rows)
+        if extracted is not None:
+            as_of_by_sid[sid] = extracted
+    if not as_of_by_sid:
+        return []
+
+    model = model_settings.active_model(db)
+    stored = db.execute(
+        select(AiAnalysis).where(
+            AiAnalysis.sid.in_(list(as_of_by_sid)),
+            AiAnalysis.as_of.in_({f.as_of for f in as_of_by_sid.values()}),
+            AiAnalysis.model == model,
+            AiAnalysis.prompt_version == prompts.PROMPT_VERSION,
+            AiAnalysis.locale == locale,
+        )
+    ).scalars()
+
+    out: list[AiAnalysisResponse] = []
+    for row in stored:
+        extracted = as_of_by_sid.get(row.sid)
+        # The `as_of` IN clause is a union across the basket, so a row can come
+        # back matching *another* sid's trading day. This is the exact match.
+        if extracted is None or row.as_of != extracted.as_of:
+            continue
+        stock = traditional.build_stock(rows_by_sid[row.sid])
+        out.append(
+            _response(
+                sid=row.sid,
+                name=names.get(row.sid, row.sid),
+                row=row,
+                features=extracted,
+                traditional_result=traditional.best_four_point(stock),
+                cached=True,
+            )
+        )
+    return out
+
+
+def get_cached(
+    db: Session,
+    *,
+    sid: str,
+    name: str,
+    rows: list[DailyPrice],
+    locale: str = DEFAULT_LOCALE,
+) -> AiAnalysisResponse | None:
+    """The stored verdict for these bars, or None. Never generates, never charges.
+
+    `get_or_create` is the metered door and has to be a POST; this is the free
+    one. Separating them is what lets a page *display* a verdict it did not pay
+    for: before this existed the only way to discover a cached row was to POST,
+    so every reader was offered a button and a board that had already been
+    judged looked unjudged until somebody clicked.
+
+    Returns None for every kind of absence -- too few bars, no row for this
+    trading day, a model or prompt the row predates. The caller cannot act on
+    the distinction: all of them mean "nothing free to show, offer the button",
+    and raising InsufficientData here would make a 20-sid board read as broken
+    because two of its stocks are newly listed.
+    """
+    locale = normalise_locale(locale)
+
+    extracted = feature_service.extract(rows)
+    if extracted is None:
+        return None
+
+    row = _find(db, sid, extracted.as_of, locale, model_settings.active_model(db))
+    if row is None:
+        return None
+
+    # After the lookup, not before: on a board where most sids miss, this is
+    # the only work in the function worth skipping.
+    traditional_result = traditional.best_four_point(traditional.build_stock(rows))
+    return _response(
+        sid=sid,
+        name=name,
+        row=row,
+        features=extracted,
+        traditional_result=traditional_result,
+        cached=True,
     )
 
 

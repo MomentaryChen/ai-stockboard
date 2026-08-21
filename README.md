@@ -559,7 +559,9 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | PATCH | `/api/jobs/{job_id}/schedule` | Change when a job fires (**ADMIN**) |
 | POST | `/api/jobs/{job_id}/run` | Run now; answers 202 and continues server-side (**ADMIN**) |
 | POST | `/api/stocks/sync?force=true` | Sync the listing and wait for it; superseded by the above (**ADMIN**) |
-| POST | `/api/stocks/{sid}/analysis/ai` | AI position call: enter / exit / hold, and at what size (**需登入**) |
+| GET | `/api/stocks/{sid}/analysis/ai` | The position call already generated for this stock's latest session, or 204. Cache-only: never reaches Gemini or the exchange, and never counts against the quota (**需登入**) |
+| GET | `/api/analysis/ai?sids=2330,0050` | The same read for a whole watchlist in one request. A stock with no stored verdict is simply absent from `items` (**需登入**) |
+| POST | `/api/stocks/{sid}/analysis/ai` | AI position call: enter / exit / hold, and at what size. The metered one -- a miss spends a Gemini request and a quota slot (**需登入**) |
 | GET | `/api/analysis/ai/quota` | Generations left on this account today (**需登入**) |
 
 `{sid}` 可以是個股代碼，也可以是大盤 `t00`。

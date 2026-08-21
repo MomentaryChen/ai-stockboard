@@ -11,10 +11,13 @@ rule-based one over bars already in the database and reports its hit rate
 against the base rate of the same days -- so a second engine has a number to
 beat rather than an anecdote to differ from.
 
-`/analysis/ai` is that second engine. It costs a Gemini request, so it answers
-on POST, requires a sign-in, and serves a shared cache keyed on the trading day
--- see `services/analysis/ai.py` for what each of those is defending. It has no
-backtest of its own yet, which is the honest gap between it and the route above.
+`/analysis/ai` is that second engine, and it is the one route here that exists
+twice. Generating costs a Gemini request, so that half is a POST. Reading what
+was already generated costs nothing, so that half is a GET -- and it has to be,
+because a verdict nobody can see without spending is a verdict nobody sees. The
+shared cache underneath both is keyed on the trading day; see
+`services/analysis/ai.py` for what each gate is defending. It has no backtest of
+its own yet, which is the honest gap between it and the route above.
 """
 
 import datetime
@@ -28,6 +31,7 @@ from app import deps
 from app.db import get_db
 from app.models import AppUser
 from app.schemas import (
+    AiAnalysisBatchResponse,
     AiAnalysisResponse,
     AiQuotaStatus,
     BacktestBaselineStats,
@@ -242,6 +246,130 @@ def get_traditional_analysis_batch(
 AI_MONTHS = 6
 
 
+def _ai_window_start() -> datetime.date:
+    """First day of the oldest month the AI window covers."""
+    buckets = history_service.month_range(AI_MONTHS)
+    return datetime.date(buckets[0][0], buckets[0][1], 1)
+
+
+def _cached_verdict(
+    db: Session, sid: str, name: str, locale: str
+) -> AiAnalysisResponse | None:
+    """A stored verdict for `sid`, or None -- without ever calling the exchange.
+
+    Two conditions, and the first is the subtle one: the stored bars have to be
+    current before a verdict drawn from them can be trusted. `months_are_cached`
+    is the same staleness test `get_history` would apply, asked without acting
+    on it, so a True here means `read_prices` is exactly the input the metered
+    path would have used.
+    """
+    buckets = history_service.month_range(AI_MONTHS)
+    if not history_service.months_are_cached(db, sid, buckets):
+        return None
+
+    rows = history_service.read_prices(db, sid, _ai_window_start())
+    return ai_service.get_cached(db, sid=sid, name=name, rows=rows, locale=locale)
+
+
+@router.get(
+    "/{sid}/analysis/ai",
+    response_model=AiAnalysisResponse,
+    # Declared, or the schema would promise a verdict on every 2xx and a client
+    # generated from it would dereference the empty body.
+    responses={204: {"description": "尚未產生過這個交易日的判讀"}},
+)
+def get_ai_analysis(
+    sid: str,
+    response: Response,
+    locale: str = Query(
+        ai_service.DEFAULT_LOCALE, description="要讀哪個語言的判讀（zh-TW / en）"
+    ),
+    _user: AppUser = Depends(deps.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The verdict already generated for this stock's latest session, if any.
+
+    The free half of the POST below, and the reason a page can show a verdict
+    without offering a button first. Nothing here can spend a Gemini request:
+    it reads `daily_price` and `ai_analysis` and stops, so it neither calls the
+    exchange nor touches the quota -- which is what lets it run on mount for
+    every row of a watchlist.
+
+    204 rather than 404 when there is no verdict: an empty cache is the normal
+    state of this endpoint, not an error, and 404 here would be indistinguishable
+    from the 404 an unknown sid gets three lines below.
+
+    Signed in for the same reason `/api/realtime` is -- this is the one class of
+    market data the deployment pays per request for, and read access to it
+    follows the account, not the URL.
+    """
+    info = codes_service.get_stock(sid)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")
+
+    result = _cached_verdict(db, sid, info.name, ai_service.normalise_locale(locale))
+    if result is None:
+        return Response(status_code=204)
+
+    # Same as the POST: a verdict is per-account-metered upstream of here, so no
+    # shared proxy may keep a copy. The row it came from is the cache that
+    # matters, and it is already keyed on the trading day.
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@batch_router.get("/ai", response_model=AiAnalysisBatchResponse)
+def get_ai_analysis_batch(
+    response: Response,
+    sids: str = Query(..., description="逗號分隔的股票代碼，例如 2330,0050"),
+    locale: str = Query(
+        ai_service.DEFAULT_LOCALE, description="要讀哪個語言的判讀（zh-TW / en）"
+    ),
+    _user: AppUser = Depends(deps.get_current_user),
+    db: Session = Depends(get_db),
+) -> AiAnalysisBatchResponse:
+    """Whatever has already been generated for a watchlist-sized basket.
+
+    One request instead of twenty. Without it a board that wants to show the
+    calls it has already paid for opens a connection per row, and does it again
+    on every navigation -- the same reason `/api/analysis/traditional` and
+    `/api/analysis/backtest` are batched.
+
+    Cache-only, like both of those: a sid with stale or missing bars is simply
+    left out of `items`, never fetched. A verdict is the one thing on this board
+    that nobody gets for free, so the absence has to stay an absence -- this
+    route must never be the thing that decides to spend money.
+    """
+    ids = [s.strip() for s in sids.split(",") if s.strip()][:MAX_BATCH]
+    locale = ai_service.normalise_locale(locale)
+
+    names: dict[str, str] = {}
+    errors: dict[str, str] = {}
+    for sid in ids:
+        info = codes_service.get_stock(sid)
+        if info is None:
+            errors[sid] = f"Stock ID '{sid}' not found"
+        else:
+            names[sid] = info.name
+
+    # Same freshness gate the single route applies, asked once for the basket.
+    # A sid whose months have expired is dropped here rather than judged on
+    # bars the exchange has moved past -- and dropping it costs the caller
+    # nothing, because the button is still there.
+    buckets = history_service.month_range(AI_MONTHS)
+    fresh = history_service.cached_sids(db, list(names), buckets)
+
+    rows_by_sid = history_service.read_prices_many(
+        db, sorted(fresh), _ai_window_start()
+    )
+    items = ai_service.get_cached_many(
+        db, names=names, rows_by_sid=rows_by_sid, locale=locale
+    )
+
+    response.headers["Cache-Control"] = "no-store"
+    return AiAnalysisBatchResponse(items=items, errors=errors)
+
+
 @router.post("/{sid}/analysis/ai", response_model=AiAnalysisResponse)
 def generate_ai_analysis(
     sid: str,
@@ -266,6 +394,18 @@ def generate_ai_analysis(
     info = codes_service.get_stock(sid)
     if info is None:
         raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")
+
+    # Probe the verdict cache before loading history, but only when the bars we
+    # already hold are what `get_history` would return anyway -- otherwise a
+    # stock whose current month has expired would be judged on bars the
+    # exchange has since moved past, and the answer would be for the wrong
+    # trading day. On a hit this turns a request that could queue six TWSE
+    # month-fetches into two indexed reads.
+    if not regenerate:
+        hit = _cached_verdict(db, sid, info.name, locale)
+        if hit is not None:
+            response.headers["Cache-Control"] = "no-store"
+            return hit
 
     rows, _, _ = history_service.get_history(db, sid, AI_MONTHS)
 

@@ -1,11 +1,17 @@
 /**
- * The AI position call: a button, and what came back.
+ * The AI position call: what has already been decided, and a button to decide it.
  *
- * Deliberately not a query that runs on mount. Every other panel in this app
- * fetches as soon as it is rendered, because every other endpoint answers from
- * a cache that costs nothing to read. This one can spend a Gemini request, so
- * the user has to ask -- and a watchlist of twenty stocks must not turn into
- * twenty generations because somebody opened the page.
+ * The panel reads on mount and writes only on a click, because those are two
+ * different endpoints. GET /analysis/ai is cache-only -- it cannot reach Gemini
+ * or the exchange -- so running it for every row of a board costs nothing and
+ * is what lets a verdict somebody already paid for actually appear. POST is the
+ * metered one, and it still waits for the button: twenty stocks on screen must
+ * never become twenty generations because a page opened.
+ *
+ * That split is the whole feature. Before it existed the only way to discover a
+ * stored verdict was to POST, so a board that had already been judged rendered
+ * as though it never had, and every reader was shown a button whose answer was
+ * sitting in the database.
  *
  * Two layouts, one component, because the verdict is the same object in both:
  *
@@ -29,16 +35,20 @@
  * still on screen next to it either way: the 四大買賣點 chip sits above the
  * inline panel, and the analysis stack sits below the band.
  *
- * The result is written into the react-query cache under (sid, locale) rather
- * than kept in local state alone, so collapsing a board row and opening it
- * again shows the verdict already paid for instead of offering the button
- * again. The server would have answered from its own cache anyway, but a round
- * trip that reports `cached: true` still looks like a second charge to anyone
- * watching the button spin.
+ * (sid, locale) is the react-query key and the only place the verdict lives --
+ * no local copy alongside it. That is what makes a locale switch correct for
+ * free: the key changes, and whatever was already paid for in the new language
+ * is what renders, rather than prose in the language the rest of the page has
+ * just stopped speaking.
+ *
+ * `batched` is for parents that fetch the whole basket themselves -- the card
+ * board mounts a panel per row, and twenty single reads is the thing
+ * /api/analysis/ai exists to collapse. Such a parent seeds this exact key, so
+ * the panel below only has to stop asking; it reads the cache either way. The
+ * convention is the one `bfp`/`bfpLoading` already set on the same boards.
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
 
 import { ApiError, api } from '../api/client'
 import type { AiAnalysisResponse, AiVerdict as Verdict } from '../api/types'
@@ -113,32 +123,57 @@ const WRAPPER_CLASS: Record<Layout, string> = {
   spotlight: 'card ai-spotlight',
 }
 
+/** Read once an hour at most. A verdict is keyed on the trading day, so within
+ *  a session there is nothing newer to find -- and the only thing that *can*
+ *  change it, this user pressing the button, writes the cache directly. */
+const VERDICT_STALE_MS = 60 * 60 * 1000
+
+/** The key both this panel and any batching parent write. Exported so a parent
+ *  seeding the basket cannot drift from the panel reading it. */
+export function aiVerdictKey(sid: string, locale: string) {
+  return ['ai-verdict', sid, locale]
+}
+
 interface Props {
   sid: string
   layout?: Layout
+  /** A parent has fetched the whole basket and seeded this key -- do not ask
+   *  again. See the note at the top of the file. */
+  batched?: boolean
+  /** That parent's read is still in flight, so an empty cache is premature.
+   *  Same pair as `bfp`/`bfpLoading` on the boards that pass both. */
+  batchLoading?: boolean
 }
 
-export default function AiVerdictSection({ sid, layout = 'inline' }: Props) {
+export default function AiVerdictSection({
+  sid,
+  layout = 'inline',
+  batched,
+  batchLoading,
+}: Props) {
   const { t, locale, intlTag } = useI18n()
   const { status } = useAuth()
   const queryClient = useQueryClient()
   const spotlight = layout === 'spotlight'
 
-  const cacheKey = ['ai-verdict', sid, locale]
-  const [result, setResult] = useState<AiAnalysisResponse | null>(
-    () => queryClient.getQueryData<AiAnalysisResponse>(cacheKey) ?? null,
-  )
+  const cacheKey = aiVerdictKey(sid, locale)
 
-  // A verdict is written by the model in the language it was asked for, so
-  // switching language leaves prose on screen that the rest of the page no
-  // longer matches. Swap in whatever was already paid for in the new language,
-  // and otherwise fall back to the button. Adjusting state during render rather
-  // than in an effect so the mismatched text never reaches the screen.
-  const [shownLocale, setShownLocale] = useState(locale)
-  if (shownLocale !== locale) {
-    setShownLocale(locale)
-    setResult(queryClient.getQueryData<AiAnalysisResponse>(cacheKey) ?? null)
-  }
+  // Free, and therefore allowed to run on mount -- see the top of the file.
+  // `null` is a real answer here ("nobody has generated one"), so it is cached
+  // like any other rather than retried as a miss.
+  const stored = useQuery({
+    queryKey: cacheKey,
+    queryFn: () => api.getAiAnalysis(sid, locale),
+    enabled: status === 'authenticated' && !batched,
+    staleTime: VERDICT_STALE_MS,
+  })
+
+  const result = stored.data ?? null
+
+  // `isLoading`, not `isPending`: a disabled query stays pending forever, and a
+  // batched panel would show a spinner that never resolves. Whether the basket
+  // is still coming is the parent's fact, so the parent states it.
+  const reading = batched ? Boolean(batchLoading) : stored.isLoading
 
   // One shared request for the whole page: react-query dedupes on the key, so
   // the number on screen is right whichever row is open.
@@ -152,7 +187,7 @@ export default function AiVerdictSection({ sid, layout = 'inline' }: Props) {
   const run = useMutation({
     mutationFn: () => api.generateAiAnalysis(sid, locale),
     onSuccess: (data) => {
-      setResult(data)
+      // The cache is the only copy, so this is the whole of "show the result".
       queryClient.setQueryData(cacheKey, data)
       // Only a miss moves the counter, and the response is the only thing that
       // knows which it was -- so re-read rather than decrementing here.
@@ -210,14 +245,18 @@ export default function AiVerdictSection({ sid, layout = 'inline' }: Props) {
           {result && <AiCallChip verdict={result.verdict} compact={!spotlight} />}
         </div>
         <div className="row wrap" style={{ gap: 8 }}>
-          {!exhausted && left !== null && !result && (
+          {!exhausted && left !== null && !result && !reading && (
             <span className="dim ai-quota">{t('ai.quotaLeft', { left: String(left) })}</span>
           )}
-          {run.isPending && <span className="spinner" />}
+          {(run.isPending || reading) && <span className="spinner" />}
           <button
             type="button"
             className={`btn btn-sm${result || exhausted ? '' : ' btn-primary'}`}
-            disabled={run.isPending || (exhausted && !result)}
+            // Disabled while the free read is in flight too: until it lands we
+            // do not know whether this click would spend anything, and offering
+            // "開始評估" over a verdict that is about to appear invites paying
+            // for one that was already there.
+            disabled={run.isPending || reading || (exhausted && !result)}
             onClick={() => run.mutate()}
           >
             {run.isPending ? t('ai.running') : result ? t('ai.rerun') : t('ai.run')}
@@ -227,7 +266,7 @@ export default function AiVerdictSection({ sid, layout = 'inline' }: Props) {
 
       {unavailable && <p className="banner-warn ai-note">{t('ai.unavailable')}</p>}
       {insufficient && <p className="banner-warn ai-note">{t('ai.insufficient')}</p>}
-      {exhausted && !result && (
+      {exhausted && !result && !reading && (
         <p className="banner-warn ai-note">{t('ai.quotaSpent', { time: resetsAt })}</p>
       )}
       {error && !unavailable && !insufficient && !exhausted && (
@@ -236,7 +275,12 @@ export default function AiVerdictSection({ sid, layout = 'inline' }: Props) {
         </p>
       )}
 
-      {!result && !run.isPending && !error && <p className="dim ai-lead">{t('ai.empty')}</p>}
+      {/* "尚未評估" is a claim about the cache, so it waits for the cache to
+          answer -- otherwise every panel asserts it for a moment on mount and
+          then contradicts itself. */}
+      {!result && !run.isPending && !reading && !error && (
+        <p className="dim ai-lead">{t('ai.empty')}</p>
+      )}
 
       {result && <AiVerdictBody result={result} wide={spotlight} />}
     </section>
