@@ -17,9 +17,111 @@ ai-stockboard/
 ├── deployment/          docker-compose.yml + .env（DB、server、frontend 共用同一份設定）
 ├── server/              FastAPI (uv) + Dockerfile
 ├── frontend/            React 19 + Vite + Recharts（pnpm）+ Dockerfile / nginx.conf
+├── docs/
+│   └── screenshots/     The images this README embeds, captured by the script below
+├── tools/
+│   └── screenshots/     Playwright script that re-takes them from a running stack
 └── vendor/
     └── twstock/         行情資料來源（MIT，含原始 test/）
 ```
+
+---
+
+## Screenshots
+
+Every image below is captured from a running stack by `tools/screenshots`, not
+drawn by hand. Re-running the script after a UI change refreshes the whole set,
+which is the only way screenshots in a README stay true to the thing they claim
+to show.
+
+### Market board — `/`
+
+The landing view. While the session is open the index is the live one, ticking
+every 10 seconds; outside it the board falls back to the last close and says so.
+Underneath sit the opening intel for the watchlist, a K-line chart with the
+moving averages, and the same Best Four Point verdict individual stocks get —
+here applied to the index itself.
+
+![Market board](docs/screenshots/market-dashboard.png)
+
+### Stock view — `/stock/:sid`
+
+History, dividends and analysis for one company. The Best Four Point card
+reports its reasoning, not just its verdict: on most days the honest answer is
+"no signal", and the reasons are what make that answer useful rather than
+frustrating. `修正版` / `twstock` switches between the corrected rules and the
+upstream ones — see [四大買賣點：兩套規則](#四大買賣點兩套規則).
+
+![Stock view](docs/screenshots/stock-detail.png)
+
+### Realtime quotes — `/realtime`
+
+Watchlist quotes with the five-level order book, polled every 10 seconds while
+the market is open. This is the one view that requires an account, for the
+reason set out in [Realtime quotes require sign-in](#realtime-quotes-require-sign-in).
+
+![Realtime quotes](docs/screenshots/realtime-board.png)
+
+<details>
+<summary><b>Admin views</b> — the hub, background jobs, the listed-company roster, accounts</summary>
+
+`/admin` gathers everything an ADMIN can do, and leads with whether anything
+needs attention.
+
+![Admin hub](docs/screenshots/admin-dashboard.png)
+
+`/admin/jobs` is where a schedule is changed and a job is run by hand. A job
+that has missed two cycles says so rather than waiting to be noticed.
+
+![Background jobs](docs/screenshots/admin-jobs.png)
+
+`/admin/stock-codes` covers the roster this service maintains itself, with the
+run history behind it — including the skips, which are the heartbeat that proves
+the schedule is alive.
+
+![Listed-company roster](docs/screenshots/admin-stock-codes.png)
+
+`/admin/users` handles roles, deactivation and password resets. The first three
+columns are masked during capture: they are real account data in whichever
+database the run points at, and this image is committed.
+
+![Accounts](docs/screenshots/admin-users.png)
+
+</details>
+
+### Capturing them again
+
+The stack has to be running — the script drives a real browser against a real
+API, because a screenshot of mocked data documents the mock.
+
+```bash
+cd tools/screenshots
+pnpm install
+pnpm setup          # once: downloads the Chromium build Playwright drives
+pnpm capture        # public views only
+```
+
+Views behind a session are skipped, and named in the output, unless credentials
+are supplied:
+
+```bash
+SHOT_EMAIL=admin@example.com SHOT_PASSWORD=... pnpm capture
+```
+
+| Variable | Default | |
+|----------|---------|--|
+| `SHOT_BASE_URL` | `http://localhost:8100` | The compose frontend. Use `http://localhost:5173` for the Vite dev server. |
+| `SHOT_API_URL` | = `SHOT_BASE_URL` | Only a split deployment needs this; nginx and Vite both proxy `/api`. |
+| `SHOT_OUT_DIR` | `docs/screenshots` | |
+| `SHOT_EMAIL`, `SHOT_PASSWORD` | — | Unset means public views only. A non-ADMIN account gets everything but the admin views. |
+| `SHOT_LOCALE` | `zh-TW` | `en` captures the English UI instead. |
+| `SHOT_WIDTH`, `SHOT_HEIGHT` | `1440`, `900` | |
+| `SHOT_SCALE` | `2` | Device pixel ratio. |
+| `SHOT_SETTLE_MS` | `1200` | Pause after the network goes quiet. Recharts animates in JS, so an idle network does not mean a finished chart. |
+| `SHOT_ONLY` | — | Comma-separated shot names, for re-taking one. |
+
+The script only reads. It signs in with what it is given and navigates; it never
+registers an account or writes to the database.
 
 ---
 

@@ -1,0 +1,15 @@
+{
+  "name": "ai-stockboard-screenshots",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Captures the README screenshots from a running ai-stockboard stack.",
+  "type": "module",
+  "packageManager": "pnpm@11.0.8",
+  "scripts": {
+    "setup": "playwright install chromium",
+    "capture": "node capture.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}
