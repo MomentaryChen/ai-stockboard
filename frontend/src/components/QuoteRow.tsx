@@ -1,0 +1,156 @@
+/**
+ * One watchlist stock, as a board row.
+ *
+ * The card this replaces was ~760px tall, so a 1440px screen held four of a
+ * twenty-stock watchlist. A row is one line, and everything the card showed is
+ * still here -- one click down, in the expanded row, because 開高低收 and 五檔
+ * answer "should I trade this" rather than "is anything happening", and only
+ * the second question is being asked twenty times at once.
+ */
+
+import { Link } from 'react-router-dom'
+
+import type { BestFourPointResult, RealtimeQuote } from '../api/types'
+import { usePriceFlash } from '../hooks/usePriceFlash'
+import { useI18n } from '../i18n'
+import { direction, fmtInt, fmtPrice, fmtSigned } from '../utils/format'
+import { lastPrice } from '../utils/openIntel'
+import BfpChip, { BfpDot } from './BfpChip'
+import QuoteDetail from './QuoteDetail'
+
+/**
+ * What counts as a full-width change bar.
+ *
+ * The daily limit is ±10%, but scaling to it would render a normal session as
+ * a row of stubs -- most moves are under 1.5%. 5% is half the limit: big enough
+ * that an ordinary day is legible, honest enough that a limit move still pegs
+ * the bar and every row shares one scale.
+ */
+const BAR_FULL_PCT = 5
+
+export interface BoardEntry {
+  code: string
+  /** Absent until a quote arrives -- the watchlist stores codes, not names. */
+  name?: string
+  quote?: RealtimeQuote
+  bfp?: BestFourPointResult
+  /** Why this code has no quote, when the upstream said. */
+  error?: string
+}
+
+interface Props {
+  entry: BoardEntry
+  expanded: boolean
+  onToggle: (code: string) => void
+  onRemove?: (code: string) => void
+  bfpLoading?: boolean
+  /** Quotes are still on their way in, so "no quote" is premature. */
+  fetching?: boolean
+}
+
+export default function QuoteRow({
+  entry,
+  expanded,
+  onToggle,
+  onRemove,
+  bfpLoading,
+  fetching,
+}: Props) {
+  const { t } = useI18n()
+  const { quote } = entry
+  const last = quote ? lastPrice(quote) : null
+  const dir = direction(quote?.change)
+  const flash = usePriceFlash(last)
+  const pct = quote?.change_percent ?? null
+
+  const barWidth =
+    pct === null ? 0 : Math.min(Math.abs(pct) / BAR_FULL_PCT, 1) * 100
+
+  return (
+    <>
+      <tr className={`quote-row${expanded ? ' expanded' : ''}`}>
+        <td className="col-toggle">
+          <button
+            type="button"
+            className="btn-icon toggle"
+            aria-expanded={expanded}
+            title={expanded ? t('board.collapse') : t('board.expand')}
+            onClick={() => onToggle(entry.code)}
+          >
+            {expanded ? '▾' : '▸'}
+          </button>
+        </td>
+
+        <td className="col-sym">
+          <Link to={`/stock/${entry.code}`} className="sym-link">
+            <span className="sym-code">{entry.code}</span>
+            <span className="sym-name">{entry.name ?? ''}</span>
+          </Link>
+        </td>
+
+        <td className={`col-num col-price ${dir}${flash ? ` flash-${flash}` : ''}`}>
+          {last === null ? (
+            <span className="dim">
+              {entry.error ?? (fetching ? t('realtime.loading') : t('realtime.noQuote'))}
+            </span>
+          ) : (
+            fmtPrice(last)
+          )}
+        </td>
+
+        <td className={`col-num col-change ${dir}`}>{fmtSigned(quote?.change)}</td>
+
+        <td className={`col-pct ${dir}`}>
+          {/* The bar gets its own track rather than sitting behind the digits:
+              every row's bar then starts from the same edge, which is what
+              makes two rows comparable at a glance. The number is for the eye
+              that has already stopped here. */}
+          <span className="pct-cell">
+            <span className="change-pct">
+              {pct === null ? '--' : `${fmtSigned(pct)}%`}
+            </span>
+            <span className="change-track">
+              <span className={`change-bar bar-${dir}`} style={{ width: `${barWidth}%` }} />
+            </span>
+          </span>
+        </td>
+
+        <td className="col-num col-vol">{fmtInt(quote?.accumulate_trade_volume)}</td>
+
+        <td className="col-signal">
+          <BfpDot result={entry.bfp} loading={bfpLoading} />
+        </td>
+
+        <td className="col-actions">
+          {onRemove && (
+            <button
+              type="button"
+              className="btn-icon remove"
+              title={t('realtime.remove')}
+              onClick={() => onRemove(entry.code)}
+            >
+              ×
+            </button>
+          )}
+        </td>
+      </tr>
+
+      {expanded && (
+        <tr className="quote-detail-row">
+          <td colSpan={8}>
+            <div className="quote-detail">
+              <BfpChip result={entry.bfp} loading={bfpLoading} />
+              {quote ? (
+                <QuoteDetail quote={quote} />
+              ) : (
+                <p className="dim" style={{ margin: 0 }}>
+                  {entry.error ?? t('realtime.noQuote')}
+                </p>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
