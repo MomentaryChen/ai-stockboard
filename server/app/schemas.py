@@ -320,6 +320,19 @@ class AiQuotaStatus(BaseModel):
     resets_at: datetime.datetime
 
 
+class AiModelSettingsOut(BaseModel):
+    """What /admin/ai shows: the live model and the closed set it may be."""
+
+    model: str
+    available_models: list[str]
+    updated_at: datetime.datetime | None = None
+    updated_by: str | None = None
+
+
+class AiModelSettingsUpdate(BaseModel):
+    model: str = Field(min_length=1, max_length=64)
+
+
 class BacktestHorizonStats(BaseModel):
     """How one signal type scored over one forward horizon."""
 

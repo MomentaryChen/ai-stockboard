@@ -58,6 +58,23 @@ export const zhTW = {
   'admin.listingCount': '{count} 檔',
   'admin.listingSynced': '最後同步 {when}',
   'admin.listingNeverSynced': '尚未同步過，目前是內建快照',
+  'admin.aiTitle': 'AI 模型',
+  'admin.aiDesc': '選擇產生進出場判讀的 Gemini 模型。',
+
+  // ---------- admin: AI model ----------
+  'adminAi.title': 'AI 模型',
+  'adminAi.lede':
+    '選擇產生進場／退場／觀望判讀的 Gemini 模型。選項來自部署環境的 GEMINI_MODELS。',
+  'adminAi.loading': '載入中…',
+  'adminAi.loadFailed': '無法載入設定：{message}',
+  'adminAi.model': '目前使用的模型',
+  'adminAi.allowlistHint':
+    '要新增或移除選項，請修改 GEMINI_MODELS 後重啟 API。切換模型會開一條新的快取；既有判讀仍掛在原本的模型上。',
+  'adminAi.lastUpdated': '上次由 {who} 於 {when} 變更',
+  'adminAi.save': '儲存',
+  'adminAi.saving': '儲存中…',
+  'adminAi.saved': '已儲存。',
+  'adminAi.saveFailed': '儲存失敗：{message}',
 
   // ---------- login ----------
   'login.title': '登入',

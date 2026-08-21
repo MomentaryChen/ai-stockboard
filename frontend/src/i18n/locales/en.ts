@@ -62,6 +62,23 @@ export const en: Messages = {
   'admin.listingCount': '{count} listed',
   'admin.listingSynced': 'Last synced {when}',
   'admin.listingNeverSynced': 'Never synced -- using the bundled snapshot',
+  'admin.aiTitle': 'AI model',
+  'admin.aiDesc': 'Which Gemini model generates position calls.',
+
+  // ---------- admin: AI model ----------
+  'adminAi.title': 'AI model',
+  'adminAi.lede':
+    'Choose which Gemini model generates enter / exit / hold calls. The list comes from GEMINI_MODELS in the deployment environment.',
+  'adminAi.loading': 'Loading…',
+  'adminAi.loadFailed': 'Could not load settings: {message}',
+  'adminAi.model': 'Active model',
+  'adminAi.allowlistHint':
+    'To add or remove options, edit GEMINI_MODELS and restart the API. Changing the live model starts a new cache lane; existing verdicts stay under their original model.',
+  'adminAi.lastUpdated': 'Last changed by {who} at {when}',
+  'adminAi.save': 'Save',
+  'adminAi.saving': 'Saving…',
+  'adminAi.saved': 'Saved.',
+  'adminAi.saveFailed': 'Save failed: {message}',
 
   // ---------- login ----------
   'login.title': 'Sign in',

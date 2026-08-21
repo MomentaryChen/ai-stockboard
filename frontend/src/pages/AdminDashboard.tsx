@@ -29,6 +29,10 @@ export default function AdminDashboard() {
     queryFn: () => api.listUsers(''),
   })
   const jobs = useQuery({ queryKey: ['jobs'], queryFn: api.listJobs })
+  const aiSettings = useQuery({
+    queryKey: ['admin-ai-settings'],
+    queryFn: api.getAiSettings,
+  })
 
   const jobList = jobs.data?.jobs ?? []
   const failing = jobList.filter(
@@ -96,6 +100,14 @@ export default function AdminDashboard() {
               ? t('admin.listingSynced', { when: sinceLabel(syncedAt, t) })
               : t('admin.listingNeverSynced')}
           </p>
+        </Link>
+
+        <Link to="/admin/ai" className="card admin-tile">
+          <div className="card-title">{t('admin.aiTitle')}</div>
+          <div className="admin-tile-stat tabular">
+            {aiSettings.data ? aiSettings.data.model : '—'}
+          </div>
+          <p className="dim admin-tile-desc">{t('admin.aiDesc')}</p>
         </Link>
       </div>
 
