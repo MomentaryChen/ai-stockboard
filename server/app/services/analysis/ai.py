@@ -24,13 +24,19 @@ Three gates, in order:
 reason `force` on the history routes is: it is the one knob that turns a cached
 endpoint back into a metered one.
 
+Gate 1 has its own entrance, `get_cached`, which stops there and returns None
+instead of falling through to gates 2 and 3. `get_or_create` is the door that
+may spend money and so must stay a POST; `get_cached` is the door a page can
+open on render.
+
 **Depth is part of the subject, not a rendering flag.** A quick verdict is drawn
 from the price series; a deep one additionally reads `chip_day` and
 `fundamentals_annual`. They are two different answers about the same trading
 day, so `depth` joins the cache key and both rows coexist -- pressing one button
-must not evict what the other was paid for. Both spend from the one allowance
-above, because the bill being defended belongs to the deployment and does not
-care which prompt produced the request.
+must not evict what the other was paid for. Every entrance above takes it:
+a free read asking for one depth must never be served the other's verdict.
+Both spend from the one allowance, because the bill being defended belongs to
+the deployment and does not care which prompt produced the request.
 """
 
 from __future__ import annotations
@@ -39,6 +45,7 @@ import datetime
 import logging
 import zoneinfo
 
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -170,6 +177,49 @@ def _row_to_verdict(row: AiAnalysis) -> AiVerdict:
     )
 
 
+def _stored_deep(row: AiAnalysis) -> DeepInputs | None:
+    """The deep inputs this row was generated from, out of its own audit copy.
+
+    The free readers below serve whatever has already been paid for, and a deep
+    verdict rendered without them would carry the quick lane's disclaimer --
+    which states the opposite of what was read. Re-deriving them would be two
+    more queries per sid, which on a twenty-row board is forty; the row already
+    carries the copy, so this costs nothing.
+
+    Tolerant of a row written before the deep lane existed, or by a future
+    shape: an unreadable audit copy degrades to "no deep block", not to a 500
+    on a page that was only trying to show a cached answer.
+    """
+    if row.depth != "deep":
+        return None
+    try:
+        return DeepInputs.model_validate((row.features or {}).get("deep"))
+    except ValidationError:
+        logger.warning("ai row %s has an unreadable deep audit copy", row.id)
+        return None
+
+
+#: Every wording currently in service. A row keyed under a superseded prompt is
+#: not served for free: it would be presented beside today's measurements as if
+#: it had been drawn from them.
+def _live_prompt_versions() -> tuple[str, str]:
+    return (prompts.PROMPT_VERSION, deep_prompts.PROMPT_VERSION)
+
+
+def _best(rows: list[AiAnalysis]) -> AiAnalysis | None:
+    """The better-informed of the verdicts stored for one subject.
+
+    Depth is an input where it costs money and an output where it does not:
+    `get_or_create` is told which depth to pay for, while the free readers
+    serve whichever has already been bought. Refusing to show a deep verdict
+    because the caller did not ask for one would be withholding the better
+    answer for no reason -- nobody is charged either way.
+    """
+    if not rows:
+        return None
+    return next((r for r in rows if r.depth == "deep"), rows[0])
+
+
 def _find(
     db: Session,
     sid: str,
@@ -217,6 +267,137 @@ def _response(
         # audit trail of what the verdict was actually drawn from.
         deep=deep,
         traditional=traditional_result,
+    )
+
+
+def get_cached_many(
+    db: Session,
+    *,
+    names: dict[str, str],
+    rows_by_sid: dict[str, list[DailyPrice]],
+    locale: str = DEFAULT_LOCALE,
+) -> list[AiAnalysisResponse]:
+    """`get_cached` over a basket, in one lookup instead of one per sid.
+
+    Sids with nothing stored are dropped rather than reported: on a watchlist
+    that is the ordinary state of most rows, and the caller's job is to show
+    what has been paid for, not to enumerate what has not.
+
+    The `as_of` each sid is keyed under differs -- a stock that did not trade
+    on the latest session ends on an earlier bar -- so the row filter cannot be
+    pushed entirely into SQL. It is one indexed read over the basket plus a
+    dictionary match, which is still a single round trip.
+    """
+    locale = normalise_locale(locale)
+
+    as_of_by_sid: dict[str, PriceFeatures] = {}
+    for sid, rows in rows_by_sid.items():
+        extracted = feature_service.extract(rows)
+        if extracted is not None:
+            as_of_by_sid[sid] = extracted
+    if not as_of_by_sid:
+        return []
+
+    model = model_settings.active_model(db)
+    stored = db.execute(
+        select(AiAnalysis).where(
+            AiAnalysis.sid.in_(list(as_of_by_sid)),
+            AiAnalysis.as_of.in_({f.as_of for f in as_of_by_sid.values()}),
+            AiAnalysis.model == model,
+            AiAnalysis.prompt_version.in_(_live_prompt_versions()),
+            AiAnalysis.locale == locale,
+        )
+    ).scalars()
+
+    # A sid can now have two rows for one trading day -- one per depth -- so the
+    # basket is grouped before it is rendered and the better one wins. Doing it
+    # in SQL would need a window function for one row per group; the basket is
+    # capped at twenty, so it is cheaper to sort it here.
+    by_sid: dict[str, list[AiAnalysis]] = {}
+    for row in stored:
+        extracted = as_of_by_sid.get(row.sid)
+        # The `as_of` IN clause is a union across the basket, so a row can come
+        # back matching *another* sid's trading day. This is the exact match.
+        if extracted is None or row.as_of != extracted.as_of:
+            continue
+        by_sid.setdefault(row.sid, []).append(row)
+
+    out: list[AiAnalysisResponse] = []
+    for sid, candidates in by_sid.items():
+        row = _best(candidates)
+        if row is None:
+            continue
+        stock = traditional.build_stock(rows_by_sid[sid])
+        out.append(
+            _response(
+                sid=sid,
+                name=names.get(sid, sid),
+                row=row,
+                features=as_of_by_sid[sid],
+                deep=_stored_deep(row),
+                traditional_result=traditional.best_four_point(stock),
+                cached=True,
+            )
+        )
+    return out
+
+
+def get_cached(
+    db: Session,
+    *,
+    sid: str,
+    name: str,
+    rows: list[DailyPrice],
+    locale: str = DEFAULT_LOCALE,
+) -> AiAnalysisResponse | None:
+    """The stored verdict for these bars, or None. Never generates, never charges.
+
+    `get_or_create` is the metered door and has to be a POST; this is the free
+    one. Separating them is what lets a page *display* a verdict it did not pay
+    for: before this existed the only way to discover a cached row was to POST,
+    so every reader was offered a button and a board that had already been
+    judged looked unjudged until somebody clicked.
+
+    Returns None for every kind of absence -- too few bars, no row for this
+    trading day, a model or prompt the row predates. The caller cannot act on
+    the distinction: all of them mean "nothing free to show, offer the button",
+    and raising InsufficientData here would make a 20-sid board read as broken
+    because two of its stocks are newly listed.
+    """
+    locale = normalise_locale(locale)
+
+    extracted = feature_service.extract(rows)
+    if extracted is None:
+        return None
+
+    # Both depths, best first -- see `_best`. Not `_find`, which pins a depth
+    # because it backs the metered path where one was explicitly asked for.
+    stored = list(
+        db.execute(
+            select(AiAnalysis).where(
+                AiAnalysis.sid == sid,
+                AiAnalysis.as_of == extracted.as_of,
+                AiAnalysis.model == model_settings.active_model(db),
+                AiAnalysis.prompt_version.in_(_live_prompt_versions()),
+                AiAnalysis.locale == locale,
+            )
+        ).scalars()
+    )
+    row = _best(stored)
+    if row is None:
+        return None
+
+    # After the lookup, not before: on a board where most sids miss, this is
+    # the only work in the function worth skipping.
+    traditional_result = traditional.best_four_point(traditional.build_stock(rows))
+    return _response(
+        sid=sid,
+        name=name,
+        row=row,
+        features=extracted,
+        deep=_stored_deep(row),
+        traditional_result=traditional_result,
+        cached=True,
     )
 
 

@@ -28,7 +28,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.models import ChipDay, DailyPrice, FundamentalsAnnual
+from app.models import AiAnalysis, ChipDay, DailyPrice, FundamentalsAnnual
 from app.schemas import BestFourPointResult
 from app.services import chip as chip_service
 from app.services.analysis import (
@@ -465,3 +465,75 @@ def test_the_stored_row_records_the_deep_inputs_not_just_the_price_series():
     source = inspect.getsource(ai.get_or_create)
 
     assert '"deep": deep.model_dump(mode="json")' in source
+
+
+# --- the free read ------------------------------------------------------------
+
+
+def _row(depth: str, features: dict | None = None) -> AiAnalysis:
+    return AiAnalysis(
+        sid=SID,
+        as_of=AS_OF,
+        model="gemini-2.5-flash",
+        prompt_version=ai.prompt_version(depth),
+        locale="zh-TW",
+        depth=depth,
+        action="hold",
+        size=None,
+        confidence="medium",
+        headline="h",
+        reasons=[],
+        risks=[],
+        features=features or {},
+    )
+
+
+def test_the_free_read_serves_the_better_informed_verdict():
+    """Depth is an input where it costs money and an output where it does not.
+
+    Withholding a deep verdict from a reader because they did not ask for one
+    would be showing the worse answer for no reason -- nobody is charged for
+    either, both are already bought.
+    """
+    quick, deep = _row("quick"), _row("deep")
+
+    assert ai._best([quick, deep]) is deep
+    assert ai._best([deep, quick]) is deep
+    assert ai._best([quick]) is quick
+    assert ai._best([]) is None
+
+
+def test_both_live_wordings_are_readable_for_free():
+    """Filtering the free read on the quick version alone would make a deep
+    verdict invisible to every reader who did not generate it."""
+    assert set(ai._live_prompt_versions()) == {
+        prompts.PROMPT_VERSION,
+        deep_prompts.PROMPT_VERSION,
+    }
+
+
+def test_a_deep_row_rehydrates_its_inputs_from_its_own_audit_copy():
+    """Re-deriving them would be two queries per sid, which on a twenty-row
+    board is forty -- and the row already carries what the model saw."""
+    stored = {
+        "price": _features().model_dump(mode="json"),
+        "deep": _deep().model_dump(mode="json"),
+    }
+
+    rehydrated = ai._stored_deep(_row("deep", stored))
+
+    assert rehydrated is not None
+    assert rehydrated.chip.foreign.net_5d_pct_of_volume == 10.0
+    assert rehydrated.coverage_gaps == _deep().coverage_gaps
+
+
+def test_a_quick_row_has_no_deep_block_to_rehydrate():
+    """Which is what keeps the quick disclaimer on a quick verdict."""
+    assert ai._stored_deep(_row("quick", {"anything": 1})) is None
+
+
+def test_an_unreadable_audit_copy_degrades_rather_than_failing_the_page():
+    """A row written before this lane existed, or by a future shape. The reader
+    was only trying to show a cached answer; a 500 is the wrong outcome."""
+    assert ai._stored_deep(_row("deep", {})) is None
+    assert ai._stored_deep(_row("deep", {"deep": {"chip": "nonsense"}})) is None

@@ -15,6 +15,7 @@ import { usePriceFlash } from '../hooks/usePriceFlash'
 import { useI18n } from '../i18n'
 import { direction, fmtPrice, fmtSigned } from '../utils/format'
 import { lastPrice } from '../utils/openIntel'
+import { startSidDrag } from '../utils/watchlistGroups'
 import AiVerdictSection from './AiVerdict'
 import BfpChip from './BfpChip'
 import QuoteDetail from './QuoteDetail'
@@ -25,8 +26,15 @@ interface Props {
   groups?: WatchlistGroup[]
   groupId?: number | null
   onAssign?: (code: string, groupId: number | null) => void
+  /** Set while this card is the one being dragged, so it can grey itself out. */
+  dragging?: boolean
+  onDragStateChange?: (code: string | null) => void
   bfp?: BestFourPointResult
   bfpLoading?: boolean
+  /** The board read every card's verdict in one request -- see RealtimeBoard.
+   *  Without this each card reads its own, which is a connection per row. */
+  aiBatched?: boolean
+  aiLoading?: boolean
 }
 
 export default function RealtimeCard({
@@ -35,16 +43,36 @@ export default function RealtimeCard({
   groups,
   groupId,
   onAssign,
+  dragging,
+  onDragStateChange,
   bfp,
   bfpLoading,
+  aiBatched,
+  aiLoading,
 }: Props) {
   const { t } = useI18n()
   const last = lastPrice(quote)
   const dir = direction(quote.change)
   const flash = usePriceFlash(last)
 
+  // Same bargain as the board row: the select at the foot of the card still
+  // works, but re-filing should not require finding it.
+  const draggable = Boolean(onAssign)
+
   return (
-    <article className="card quote-card">
+    <article
+      className={`card quote-card${draggable ? ' draggable' : ''}${dragging ? ' dragging' : ''}`}
+      draggable={draggable}
+      onDragStart={
+        draggable
+          ? (event) => {
+              startSidDrag(event, quote.code)
+              onDragStateChange?.(quote.code)
+            }
+          : undefined
+      }
+      onDragEnd={draggable ? () => onDragStateChange?.(null) : undefined}
+    >
       {onRemove && (
         <button
           type="button"
@@ -57,8 +85,11 @@ export default function RealtimeCard({
       )}
 
       <div className="row" style={{ gap: 10 }}>
+        {/* A link is draggable by default and would hand the drop target a URL
+            instead of the code. */}
         <Link
           to={`/stock/${quote.code}`}
+          draggable={false}
           style={{ color: 'inherit', textDecoration: 'none', fontWeight: 700, fontSize: 17 }}
         >
           {quote.code} {quote.name}
@@ -79,7 +110,7 @@ export default function RealtimeCard({
 
       {/* Same order as the expanded board row, and for the same reason: the
           two verdicts together, then the numbers they were drawn from. */}
-      <AiVerdictSection sid={quote.code} />
+      <AiVerdictSection sid={quote.code} batched={aiBatched} batchLoading={aiLoading} />
 
       <div style={{ marginTop: 14 }}>
         <QuoteDetail quote={quote} />

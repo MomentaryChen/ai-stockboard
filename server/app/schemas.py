@@ -380,6 +380,19 @@ class AiAnalysisResponse(BaseModel):
     traditional: BestFourPointResult
 
 
+class AiAnalysisBatchResponse(BaseModel):
+    """Already-generated verdicts for a basket, and nothing else.
+
+    `items` carries only the sids that had one. A sid missing from it is the
+    normal case, not a failure -- it means nobody has spent a request on that
+    stock today -- so it is absent rather than listed in `errors`, which stays
+    for the sids that could not be looked up at all.
+    """
+
+    items: list[AiAnalysisResponse]
+    errors: dict[str, str] = {}
+
+
 class AiQuotaStatus(BaseModel):
     """What is left of the caller's daily generation allowance."""
 

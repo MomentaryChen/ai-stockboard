@@ -1,5 +1,6 @@
 import { tokenStore } from './tokenStore'
 import type {
+  AiAnalysisBatchResponse,
   AiAnalysisResponse,
   AiDepth,
   AiHoldAnalysisResponse,
@@ -434,6 +435,33 @@ export const api = {
   getBacktestBatch: (sids: string[], ruleSet: RuleSet = 'grs') =>
     request<BacktestBatchResponse>(
       `/api/analysis/backtest?sids=${sids.join(',')}&rule_set=${ruleSet}`,
+    ),
+
+  /** The verdict this stock's latest session already has, or null.
+   *
+   *  The free half of `generateAiAnalysis`. It cannot spend a Gemini request or
+   *  a TWSE fetch, which is why it is a GET and why it may run on mount -- the
+   *  POST below can do neither of those things safely and so has to wait for a
+   *  click. The server answers 204 when nothing has been generated, which
+   *  `request` turns into undefined; normalised to null here so "no verdict"
+   *  is a value the caller can cache rather than an absence it re-fetches.
+   */
+  getAiAnalysis: (sid: string, locale: string) =>
+    request<AiAnalysisResponse | undefined>(
+      `/api/stocks/${sid}/analysis/ai?locale=${encodeURIComponent(locale)}`,
+      { auth: true },
+    ).then((result) => result ?? null),
+
+  /** The same read for a whole board, in one request.
+   *
+   *  The card view mounts a panel per watchlist row, so without this a
+   *  twenty-stock board opens twenty connections to ask twenty questions that
+   *  one query answers -- the same reason `getTraditionalAnalysisBatch` exists.
+   */
+  getAiAnalysisBatch: (sids: string[], locale: string) =>
+    request<AiAnalysisBatchResponse>(
+      `/api/analysis/ai?sids=${sids.join(',')}&locale=${encodeURIComponent(locale)}`,
+      { auth: true },
     ),
 
   /** Ask the AI engine for a position call: enter / exit / hold, and at what size.

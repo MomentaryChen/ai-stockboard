@@ -189,6 +189,56 @@ def ensure_months(
     return fetched, cached
 
 
+def months_are_cached(db: Session, sid: str, buckets: list[tuple[int, int]]) -> bool:
+    """Would `ensure_months` for these buckets touch the exchange?
+
+    The same question `ensure_months` asks per bucket, asked without answering
+    it -- no fetch, no upsert, no commit. It exists so a caller can find out
+    whether `read_prices` already equals what `get_history` would return.
+
+    That equivalence is what lets the AI route probe its verdict cache before
+    loading history: a probe over bars the exchange has since moved past would
+    answer for the wrong trading day, and this is what rules that out. Sharing
+    `_is_stale` rather than restating "recent enough" is the point -- a second
+    freshness rule would drift from the first one and the drift would show up
+    as a stale verdict, which is the bug being avoided.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    logs = {
+        (log.year, log.month): log
+        for log in db.execute(select(FetchLog).where(FetchLog.sid == sid)).scalars()
+    }
+    return all(
+        (log := logs.get(bucket)) is not None
+        and not _is_stale(log, bucket[0], bucket[1], now)
+        for bucket in buckets
+    )
+
+
+def cached_sids(
+    db: Session, sids: list[str], buckets: list[tuple[int, int]]
+) -> set[str]:
+    """Which of `sids` hold every bucket fresh -- `months_are_cached`, batched.
+
+    One query for the whole basket rather than one per sid: the AI board asks
+    this about twenty stocks on every load, and the per-sid form would turn a
+    batch route into twenty round trips to Postgres wearing one URL.
+    """
+    if not sids:
+        return set()
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    wanted = set(buckets)
+    fresh: dict[str, set[tuple[int, int]]] = {sid: set() for sid in sids}
+
+    for log in db.execute(select(FetchLog).where(FetchLog.sid.in_(sids))).scalars():
+        bucket = (log.year, log.month)
+        if bucket in wanted and not _is_stale(log, log.year, log.month, now):
+            fresh[log.sid].add(bucket)
+
+    return {sid for sid, held in fresh.items() if held >= wanted}
+
+
 def read_prices(
     db: Session, sid: str, start: datetime.date, end: datetime.date | None = None
 ) -> list[DailyPrice]:

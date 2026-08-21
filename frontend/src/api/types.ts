@@ -285,6 +285,14 @@ export interface AiAnalysisResponse {
   traditional: BestFourPointResult
 }
 
+/** Verdicts a basket already has. A sid with none is simply absent from
+ *  `items` -- that is the ordinary state of most rows, not a failure, so it is
+ *  not reported in `errors` either. */
+export interface AiAnalysisBatchResponse {
+  items: AiAnalysisResponse[]
+  errors: Record<string, string>
+}
+
 export interface AiQuotaStatus {
   used: number
   limit: number

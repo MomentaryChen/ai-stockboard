@@ -15,6 +15,7 @@ import { usePriceFlash } from '../hooks/usePriceFlash'
 import { useI18n } from '../i18n'
 import { direction, fmtInt, fmtPrice, fmtSigned } from '../utils/format'
 import { lastPrice } from '../utils/openIntel'
+import { startSidDrag } from '../utils/watchlistGroups'
 import AiVerdictSection from './AiVerdict'
 import BfpChip, { BfpDot } from './BfpChip'
 import QuoteDetail from './QuoteDetail'
@@ -47,6 +48,9 @@ interface Props {
   groups?: WatchlistGroup[]
   groupId?: number | null
   onAssign?: (code: string, groupId: number | null) => void
+  /** Set while this row is the one being dragged, so it can grey itself out. */
+  dragging?: boolean
+  onDragStateChange?: (code: string | null) => void
   bfpLoading?: boolean
   /** Quotes are still on their way in, so "no quote" is premature. */
   fetching?: boolean
@@ -60,6 +64,8 @@ export default function QuoteRow({
   groups,
   groupId,
   onAssign,
+  dragging,
+  onDragStateChange,
   bfpLoading,
   fetching,
 }: Props) {
@@ -73,9 +79,29 @@ export default function QuoteRow({
   const barWidth =
     pct === null ? 0 : Math.min(Math.abs(pct) / BAR_FULL_PCT, 1) * 100
 
+  // Re-filing is a drag, not a form: the select below still works (and is what
+  // a keyboard or a touch screen gets), but the common case -- "this one belongs
+  // over there" -- should not cost an expand plus a dropdown.
+  const draggable = Boolean(onAssign)
+
   return (
     <>
-      <tr className={`quote-row${expanded ? ' expanded' : ''}`}>
+      <tr
+        className={`quote-row${expanded ? ' expanded' : ''}${draggable ? ' draggable' : ''}${
+          dragging ? ' dragging' : ''
+        }`}
+        draggable={draggable}
+        title={draggable ? t('board.groupDragHint') : undefined}
+        onDragStart={
+          draggable
+            ? (event) => {
+                startSidDrag(event, entry.code)
+                onDragStateChange?.(entry.code)
+              }
+            : undefined
+        }
+        onDragEnd={draggable ? () => onDragStateChange?.(null) : undefined}
+      >
         <td className="col-toggle">
           <button
             type="button"
@@ -89,7 +115,9 @@ export default function QuoteRow({
         </td>
 
         <td className="col-sym">
-          <Link to={`/stock/${entry.code}`} className="sym-link">
+          {/* A link is draggable by default and would hand the drop target a
+              URL instead of the code. */}
+          <Link to={`/stock/${entry.code}`} className="sym-link" draggable={false}>
             <span className="sym-code">{entry.code}</span>
             <span className="sym-name">{entry.name ?? ''}</span>
           </Link>

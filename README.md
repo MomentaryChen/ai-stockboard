@@ -559,7 +559,9 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | PATCH | `/api/jobs/{job_id}/schedule` | Change when a job fires (**ADMIN**) |
 | POST | `/api/jobs/{job_id}/run` | Run now; answers 202 and continues server-side (**ADMIN**) |
 | POST | `/api/stocks/sync?force=true` | Sync the listing and wait for it; superseded by the above (**ADMIN**) |
-| POST | `/api/stocks/{sid}/analysis/ai?depth=quick\|deep` | AI position call: enter / exit / hold, and at what size (**需登入**). `depth=deep` additionally reads institutional flow, margin balances and annual fundamentals — see [Two depths](#two-depths) |
+| GET | `/api/stocks/{sid}/analysis/ai` | The position call already generated for this stock's latest session, or 204. Serves whichever depth was paid for, deep first. Cache-only: never reaches Gemini or the exchange, and never counts against the quota (**需登入**) |
+| GET | `/api/analysis/ai?sids=2330,0050` | The same read for a whole watchlist in one request. A stock with no stored verdict is simply absent from `items` (**需登入**) |
+| POST | `/api/stocks/{sid}/analysis/ai?depth=quick\|deep` | AI position call: enter / exit / hold, and at what size. The metered one -- a miss spends a Gemini request and a quota slot (**需登入**). `depth=deep` additionally reads institutional flow, margin balances and annual fundamentals — see [Two depths](#two-depths) |
 | GET | `/api/stocks/{sid}/analysis/chen` | 存股 checklist: five dimensions, a score over what could be checked, and what could not. Cache-only, so it is public and never calls the exchange — see [hold analysis](#hold-analysis-存股) |
 | POST | `/api/stocks/{sid}/analysis/ai-hold` | AI hold assessment: is this a company to accumulate and hold (**需登入**). Spends from the same daily allowance as `/analysis/ai` |
 | GET | `/api/analysis/ai/quota` | Generations left on this account today, counted across **both** AI lanes (**需登入**) |

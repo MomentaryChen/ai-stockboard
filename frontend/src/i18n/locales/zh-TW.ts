@@ -263,6 +263,8 @@ export const zhTW = {
   'board.groupAssign': '群組',
   'board.groupNone': '未分類',
   'board.groupFull': '群組已達上限 {max} 個',
+  'board.groupDragHint': '拖曳到群組即可分類',
+  'board.groupEmptyDrop': '把股票拖到這裡',
   'realtime.refreshNow': '立即更新',
   'realtime.lastUpdated': '上次更新 {time}',
   'realtime.watchlistSaveFailed': '自選股儲存失敗：{message}',

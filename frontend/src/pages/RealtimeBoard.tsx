@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../api/client'
 import type { BestFourPointResult } from '../api/types'
@@ -14,6 +14,7 @@ import {
   type BoardView,
   type GroupFilter,
 } from '../boardPrefs'
+import { aiVerdictKey } from '../components/AiVerdict'
 import type { BoardEntry } from '../components/QuoteRow'
 import RealtimeCard from '../components/RealtimeCard'
 import SignInPrompt from '../components/SignInPrompt'
@@ -21,17 +22,20 @@ import StockSearch from '../components/StockSearch'
 import WatchBoard from '../components/WatchBoard'
 import WatchlistGroups from '../components/WatchlistGroups'
 import { useDocumentPip } from '../hooks/useDocumentPip'
+import { useGroupDrop } from '../hooks/useGroupDrop'
 import { POLL_MS } from '../hooks/useLiveQuote'
 import { useWatchlist } from '../hooks/useWatchlist'
 import { useI18n } from '../i18n'
 import { errorMessage } from '../utils/errors'
 import { isMarketOpen } from '../utils/market'
 import { MINI_WINDOW, miniUrl, useMiniView } from '../utils/view'
+import { groupSections } from '../utils/watchlistGroups'
 import { MAX_WATCHLIST } from '../watchlistStorage'
 
 export default function RealtimeBoard() {
   const { status } = useAuth()
-  const { intlTag, t } = useI18n()
+  const { intlTag, locale, t } = useI18n()
+  const queryClient = useQueryClient()
   const authenticated = status === 'authenticated'
   // `?view=mini` is the chrome-free variant, meant to be opened in its own
   // small window; App drops the topbar for it.
@@ -60,6 +64,9 @@ export default function RealtimeBoard() {
   const [live, setLive] = useState(isMarketOpen)
   const [view, setView] = useState<BoardView>(readBoardView)
   const [filter, setFilter] = useState<GroupFilter>(readBoardGroup)
+  // The list board keeps its own drop state inside WatchBoard; the card grid
+  // has no such component to hold it.
+  const cardDrop = useGroupDrop(groupBySid, assign)
 
   useEffect(() => {
     if (filter.kind === 'group' && !groups.some((group) => group.id === filter.id)) {
@@ -85,6 +92,44 @@ export default function RealtimeBoard() {
     enabled: authenticated && watchlist.length > 0,
     staleTime: 60 * 60 * 1000,
   })
+
+  /**
+   * Verdicts the board already has, in one request instead of one per card.
+   *
+   * The card view mounts an AI panel per row, and each would otherwise read its
+   * own -- twenty connections asking twenty questions that one query answers.
+   * Nothing here can generate anything: `/api/analysis/ai` is cache-only, so a
+   * board load stays free however many rows it has.
+   *
+   * Keyed on the locale as well as the watchlist because a verdict is prose the
+   * model wrote in one language, and the panels key their cache the same way.
+   */
+  const aiVerdicts = useQuery({
+    queryKey: ['ai-verdict', 'batch', watchlist, locale],
+    queryFn: () => api.getAiAnalysisBatch(watchlist, locale),
+    enabled: authenticated && watchlist.length > 0,
+    staleTime: 60 * 60 * 1000,
+  })
+
+  // Seeded into the per-panel keys rather than passed down as a prop: the panel
+  // writes that same key when the button is pressed, so one place holds the
+  // verdict whether it was read or paid for.
+  useEffect(() => {
+    const items = aiVerdicts.data?.items
+    if (!items) return
+    const found = new Set(items.map((item) => item.sid))
+    for (const item of items) {
+      queryClient.setQueryData(aiVerdictKey(item.sid, locale), item)
+    }
+    // An absent sid is a real answer -- "nobody has generated one" -- and has
+    // to be written too, or the panel would fall back to reading it alone and
+    // the batch would have saved nothing.
+    for (const code of watchlist) {
+      if (!found.has(code)) {
+        queryClient.setQueryData(aiVerdictKey(code, locale), null)
+      }
+    }
+  }, [aiVerdicts.data, watchlist, locale, queryClient])
 
   const bfpBySid = useMemo(() => {
     const map = new Map<string, BestFourPointResult>()
@@ -171,6 +216,16 @@ export default function RealtimeBoard() {
 
   const addingTo = filter.kind === 'group' ? filter.id : null
 
+  /**
+   * "All" is not the opposite of the folders -- it is every folder at once.
+   *
+   * Filtering to one group answers "what is in this one?"; the whole list still
+   * has to answer "where does everything sit?", and a flat twenty rows cannot.
+   * The headings are also the drop targets, so the view that shows every group
+   * is the view where a stock can be moved between any two of them.
+   */
+  const showGrouped = filter.kind === 'all' && groups.length > 0
+
   const liveButton = (
     <button
       type="button"
@@ -195,6 +250,7 @@ export default function RealtimeBoard() {
       }}
       onRename={renameGroup}
       onDelete={deleteGroup}
+      onAssign={assign}
       compact={mini || pip.pipWindow !== null}
     />
   )
@@ -209,45 +265,79 @@ export default function RealtimeBoard() {
       groups={groups}
       groupBySid={groupBySid}
       onAssign={assign}
+      grouped={showGrouped}
       bfpLoading={analysis.isPending}
       fetching={isFetching}
       compact={mini || pip.pipWindow !== null}
     />
   )
 
-  const cards = (
-    <div className="quote-grid">
-      {visible.map((entry) =>
-        entry.quote ? (
-          <RealtimeCard
-            key={entry.code}
-            quote={entry.quote}
-            onRemove={remove}
-            groups={groups}
-            groupId={groupBySid[entry.code] ?? null}
-            onAssign={assign}
-            bfp={entry.bfp}
-            bfpLoading={analysis.isPending}
-          />
-        ) : (
-          // Watchlist entries the upstream returned nothing for still need a way out.
-          <article className="card quote-card" key={entry.code}>
-            <button
-              type="button"
-              className="btn-icon remove"
-              title={t('realtime.remove')}
-              onClick={() => remove(entry.code)}
-            >
-              &times;
-            </button>
-            <div style={{ fontWeight: 700, fontSize: 17 }}>{entry.code}</div>
-            <p className="dim" style={{ marginTop: 8 }}>
-              {entry.error ?? (isFetching ? t('realtime.loading') : t('realtime.noQuote'))}
-            </p>
-          </article>
-        ),
-      )}
+  function card(entry: BoardEntry) {
+    if (entry.quote) {
+      return (
+        <RealtimeCard
+          key={entry.code}
+          quote={entry.quote}
+          onRemove={remove}
+          groups={groups}
+          groupId={groupBySid[entry.code] ?? null}
+          onAssign={assign}
+          dragging={cardDrop.dragging === entry.code}
+          onDragStateChange={cardDrop.setDragging}
+          bfp={entry.bfp}
+          bfpLoading={analysis.isPending}
+          aiBatched
+          // `isLoading`, not `isPending`: this one gates a button, and a
+          // disabled query is pending forever -- which would leave the panel
+          // unclickable rather than merely un-spinnered.
+          aiLoading={aiVerdicts.isLoading}
+        />
+      )
+    }
+    // Watchlist entries the upstream returned nothing for still need a way out.
+    return (
+      <article className="card quote-card" key={entry.code}>
+        <button
+          type="button"
+          className="btn-icon remove"
+          title={t('realtime.remove')}
+          onClick={() => remove(entry.code)}
+        >
+          &times;
+        </button>
+        <div style={{ fontWeight: 700, fontSize: 17 }}>{entry.code}</div>
+        <p className="dim" style={{ marginTop: 8 }}>
+          {entry.error ?? (isFetching ? t('realtime.loading') : t('realtime.noQuote'))}
+        </p>
+      </article>
+    )
+  }
+
+  const cards = showGrouped ? (
+    <div className="stack">
+      {groupSections(visible, groups, groupBySid, t('board.groupUngrouped')).map((section) => {
+        const target = cardDrop.target(section.id)
+        return (
+          <section
+            key={section.id ?? 'ungrouped'}
+            className={`card-group${target.className}`}
+            {...target.handlers}
+          >
+            <h3 className="group-section-title">
+              {section.name}
+              <span className="group-count">{section.items.length}</span>
+            </h3>
+            {section.items.length === 0 ? (
+              <p className="group-section-empty">{t('board.groupEmptyDrop')}</p>
+            ) : (
+              <div className="quote-grid">{section.items.map(card)}</div>
+            )}
+          </section>
+        )
+      })}
     </div>
+  ) : (
+    <div className="quote-grid">{visible.map(card)}</div>
   )
 
   const emptyNote =
