@@ -55,16 +55,93 @@ export function isPasswordResetRequired(error: unknown): boolean {
   )
 }
 
+/** What a request that ran out of time reports as. 408 is the client's own
+ *  verdict, not the server's -- nothing upstream answered at all. The string is
+ *  a fallback: `errorMessage()` swaps it for translated copy before a user sees
+ *  it, because unlike a server `detail` this sentence is ours to write. */
+const REQUEST_TIMEOUT = 'Request timed out'
+
+/** True for a request this client gave up on rather than one the server refused. */
+export function isTimeout(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 408
+}
+
+/** How long a request may run before the client stops waiting.
+ *
+ *  There was no limit at all, and nginx only cuts the proxy at 180 s: a
+ *  connection that stalled left the spinner turning for three minutes and then
+ *  failed anyway. Most routes answer out of Postgres in well under a second,
+ *  so 15 s is already an outlier for them.
+ */
+const DEFAULT_TIMEOUT_MS = 15_000
+
+/** The budget for routes that fall through to TWSE on a cold cache.
+ *
+ *  A first-ever history fetch really does run ~18 s, so the default would
+ *  abort work that was going to succeed. 60 s leaves that case three times the
+ *  room it needs while still giving up long before nginx does -- the point is
+ *  to have *a* ceiling, not a tight one.
+ */
+const SLOW_TIMEOUT_MS = 60_000
+
+/** One request's abort budget: the caller's signal, plus a deadline.
+ *
+ *  `AbortSignal.any()` would express this in a line, but it cannot say *which*
+ *  of the two fired, and that distinction is the whole point -- a caller
+ *  cancelling (StockSearch aborts on every keystroke) must stay an AbortError
+ *  that react-query ignores, while a deadline must surface as an error the
+ *  user sees.
+ */
+interface Budget {
+  signal: AbortSignal
+  expired: () => boolean
+  dispose: () => void
+}
+
+function budgetFor(caller: AbortSignal | undefined, timeoutMs: number): Budget {
+  const controller = new AbortController()
+  let expired = false
+
+  const timer = setTimeout(() => {
+    expired = true
+    controller.abort()
+  }, timeoutMs)
+
+  const relay = () => controller.abort()
+  if (caller) {
+    if (caller.aborted) controller.abort()
+    else caller.addEventListener('abort', relay)
+  }
+
+  return {
+    signal: controller.signal,
+    expired: () => expired,
+    dispose: () => {
+      clearTimeout(timer)
+      caller?.removeEventListener('abort', relay)
+    },
+  }
+}
+
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   body?: unknown
   signal?: AbortSignal
   /** Send the access token, and retry once after a refresh on 401. */
   auth?: boolean
+  /** Override the deadline. Only the routes that can legitimately outlast
+   *  DEFAULT_TIMEOUT_MS pass this; see SLOW_TIMEOUT_MS. */
+  timeoutMs?: number
 }
 
-function send(path: string, options: RequestOptions): Promise<Response> {
-  const { method = 'GET', body, signal, auth = false } = options
+async function send(path: string, options: RequestOptions): Promise<Response> {
+  const {
+    method = 'GET',
+    body,
+    signal,
+    auth = false,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  } = options
   const headers: Record<string, string> = {}
 
   if (body !== undefined) headers['Content-Type'] = 'application/json'
@@ -73,12 +150,23 @@ function send(path: string, options: RequestOptions): Promise<Response> {
     if (token) headers.Authorization = `Bearer ${token}`
   }
 
-  return fetch(path, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal,
-  })
+  // Per attempt, not per call: the retry after a token refresh is a second
+  // request over a connection the first one proved nothing about, so it gets
+  // its own budget rather than the remainder of one.
+  const budget = budgetFor(signal, timeoutMs)
+  try {
+    return await fetch(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: budget.signal,
+    })
+  } catch (error) {
+    if (budget.expired()) throw new ApiError(REQUEST_TIMEOUT, 408)
+    throw error
+  } finally {
+    budget.dispose()
+  }
 }
 
 // One in-flight refresh for the whole app. This is not an optimisation: the
@@ -102,19 +190,26 @@ async function doRefresh(): Promise<string | null> {
   if (!token) return null
 
   // A bare fetch, not request(): request() would recurse on its own 401. No
-  // signal is passed either -- StockSearch aborts on every keystroke, and that
-  // must not cancel a refresh other requests are waiting on.
+  // caller signal is passed either -- StockSearch aborts on every keystroke,
+  // and that must not cancel a refresh other requests are waiting on. It still
+  // gets a deadline: every authenticated request that 401'd is awaiting this
+  // one promise, so a refresh that hangs hangs all of them.
+  const budget = budgetFor(undefined, DEFAULT_TIMEOUT_MS)
   let res: Response
   try {
     res = await fetch('/api/auth/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: token }),
+      signal: budget.signal,
     })
   } catch {
     // Network blip rather than a rejected token: keep what we have so the next
-    // request can try again instead of signing the user out.
+    // request can try again instead of signing the user out. A timeout lands
+    // here too, and means the same thing.
     return null
+  } finally {
+    budget.dispose()
   }
 
   if (!res.ok) {
@@ -126,6 +221,54 @@ async function doRefresh(): Promise<string | null> {
   // Written before this promise resolves, so every awaiter reads the new token.
   tokenStore.set(data.access_token, data.refresh_token)
   return data.access_token
+}
+
+/** FastAPI's `detail`, as one line of text.
+ *
+ *  It is a string for everything the app raises itself (HTTPException), but a
+ *  *list of objects* for the 422 that pydantic produces when a body fails
+ *  validation. That list used to be assigned to `detail` untouched and then
+ *  interpolated into a message template, where the user read `[object Object]`
+ *  instead of being told which field was wrong -- on register and change
+ *  password, the two forms most likely to produce a 422 in the first place.
+ *
+ *  Returns null rather than a placeholder when nothing usable is there, so the
+ *  caller keeps its own `HTTP <status>` fallback.
+ */
+function readDetail(detail: unknown): string | null {
+  if (typeof detail === 'string') return detail || null
+  if (Array.isArray(detail)) {
+    const lines = detail.map(readValidationError).filter(Boolean)
+    return lines.length ? lines.join('; ') : null
+  }
+  return null
+}
+
+/** One pydantic error: `{ loc: ['body', 'password'], msg: '...' }`.
+ *
+ *  `loc[0]` is the part of the request that failed ("body", "query", "path"),
+ *  which tells the reader nothing they can act on -- the rest is the field
+ *  path, and that is what the form labels. An entry shaped differently
+ *  degrades to whichever half is present rather than to "[object Object]".
+ */
+function readValidationError(entry: unknown): string {
+  if (typeof entry === 'string') return entry
+  if (!entry || typeof entry !== 'object') return ''
+
+  const { loc, msg } = entry as { loc?: unknown; msg?: unknown }
+  const message = typeof msg === 'string' ? msg : ''
+  const field = Array.isArray(loc)
+    ? loc
+        .slice(1)
+        .filter(
+          (part): part is string | number =>
+            typeof part === 'string' || typeof part === 'number',
+        )
+        .join('.')
+    : ''
+
+  if (field && message) return `${field}: ${message}`
+  return message || field
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -141,7 +284,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     let detail = `HTTP ${res.status}`
     try {
       const body = await res.json()
-      if (body?.detail) detail = body.detail
+      detail = readDetail(body?.detail) ?? detail
     } catch {
       /* response was not JSON -- keep the status text */
     }
@@ -170,7 +313,9 @@ export const api = {
   getStock: (sid: string) => request<StockInfo>(`/api/stocks/${sid}`),
 
   getHistory: (sid: string, months: number) =>
-    request<HistoryResponse>(`/api/stocks/${sid}/history?months=${months}`),
+    request<HistoryResponse>(`/api/stocks/${sid}/history?months=${months}`, {
+      timeoutMs: SLOW_TIMEOUT_MS,
+    }),
 
   /** 當日開盤情報 for the index on one trading day.
    *
@@ -183,21 +328,27 @@ export const api = {
    *  watchlist, so this wrapper does not offer it.
    */
   getMarketOpen: (date: string) =>
-    request<MarketOpenResponse>(`/api/market/open?date=${date}`),
+    request<MarketOpenResponse>(`/api/market/open?date=${date}`, {
+      timeoutMs: SLOW_TIMEOUT_MS,
+    }),
 
   getDividends: (sid: string, years = 5) =>
-    request<DividendResponse>(`/api/stocks/${sid}/dividends?years=${years}`),
+    request<DividendResponse>(`/api/stocks/${sid}/dividends?years=${years}`, {
+      timeoutMs: SLOW_TIMEOUT_MS,
+    }),
 
   /** Rule-based technical analysis. An AI counterpart will sit next to this. */
   getTraditionalAnalysis: (sid: string, months: number, ruleSet: RuleSet = 'grs') =>
     request<TraditionalAnalysisResponse>(
       `/api/stocks/${sid}/analysis/traditional?months=${months}&rule_set=${ruleSet}`,
+      { timeoutMs: SLOW_TIMEOUT_MS },
     ),
 
   /** Watchlist-sized BFP: Buy / Sell / Don't touch, no MA series. */
   getTraditionalAnalysisBatch: (sids: string[], ruleSet: RuleSet = 'grs') =>
     request<TraditionalAnalysisBatchResponse>(
       `/api/analysis/traditional?sids=${sids.join(',')}&rule_set=${ruleSet}`,
+      { timeoutMs: SLOW_TIMEOUT_MS },
     ),
 
   /** Signed in only -- the one market-data route that is not public. `auth`

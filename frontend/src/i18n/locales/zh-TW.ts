@@ -15,6 +15,11 @@ export const zhTW = {
   'nav.realtimeLocked': '需登入',
   'nav.realtimeLockedTitle': '即時報價需要登入',
   'nav.notFound': '找不到這個頁面',
+  'crash.title': '這個頁面出了點狀況',
+  'crash.lede': '畫面沒能顯示完整，但你的登入狀態還在。先重試一次，不行再重新整理。',
+  'crash.retry': '重試',
+  'crash.reload': '重新整理',
+  'crash.details': '技術細節',
   'health.connected': 'DB 已連線',
   'health.disconnected': 'DB 未連線',
   'lang.zh': '中',
@@ -135,6 +140,7 @@ export const zhTW = {
   'live.off': '已暫停',
   'common.noData': '沒有資料',
   'error.loadFailed': '載入失敗：{message}',
+  'error.timeout': '伺服器太久沒有回應，請稍後再試。',
   'error.dbHint':
     '若訊息與資料庫有關，請先在 deployment/ 目錄執行 docker compose up -d 啟動 PostgreSQL。',
 

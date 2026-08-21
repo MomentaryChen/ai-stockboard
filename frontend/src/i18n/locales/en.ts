@@ -18,6 +18,12 @@ export const en: Messages = {
   'nav.realtimeLocked': 'sign in',
   'nav.realtimeLockedTitle': 'Realtime quotes need an account',
   'nav.notFound': 'This page does not exist',
+  'crash.title': 'This page ran into a problem',
+  'crash.lede':
+    'Something failed to render, but you are still signed in. Try again first; reload only if that does not help.',
+  'crash.retry': 'Try again',
+  'crash.reload': 'Reload',
+  'crash.details': 'Technical details',
   'health.connected': 'DB connected',
   'health.disconnected': 'DB unreachable',
   'lang.zh': '中',
@@ -143,6 +149,7 @@ export const en: Messages = {
   'live.off': 'Paused',
   'common.noData': 'No data',
   'error.loadFailed': 'Load failed: {message}',
+  'error.timeout': 'The server took too long to answer. Please try again.',
   'error.dbHint':
     'If the message mentions the database, start PostgreSQL first: run docker compose up -d in the deployment/ directory.',
 

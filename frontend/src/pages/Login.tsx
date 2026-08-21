@@ -4,6 +4,7 @@ import { useMutation } from '@tanstack/react-query'
 
 import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
+import { errorMessage } from '../utils/errors'
 
 export default function Login() {
   const { status, login } = useAuth()
@@ -63,7 +64,7 @@ export default function Login() {
 
           {submit.isError && (
             <div className="banner banner-error">
-              {t('login.failed', { message: (submit.error as Error).message })}
+              {t('login.failed', { message: errorMessage(submit.error, t) })}
             </div>
           )}
 

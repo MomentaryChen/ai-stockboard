@@ -6,6 +6,7 @@ import { api } from '../api/client'
 import type { PasswordResetResponse, Role, User } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
+import { errorMessage } from '../utils/errors'
 
 export default function AdminUsers() {
   const { user: me } = useAuth()
@@ -73,7 +74,7 @@ export default function AdminUsers() {
 
       {error && (
         <div className="banner banner-error">
-          {t('adminUsers.opFailed', { message: (error as Error).message })}
+          {t('adminUsers.opFailed', { message: errorMessage(error, t) })}
         </div>
       )}
 
