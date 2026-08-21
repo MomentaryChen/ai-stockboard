@@ -16,10 +16,16 @@
  * vocabulary -- strong/ok/weak/avoid -- so agreement can be stated plainly
  * rather than translated across two scales the way the technical card has to.
  *
- * **Card layout only.** The technical verdict also renders inline under a
- * watchlist row; this one does not. A holding assessment is not a thing anyone
- * scans twenty of, and putting a paid button on every board row for it would
- * spend a day's allowance on one scroll.
+ * Two layouts, matching the technical verdict's split:
+ *
+ * - `spotlight` is the 個股 band under the Hold analysis mode: full page
+ *   width, same accent treatment as the trade AI band, so switching modes
+ *   swaps which question the stage is answering rather than stacking both.
+ * - `card` is the plain card used wherever a narrower column still hosts it.
+ *
+ * No board-row layout: a holding assessment is not a thing anyone scans
+ * twenty of, and putting a paid button on every row would spend a day's
+ * allowance on one scroll.
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -40,10 +46,24 @@ const CONFIDENCE_KEY: Record<'high' | 'medium' | 'low', MessageKey> = {
   low: 'ai.confidenceLow',
 }
 
-export default function HoldAiVerdict({ sid }: { sid: string }) {
+type Layout = 'card' | 'spotlight'
+
+const WRAPPER_CLASS: Record<Layout, string> = {
+  card: 'card',
+  spotlight: 'card ai-spotlight',
+}
+
+export default function HoldAiVerdict({
+  sid,
+  layout = 'card',
+}: {
+  sid: string
+  layout?: Layout
+}) {
   const { t, locale, intlTag } = useI18n()
   const { status } = useAuth()
   const queryClient = useQueryClient()
+  const spotlight = layout === 'spotlight'
 
   const cacheKey = ['hold-verdict', sid, locale]
   const [result, setResult] = useState<AiHoldAnalysisResponse | null>(
@@ -80,13 +100,18 @@ export default function HoldAiVerdict({ sid }: { sid: string }) {
 
   const title = (
     <h2 className="card-title" style={{ margin: 0 }}>
+      {spotlight && (
+        <span className="ai-mark" aria-hidden="true">
+          ✦
+        </span>
+      )}
       {t('holdAi.title')}
     </h2>
   )
 
   if (status !== 'authenticated') {
     return (
-      <section className="card">
+      <section className={WRAPPER_CLASS[layout]}>
         <div className="row-between wrap" style={{ marginBottom: 12 }}>
           {title}
         </div>
@@ -111,9 +136,12 @@ export default function HoldAiVerdict({ sid }: { sid: string }) {
     : ''
 
   return (
-    <section className="card">
+    <section className={WRAPPER_CLASS[layout]}>
       <div className="row-between wrap" style={{ marginBottom: 12 }}>
-        {title}
+        <div className="row wrap" style={{ gap: 8 }}>
+          {title}
+          {result && <HoldSuitabilityChip suitability={result.verdict.suitability} />}
+        </div>
         <div className="row wrap" style={{ gap: 8 }}>
           {!exhausted && left !== null && !result && (
             <span className="dim ai-quota">{t('ai.quotaLeft', { left: String(left) })}</span>
@@ -145,14 +173,23 @@ export default function HoldAiVerdict({ sid }: { sid: string }) {
         </p>
       )}
 
-      {!result && !run.isPending && !error && <p className="dim">{t('holdAi.empty')}</p>}
+      {!result && !run.isPending && !error && (
+        <p className={`dim${spotlight ? ' ai-lead' : ''}`}>{t('holdAi.empty')}</p>
+      )}
 
-      {result && <HoldVerdictBody result={result} />}
+      {result && <HoldVerdictBody result={result} wide={spotlight} />}
     </section>
   )
 }
 
-function HoldVerdictBody({ result }: { result: AiHoldAnalysisResponse }) {
+function HoldVerdictBody({
+  result,
+  wide,
+}: {
+  result: AiHoldAnalysisResponse
+  /** The band is page-wide, so reasons and risks stand side by side. */
+  wide: boolean
+}) {
   const { t, intlTag } = useI18n()
   const { verdict, rules } = result
 
@@ -166,11 +203,35 @@ function HoldVerdictBody({ result }: { result: AiHoldAnalysisResponse }) {
         ? t('holdAi.agreesWithRules', { label: t(SUITABILITY_KEY[rules.suitability]) })
         : t('holdAi.differsFromRules', { label: t(SUITABILITY_KEY[rules.suitability]) })
 
+  const reasons = verdict.reasons.length > 0 && (
+    <>
+      {wide && <span className="ai-block-title">{t('ai.reasons')}</span>}
+      <ul className="reason-list">
+        {verdict.reasons.map((reason) => (
+          <li key={reason}>{reason}</li>
+        ))}
+      </ul>
+    </>
+  )
+
+  const risks = verdict.risks.length > 0 && (
+    <>
+      <span className="ai-block-title">{t('ai.risks')}</span>
+      <ul className="reason-list ai-risks">
+        {verdict.risks.map((risk) => (
+          <li key={risk}>{risk}</li>
+        ))}
+      </ul>
+    </>
+  )
+
   return (
     <>
-      <HoldSuitabilityChip suitability={verdict.suitability} />
+      {/* Suitability rides in the header beside the title when spotlighted;
+          the body starts at the headline explaining it. */}
+      {!wide && <HoldSuitabilityChip suitability={verdict.suitability} />}
 
-      <p className="dim" style={{ margin: '10px 0 0' }}>
+      <p className={`dim${wide ? ' ai-headline' : ''}`} style={{ margin: wide ? 0 : '10px 0 0' }}>
         {verdict.headline}
       </p>
 
@@ -182,22 +243,15 @@ function HoldVerdictBody({ result }: { result: AiHoldAnalysisResponse }) {
         {t('ai.asOf', { date: result.as_of })}
       </p>
 
-      {verdict.reasons.length > 0 && (
-        <ul className="reason-list">
-          {verdict.reasons.map((reason) => (
-            <li key={reason}>{reason}</li>
-          ))}
-        </ul>
-      )}
-
-      {verdict.risks.length > 0 && (
+      {wide ? (
+        <div className="ai-columns">
+          <div>{reasons}</div>
+          <div>{risks}</div>
+        </div>
+      ) : (
         <>
-          <span className="ai-block-title">{t('ai.risks')}</span>
-          <ul className="reason-list ai-risks">
-            {verdict.risks.map((risk) => (
-              <li key={risk}>{risk}</li>
-            ))}
-          </ul>
+          {reasons}
+          {risks}
         </>
       )}
 

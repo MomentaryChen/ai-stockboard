@@ -228,17 +228,9 @@ export default function StockDetail() {
         )}
       </section>
 
-      {/* Full width, under the price and above the chart: the AI call is what
-          this product leads with, and it spent its life at the bottom of the
-          320px analysis column, below three cards and a table. Here it is
-          across the page and it is still free to look at -- the panel only
-          spends a generation when the button is pressed, so the rule engine's
-          verdict in the stack below has lost nothing by moving down. */}
-      <AiVerdictSection sid={sid} layout="spotlight" />
-
-      {/* Stage stays put (quote, AI, chart); only the evidence column swaps.
-          Trade and hold answer different horizons -- one scroll of both used
-          to bury the second question under the first. */}
+      {/* Mode first, then the matching AI band: switching tabs must change
+          which question the stage answers, not leave a trade verdict hanging
+          over a hold evidence column. Quote and chart stay put either way. */}
       <div className="analysis-mode-bar">
         <div className="segmented" role="tablist" aria-label={t('nav.stock')}>
           <button
@@ -264,6 +256,12 @@ export default function StockDetail() {
           {t(analysisMode === 'trade' ? 'analysis.hintTrade' : 'analysis.hintHold')}
         </p>
       </div>
+
+      {analysisMode === 'trade' ? (
+        <AiVerdictSection sid={sid} layout="spotlight" />
+      ) : (
+        <HoldAiVerdict sid={sid} layout="spotlight" />
+      )}
 
       <div className="grid-detail">
         <section className="card">
@@ -427,10 +425,7 @@ export default function StockDetail() {
                   </div>
                 </section>
               ) : hold.data ? (
-                <>
-                  <ChenHoldCard features={hold.data.features} rules={hold.data.rules} />
-                  <HoldAiVerdict sid={sid} />
-                </>
+                <ChenHoldCard features={hold.data.features} rules={hold.data.rules} />
               ) : (
                 <section className="card">
                   <p className="dim" style={{ margin: 0 }}>

@@ -101,8 +101,8 @@ body {
 .row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .wrap { flex-wrap: wrap; }
 
-/* Trade vs hold on the stock page: sits between the AI band and the chart
-   grid so the stage does not move when the evidence column swaps. */
+/* Trade vs hold on the stock page: sits under the quote so the matching AI
+   band and evidence column can swap without the stage jumping. */
 .analysis-mode-bar {
   display: flex;
   align-items: center;
