@@ -88,10 +88,19 @@ def refresh_token_cleanup(context: JobContext) -> JobResult:
     `auth_service.REVOKED_RETENTION_DAYS` so replaying a rotated token still
     matches a row and trips reuse detection instead of looking like a token we
     never issued. Only rows past that window are removed here.
+
+    Deleting nothing is a `success`, which is where this handler parts company
+    with the three above: they skip because they decided the work was not worth
+    doing yet, while this one has no such short circuit -- it always runs the
+    sweep, and a count of zero means the table was already clean, i.e. the job
+    finished its work. Calling that `skipped` froze `last_success_at` (see
+    `jobs/store.py`, which counts successes only) on any instance quiet enough
+    to expire no tokens between runs, so the console's staleness rule -- two
+    missed cycles -- flagged a job that had in fact run correctly every night.
     """
     deleted = auth_service.purge_dead_refresh_tokens(context.db)
     return JobResult(
-        status="success" if deleted else "skipped",
-        message=None if deleted else "No expired tokens to clear",
+        status="success",
+        message=None if deleted else "No dead tokens to clear",
         stats={"deleted": deleted},
     )
