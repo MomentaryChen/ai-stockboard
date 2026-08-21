@@ -88,10 +88,15 @@ export const zhTW = {
   'register.submit': '註冊',
   'register.haveAccount': '已經有帳號了？',
   'register.loginLink': '登入',
-  'register.approvalNotice': '這個站台的新帳號需要管理員審核，送出後不會立刻登入。',
+  'register.approvalNotice':
+    '這個站台的新帳號需經平台管理者審核開通後才能使用，送出後不會立刻登入。',
+  'register.adminContact':
+    '請與平台管理者聯絡，請對方幫忙開通帳號。目前沒有 Email 自動通知。',
   'register.pendingTitle': '申請已送出',
-  'register.pendingBody': '帳號 {username} 已建立，正在等待管理員核准。核准之後就能登入使用即時報價。',
-  'register.pendingNote': '目前沒有 Email 通知，核准與否請直接與管理員確認。',
+  'register.pendingBody':
+    '帳號 {username} 已建立，正在等待平台管理者核准開通。開通之後就能登入使用即時報價。',
+  'register.pendingNote':
+    '目前沒有 Email 通知，請主動與平台管理者聯絡，請對方幫忙開通帳號。',
   'register.pendingHome': '回到大盤',
 
   // ---------- change password ----------
