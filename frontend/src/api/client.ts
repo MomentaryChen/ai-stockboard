@@ -172,16 +172,18 @@ export const api = {
   getHistory: (sid: string, months: number) =>
     request<HistoryResponse>(`/api/stocks/${sid}/history?months=${months}`),
 
-  /** 當日開盤情報: the index plus `sids`, all on one trading day.
+  /** 當日開盤情報 for the index on one trading day.
    *
    *  Public and cache-only, so it works signed out. `date` is a trading day in
    *  Taipei terms -- omit it and the server answers for today on the exchange's
    *  calendar, which is not necessarily the browser's.
+   *
+   *  The endpoint also takes a `sids` list to fold extra codes into the same
+   *  answer; nothing asks for that since the market board stopped carrying the
+   *  watchlist, so this wrapper does not offer it.
    */
-  getMarketOpen: (date: string, sids: string[] = []) =>
-    request<MarketOpenResponse>(
-      `/api/market/open?date=${date}${sids.length > 0 ? `&sids=${sids.join(',')}` : ''}`,
-    ),
+  getMarketOpen: (date: string) =>
+    request<MarketOpenResponse>(`/api/market/open?date=${date}`),
 
   getDividends: (sid: string, years = 5) =>
     request<DividendResponse>(`/api/stocks/${sid}/dividends?years=${years}`),
