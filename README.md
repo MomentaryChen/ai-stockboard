@@ -114,6 +114,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點 |
 | GET | `/api/analysis/traditional?sids=2330,0050` | Batch 四大買賣點 from cached daily bars only (no TWSE fetch, max 20) |
 | GET | `/api/realtime?sids=2330,0050` | 即時報價，最多 20 檔（**需登入**） |
+| GET | `/api/market/open?date=&sids=` | Opening intel for one trading day: gap and drift for the index plus up to 20 watchlist codes. Defaults to today in Taipei; cache-only apart from the index's own backfill |
 | POST | `/api/auth/register` | 註冊，直接回一組 token |
 | POST | `/api/auth/login` | 登入，帳號或 Email 皆可 |
 | POST | `/api/auth/refresh` | 換發 token（會輪替 refresh token） |
@@ -141,6 +142,10 @@ curl 'http://localhost:8000/api/analysis/traditional?sids=2330,2317,0050'
 
 # 即時報價要帶 access token，其餘行情端點不用
 curl 'http://localhost:8000/api/realtime?sids=2330,6488' -H "Authorization: Bearer $ACCESS_TOKEN"
+
+# 當日開盤情報 -- today by default, any past trading day with ?date=
+curl 'http://localhost:8000/api/market/open?sids=2330,0050'
+curl 'http://localhost:8000/api/market/open?date=2026-08-20&sids=2330,0050'
 ```
 
 ---
@@ -231,6 +236,59 @@ curl 'http://localhost:8000/api/realtime?sids=t00' -H "Authorization: Bearer $AC
 清單裡沒有指數會被誤判成上櫃，所以頻道名寫在 `INDICES` 裡，由 `realtime_service` 直接指定。
 
 指數沒有 `nf`（全名）也沒有單量欄位，MIS 回的 payload 少那幾個 key，這部分在 service 層補掉。
+
+---
+
+## Opening intel (當日開盤情報)
+
+The market board opens on **today's session** and leads with the two numbers a
+close alone cannot give you:
+
+| | |
+|---|---|
+| **gap** (跳空) | `open - previous close`. Priced overnight, before the session traded a share. |
+| **since open** | `last - open`. What the session itself did with that start. |
+
+A day that gaps up 1% and fades to flat closes in the same place as a day that
+opened flat and went nowhere. Only the pair tells them apart, which is why the
+board reports both and labels the combination — 開高走低 and its eight siblings.
+
+The date defaults to today **on the exchange's calendar**, not the browser's,
+and the picker reaches back over settled sessions; the selected day lives in
+`?date=YYYY-MM-DD`, so a board is linkable and Back undoes a date change. The
+last-10-days table doubles as a picker — clicking a row moves the board to it.
+
+### Where the numbers come from
+
+Three sources answer the same question and none covers every case, so
+`frontend/src/utils/openIntel.ts` normalises them to one shape and the board
+prefers them in this order:
+
+1. **Settled daily bars**, via `GET /api/market/open`. Final, and the only
+   source carrying turnover and a previous close for a *watchlist* stock on an
+   arbitrary date.
+2. **The realtime quote**, for today until TWSE publishes the day's report —
+   it carries `y` (yesterday's close), which is what makes the gap computable.
+   Signed-in only.
+3. **The chart's own history**, already on the page. What lets a signed-out
+   visitor still read today's board after the report lands, at no extra request.
+
+Mid-session with no quote to read — a signed-out visitor — the board shows the
+last settled session and says so rather than showing an empty card.
+
+### Why the endpoint is cache-only
+
+`/api/market/open` reads `daily_price` and does not call the exchange for
+watchlist codes, for the same reason the batch 四大買賣點 endpoint does not: a
+cold 20-stock watchlist would queue tens of TWSE month-fetches on the very
+limiter (3 requests / 5 s) the realtime poll depends on. A stock with nothing
+cached is reported as such, not fetched.
+
+The one exception is the index itself, and only for a past date it has no bar
+for — the picker reaches further back than the chart's 1/3/6/12-month ranges do,
+so the board's own subject would otherwise be unanswerable. That is one sid and
+two months, recorded in `fetch_log`, and a no-op once warm. Today is excluded:
+its bar does not exist upstream either until the report is published.
 
 ---
 

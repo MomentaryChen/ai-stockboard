@@ -215,6 +215,48 @@ body {
 .stat-label { font-size: 12px; color: var(--text-dim); margin-bottom: 2px; }
 .stat-value { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
+/* ---------- opening intel ---------- */
+.open-strip {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* Three legs of the same story -- 昨收→開盤, 開盤→現價, and the day's range.
+   auto-fit rather than three fixed columns so a phone stacks them instead of
+   squeezing five-digit index levels into 90px. */
+.open-legs {
+  flex: 1;
+  min-width: 260px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+.open-leg .stat-value { font-size: 17px; }
+.open-leg .dim { margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+/* The date input's own text is the value, so it needs the width the value
+   wants; the native picker icon is dark-theme'd via color-scheme. */
+.date-input {
+  width: auto;
+  padding: 4px 8px;
+  font-size: 13px;
+  color-scheme: dark;
+}
+
+.open-row-link { color: inherit; text-decoration: none; }
+.open-row-link:hover { color: var(--accent); }
+
+/* The last-10 table doubles as the date picker for the board above it. */
+tr.row-pick { cursor: pointer; }
+tr.row-active { background: var(--bg-input); box-shadow: inset 2px 0 0 var(--accent); }
+
 /* ---------- signal badge ---------- */
 .signal {
   display: inline-flex;

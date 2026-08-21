@@ -141,6 +141,56 @@ export interface RealtimeResponse {
   errors: Record<string, string>
 }
 
+/** Which way a move went, once "barely moved" has been rounded off to flat. */
+export type MoveDirection = 'up' | 'down' | 'flat'
+
+/** One instrument's opening picture for one trading day.
+ *
+ *  `last` is the day's close for a settled session and the current price for an
+ *  intraday one, so everything derived from it follows suit -- which is what
+ *  `intraday` is for. The server only ever produces the settled variant; the
+ *  intraday one is assembled on the client from a realtime quote, because
+ *  today's daily bar does not exist until TWSE publishes the day's report.
+ */
+export interface OpenSnapshot {
+  sid: string
+  name: string
+  date: string
+  is_index: boolean
+  intraday: boolean
+
+  open: number | null
+  prev_close: number | null
+  /** 跳空: open - prev_close, the overnight repricing. */
+  gap: number | null
+  gap_percent: number | null
+  gap_direction: MoveDirection
+
+  high: number | null
+  low: number | null
+  last: number | null
+  change: number | null
+  change_percent: number | null
+
+  /** last - open: what the session itself did, which the close alone hides. */
+  from_open: number | null
+  from_open_percent: number | null
+  drift_direction: MoveDirection
+
+  capacity: number | null
+  turnover: number | null
+}
+
+export interface MarketOpenResponse {
+  date: string
+  is_today: boolean
+  /** True once the index's bar for `date` exists -- i.e. the numbers are final. */
+  settled: boolean
+  latest_trading_day: string | null
+  items: OpenSnapshot[]
+  errors: Record<string, string>
+}
+
 export interface HealthResponse {
   status: 'ok' | 'degraded'
   database: string

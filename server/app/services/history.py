@@ -199,21 +199,24 @@ def read_prices(
 
 
 def read_prices_many(
-    db: Session, sids: list[str], start: datetime.date
+    db: Session, sids: list[str], start: datetime.date, end: datetime.date | None = None
 ) -> dict[str, list[DailyPrice]]:
     """Cached daily bars for many sids, one query, no upstream fetch.
 
     The watchlist BFP board uses this so scoring 20 stocks cannot queue
     behind (or crowd out) the realtime poll on the shared TWSE limiter.
+
+    `end` matters to callers that ask about a *specific* past session rather
+    than about the trailing window: the open board reads a date the user picked,
+    and rows after it would make "the bar before this one" the wrong bar.
     """
     grouped: dict[str, list[DailyPrice]] = {sid: [] for sid in sids}
     if not sids:
         return grouped
-    stmt = (
-        select(DailyPrice)
-        .where(DailyPrice.sid.in_(sids), DailyPrice.date >= start)
-        .order_by(DailyPrice.sid, DailyPrice.date)
-    )
+    stmt = select(DailyPrice).where(DailyPrice.sid.in_(sids), DailyPrice.date >= start)
+    if end:
+        stmt = stmt.where(DailyPrice.date <= end)
+    stmt = stmt.order_by(DailyPrice.sid, DailyPrice.date)
     for row in db.execute(stmt).scalars():
         grouped[row.sid].append(row)
     return grouped

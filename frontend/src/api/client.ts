@@ -13,6 +13,7 @@ import type {
   TraditionalAnalysisResponse,
   HealthResponse,
   HistoryResponse,
+  MarketOpenResponse,
   DividendResponse,
   RealtimeResponse,
   SearchResponse,
@@ -170,6 +171,17 @@ export const api = {
 
   getHistory: (sid: string, months: number) =>
     request<HistoryResponse>(`/api/stocks/${sid}/history?months=${months}`),
+
+  /** 當日開盤情報: the index plus `sids`, all on one trading day.
+   *
+   *  Public and cache-only, so it works signed out. `date` is a trading day in
+   *  Taipei terms -- omit it and the server answers for today on the exchange's
+   *  calendar, which is not necessarily the browser's.
+   */
+  getMarketOpen: (date: string, sids: string[] = []) =>
+    request<MarketOpenResponse>(
+      `/api/market/open?date=${date}${sids.length > 0 ? `&sids=${sids.join(',')}` : ''}`,
+    ),
 
   getDividends: (sid: string, years = 5) =>
     request<DividendResponse>(`/api/stocks/${sid}/dividends?years=${years}`),

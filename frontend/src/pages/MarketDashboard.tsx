@@ -1,18 +1,24 @@
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback, useMemo, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 
 import { MARKET_INDEX_SID, api } from '../api/client'
 import type { RuleSet } from '../api/types'
+import { useAuth } from '../auth/AuthContext'
 import BestFourPointCard from '../components/BestFourPointCard'
 import MaPanel from '../components/MaPanel'
+import OpenIntelStrip from '../components/OpenIntelStrip'
+import OpenWatchlistTable from '../components/OpenWatchlistTable'
 import PriceChart, { buildChartRows } from '../components/PriceChart'
 import SignInPrompt from '../components/SignInPrompt'
 import StockSearch from '../components/StockSearch'
 import VolumeChart from '../components/VolumeChart'
 import { POLL_MS, useLiveQuote } from '../hooks/useLiveQuote'
+import { useWatchlist } from '../hooks/useWatchlist'
 import { useI18n, type MessageKey } from '../i18n'
 import { direction, fmtCompact, fmtIndex, fmtLots, fmtSigned } from '../utils/format'
+import { taipeiToday } from '../utils/market'
+import { fromHistory, fromQuote, fromSnapshot, type OpenView } from '../utils/openIntel'
 
 const RANGES: Array<{ label: MessageKey; months: number }> = [
   { label: 'range.1m', months: 1 },
@@ -23,17 +29,66 @@ const RANGES: Array<{ label: MessageKey; months: number }> = [
 
 const MA_OPTIONS = ['ma5', 'ma10', 'ma20', 'ma60']
 
-/** The landing page: the TAIEX -- intraday level, history, and the same
- *  rule-based analysis an individual stock gets. */
+/**
+ * The landing page: the TAIEX, opened on today's session.
+ *
+ * The board answers "how did this day start" first and "where has the price
+ * been" second, because that is the order the questions arrive in during a
+ * session. The date defaults to today on the *exchange's* calendar and the
+ * picker reaches back over settled sessions, so the same layout serves both
+ * "what is happening now" and "what happened on the day I am thinking of".
+ *
+ * Three sources answer the opening question and the merge order matters:
+ * a settled daily bar wins when one exists (it is final, and it carries the
+ * turnover a quote does not), the live quote covers today until TWSE publishes
+ * the report, and the chart's own history is the last resort -- which is what
+ * lets a signed-out visitor still read today's board after the close.
+ */
 export default function MarketDashboard() {
   const navigate = useNavigate()
   const { locale, t } = useI18n()
+  const { status } = useAuth()
+  const authenticated = status === 'authenticated'
+
+  const today = taipeiToday()
+  // The selected day lives in the URL, not in component state: a board showing
+  // a particular session is worth linking to, and it makes the browser's Back
+  // button undo a date change rather than leave the page. `?date=` is dropped
+  // for today so the default landing URL stays bare.
+  const [params, setParams] = useSearchParams()
+  // Validated rather than trusted: the value reaches an API that answers 422 to
+  // anything it cannot parse as a date, and a typed-in URL is the one input
+  // path nothing else checks. Anything odd -- a malformed date, or one the
+  // exchange has not reached -- silently means today.
+  const requested = params.get('date')
+  const date =
+    requested && /^\d{4}-\d{2}-\d{2}$/.test(requested) && requested <= today
+      ? requested
+      : today
+  const isToday = date === today
+
+  const setDate = useCallback(
+    (next: string) => {
+      setParams(
+        (current) => {
+          const updated = new URLSearchParams(current)
+          if (!next || next === today) updated.delete('date')
+          else updated.set('date', next)
+          return updated
+        },
+        { replace: true },
+      )
+    },
+    [setParams, today],
+  )
 
   const [months, setMonths] = useState(3)
   const [mode, setMode] = useState<'candle' | 'line'>('candle')
   const [visibleMas, setVisibleMas] = useState<string[]>(['ma5', 'ma20'])
   // Defaults to the corrected rules; 'twstock' is there to compare against.
   const [ruleSet, setRuleSet] = useState<RuleSet>('grs')
+
+  const { sids: watchlist, isLoading: watchlistLoading } = useWatchlist()
 
   const history = useQuery({
     queryKey: ['history', MARKET_INDEX_SID, months],
@@ -45,30 +100,142 @@ export default function MarketDashboard() {
     queryFn: () => api.getTraditionalAnalysis(MARKET_INDEX_SID, months, ruleSet),
   })
 
+  // Settled bars for the selected day: the index, plus the watchlist in one
+  // request. Public and cache-only, so it answers signed out too.
+  const openBoard = useQuery({
+    queryKey: ['market-open', date, watchlist],
+    queryFn: () => api.getMarketOpen(date, watchlist),
+  })
+
   const rows = useMemo(
     () => buildChartRows(history.data?.data ?? [], analysis.data?.ma_series),
     [history.data, analysis.data],
   )
 
   const lastClose = rows.at(-1)
-  const {
-    marketOpen,
-    locked,
-    session,
-    intraday,
-    price: level,
-    change,
-    changePct,
-    open,
-    high,
-    low,
-    stamp,
-    live,
-    setLive,
-    isFetching,
-  } = useLiveQuote(MARKET_INDEX_SID, lastClose)
+  const { marketOpen, locked, quote, live, setLive, isFetching } = useLiveQuote(
+    MARKET_INDEX_SID,
+    lastClose,
+  )
 
-  const dir = direction(change)
+  // Quotes for the watchlist, on the same key RealtimeBoard uses, so having
+  // both pages open shares one poll rather than running two.
+  //
+  // It is still a second request alongside the index's own, and merging them
+  // would be worse than it looks: /api/realtime quotes at most 20 codes and a
+  // full watchlist is already 20, so asking for the index in the same call
+  // would silently drop somebody's twentieth stock. Two bounded polls, both
+  // behind the server's shared TWSE limiter, beats one that quietly lies.
+  //
+  // Today only. A past session has settled bars, and a quote would be
+  // answering about a different day entirely.
+  const watchQuotes = useQuery({
+    queryKey: ['realtime', watchlist],
+    queryFn: () => api.getRealtime(watchlist),
+    enabled: authenticated && isToday && watchlist.length > 0,
+    refetchInterval: live ? POLL_MS : false,
+    staleTime: 0,
+  })
+
+  const snapshots = useMemo(
+    () => new Map((openBoard.data?.items ?? []).map((item) => [item.sid, item])),
+    [openBoard.data],
+  )
+
+  /** The selected day, straight from the history already on the page. */
+  const indexFromHistory = useMemo(
+    () =>
+      fromHistory(history.data?.data ?? [], date, t('market.index'), MARKET_INDEX_SID),
+    [history.data, date, t],
+  )
+
+  const indexView = useMemo<OpenView | null>(() => {
+    const settled = snapshots.get(MARKET_INDEX_SID)
+    if (settled) return fromSnapshot(settled)
+    if (isToday && quote && quote.open !== null) return fromQuote(quote, date)
+    return indexFromHistory
+  }, [snapshots, isToday, quote, date, indexFromHistory])
+
+  // Today before the report lands and with no quote to read -- a signed-out
+  // visitor mid-session. Falling back to the last settled bar is what the board
+  // did before the date picker existed, and it beats an empty card; the badge
+  // and the note below say which day is on screen.
+  const fallbackView = useMemo<OpenView | null>(() => {
+    if (indexView || !isToday || !lastClose) return null
+    return fromHistory(
+      history.data?.data ?? [],
+      lastClose.date,
+      t('market.index'),
+      MARKET_INDEX_SID,
+    )
+  }, [indexView, isToday, lastClose, history.data, t])
+
+  const shown = indexView ?? fallbackView
+  const stale = indexView === null && fallbackView !== null
+
+  // Whether the requested day was a trading day at all, as far as the index --
+  // the one instrument that trades every session -- is concerned.
+  const indexTraded = openBoard.data?.settled ?? false
+
+  const watchRows = useMemo(() => {
+    const quotes = new Map((watchQuotes.data?.quotes ?? []).map((q) => [q.code, q]))
+    const views: OpenView[] = []
+    const missing: Array<{ sid: string; reason: string }> = []
+
+    for (const sid of watchlist) {
+      const settled = snapshots.get(sid)
+      if (settled) {
+        views.push(fromSnapshot(settled))
+        continue
+      }
+      const tick = isToday ? quotes.get(sid) : undefined
+      if (tick && tick.open !== null) {
+        views.push(fromQuote(tick, date))
+        continue
+      }
+      missing.push({
+        sid,
+        // Short by design: the reason repeats on every row, so the sentence
+        // that explains it lives once, under the table. A past day the *index*
+        // did not trade is a holiday, not a gap in this stock's cache.
+        reason: isToday
+          ? authenticated
+            ? t('realtime.noQuote')
+            : t('signIn.badge')
+          : indexTraded
+            ? t('open.rowNoBars')
+            : t('open.rowNoSession'),
+      })
+    }
+    return { views, missing }
+  }, [watchlist, snapshots, watchQuotes.data, isToday, authenticated, indexTraded, date, t])
+
+  const latestTradingDay = openBoard.data?.latest_trading_day ?? null
+  const dir = direction(shown?.change)
+  const badge = !isToday
+    ? t('open.badgeHistory')
+    : shown?.intraday
+      ? t('badge.marketOpen')
+      : t('badge.marketClosed')
+  const stamp = shown?.intraday && quote ? quote.time.slice(11) : (shown?.date ?? '--')
+
+  // What the card has to admit about itself, most surprising first. The date
+  // picker says one day and the figures can be from another -- a signed-out
+  // visitor mid-session is reading the last settled close -- and saying so is
+  // the difference between a stale board and a wrong one.
+  const notes = useMemo(() => {
+    const lines: string[] = []
+    if (!shown) return lines
+    if (stale) lines.push(t('open.showingLastSession', { date: shown.date }))
+    if (isToday && locked) {
+      lines.push(t('signIn.marketLockedNote', { seconds: POLL_MS / 1000 }))
+    } else if (isToday && shown.intraday) {
+      lines.push(t('open.pendingReport'))
+    } else if (isToday && !marketOpen && !stale) {
+      lines.push(t('market.offHoursNote'))
+    }
+    return lines
+  }, [shown, stale, isToday, locked, marketOpen, t])
 
   function toggleMa(key: string) {
     setVisibleMas((current) =>
@@ -101,81 +268,157 @@ export default function MarketDashboard() {
             <span className="sname" style={{ fontSize: 22, color: 'var(--text)' }}>
               {t('market.index')}
             </span>
-            <span className="tag">
-              {session === 'open' ? t('badge.marketOpen') : t('badge.marketClosed')}
-            </span>
+            <span className="tag">{badge}</span>
             <span className="dim">{t('market.indexSubtitle')}</span>
           </div>
 
           <div className="row wrap" style={{ gap: 16 }}>
-            <div>
-              <span className={`price-now ${dir}`}>{fmtIndex(level)}</span>{' '}
-              <span className={`price-change ${dir}`}>
-                {fmtSigned(change)}
-                {changePct !== null ? ` (${fmtSigned(changePct)}%)` : ''}
-              </span>
+            <div className="row">
+              <label className="dim" htmlFor="open-date">
+                {t('open.date')}
+              </label>
+              <input
+                id="open-date"
+                type="date"
+                className="text-input date-input"
+                value={date}
+                // The exchange has not reached tomorrow, so neither has the
+                // board. An empty field (the picker's clear button) means today.
+                max={today}
+                onChange={(event) => setDate(event.target.value || today)}
+              />
+              <button
+                type="button"
+                className={`btn btn-sm ${isToday ? 'active' : ''}`}
+                onClick={() => setDate(today)}
+              >
+                {t('open.today')}
+              </button>
             </div>
 
-            {/* Signed out there is nothing to poll, so the toggle gives way to
-                the invitation rather than sitting there dead. */}
-            {locked ? (
-              <SignInPrompt compact title={t('signIn.marketTitle')} />
-            ) : (
-              <div className="row wrap">
-                <button
-                  type="button"
-                  className={`btn btn-sm ${live ? 'active' : ''}`}
-                  onClick={() => setLive((v) => !v)}
-                >
-                  {live ? t('live.on', { seconds: POLL_MS / 1000 }) : t('live.off')}
-                </button>
-                {isFetching && <span className="spinner" />}
+            {shown && (
+              <div>
+                <span className={`price-now ${dir}`}>{fmtIndex(shown.last)}</span>{' '}
+                <span className={`price-change ${dir}`}>
+                  {fmtSigned(shown.change)}
+                  {shown.changePct != null ? ` (${fmtSigned(shown.changePct)}%)` : ''}
+                </span>
               </div>
             )}
+
+            {/* The live toggle only means anything on today's session: a past
+                day is settled, and polling would re-fetch a quote about a
+                different date. */}
+            {isToday &&
+              (locked ? (
+                <SignInPrompt compact title={t('signIn.marketTitle')} />
+              ) : (
+                <div className="row wrap">
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${live ? 'active' : ''}`}
+                    onClick={() => setLive((v) => !v)}
+                  >
+                    {live ? t('live.on', { seconds: POLL_MS / 1000 }) : t('live.off')}
+                  </button>
+                  {isFetching && <span className="spinner" />}
+                </div>
+              ))}
           </div>
         </div>
 
-        <div className="stat-grid" style={{ marginTop: 16 }}>
-          <div>
-            <div className="stat-label">{t('stat.open')}</div>
-            <div className="stat-value">{fmtIndex(open)}</div>
-          </div>
-          <div>
-            <div className="stat-label">{t('stat.high')}</div>
-            <div className="stat-value up">{fmtIndex(high)}</div>
-          </div>
-          <div>
-            <div className="stat-label">{t('stat.low')}</div>
-            <div className="stat-value down">{fmtIndex(low)}</div>
-          </div>
-          <div>
-            <div className="stat-label">{t('stat.turnover')}</div>
-            <div className="stat-value">
-              {fmtCompact(history.data?.data.at(-1)?.turnover ?? null, locale)}
+        {shown ? (
+          <>
+            <OpenIntelStrip
+              view={shown}
+              format={fmtIndex}
+              turnoverFallback={indexFromHistory?.turnover}
+              locale={locale}
+            />
+
+            <div className="stat-grid" style={{ marginTop: 16 }}>
+              <div>
+                <div className="stat-label">{t('stat.open')}</div>
+                <div className="stat-value">{fmtIndex(shown.open)}</div>
+              </div>
+              <div>
+                <div className="stat-label">{t('stat.high')}</div>
+                <div className="stat-value up">{fmtIndex(shown.high)}</div>
+              </div>
+              <div>
+                <div className="stat-label">{t('stat.low')}</div>
+                <div className="stat-value down">{fmtIndex(shown.low)}</div>
+              </div>
+              <div>
+                <div className="stat-label">{t('quote.prevClose')}</div>
+                <div className="stat-value">{fmtIndex(shown.prevClose)}</div>
+              </div>
+              <div>
+                <div className="stat-label">{t('stat.volumeLots')}</div>
+                <div className="stat-value">{fmtLots(shown.capacity)}</div>
+              </div>
+              <div>
+                <div className="stat-label">
+                  {shown.intraday ? t('stat.quoteTime') : t('stat.lastClose')}
+                </div>
+                <div className="stat-value">{stamp}</div>
+              </div>
             </div>
+          </>
+        ) : (
+          <div className="center-note" style={{ padding: '32px 12px' }}>
+            {openBoard.isPending ? (
+              <span className="spinner" />
+            ) : openBoard.error ? (
+              // "No session" would be a lie about a day that did trade, so a
+              // failed lookup has to say it failed.
+              <div>{t('error.loadFailed', { message: (openBoard.error as Error).message })}</div>
+            ) : (
+              <>
+                <div>{t('open.noSession', { date })}</div>
+                {latestTradingDay && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ marginTop: 12 }}
+                    onClick={() => setDate(latestTradingDay)}
+                  >
+                    {t('open.jumpLatest', { date: latestTradingDay })}
+                  </button>
+                )}
+              </>
+            )}
           </div>
-          <div>
-            <div className="stat-label">{t('stat.volumeLots')}</div>
-            <div className="stat-value">{fmtLots(lastClose?.capacity ?? null)}</div>
-          </div>
-          <div>
-            <div className="stat-label">
-              {intraday ? t('stat.quoteTime') : t('stat.lastClose')}
-            </div>
-            <div className="stat-value">{stamp}</div>
-          </div>
+        )}
+
+        {notes.map((note) => (
+          <p className="dim" style={{ margin: '12px 0 0' }} key={note}>
+            {note}
+          </p>
+        ))}
+      </section>
+
+      <section className="card">
+        <div className="row-between wrap" style={{ marginBottom: 12 }}>
+          <h2 className="card-title" style={{ margin: 0 }}>
+            {t('open.watchlistTitle')}
+          </h2>
+          <span className="dim">{date}</span>
         </div>
 
-        {locked ? (
-          <p className="dim" style={{ margin: '12px 0 0' }}>
-            {t('signIn.marketLockedNote', { seconds: POLL_MS / 1000 })}
+        {watchlist.length === 0 ? (
+          <p className="dim" style={{ margin: 0 }}>
+            {watchlistLoading ? <span className="spinner" /> : t('open.watchlistEmpty')}
           </p>
         ) : (
-          !marketOpen && (
-            <p className="dim" style={{ margin: '12px 0 0' }}>
-              {t('market.offHoursNote')}
-            </p>
-          )
+          <>
+            <OpenWatchlistTable views={watchRows.views} missing={watchRows.missing} />
+            {!authenticated && (
+              <p className="dim" style={{ margin: '10px 0 0' }}>
+                {t('open.watchlistSignInNote')}
+              </p>
+            )}
+          </>
         )}
       </section>
 
@@ -297,7 +540,13 @@ export default function MarketDashboard() {
                   .map((row) => {
                     const point = history.data?.data.find((d) => d.date === row.date)
                     return (
-                      <tr key={row.date}>
+                      // Clicking a day takes the open board to it -- the table
+                      // is the shortest route to "what happened on the 14th".
+                      <tr
+                        key={row.date}
+                        className={`row-pick ${row.date === date ? 'row-active' : ''}`}
+                        onClick={() => setDate(row.date)}
+                      >
                         <td>{row.date.slice(5)}</td>
                         <td>{fmtIndex(row.close)}</td>
                         <td className={direction(row.change)}>{fmtSigned(row.change)}</td>

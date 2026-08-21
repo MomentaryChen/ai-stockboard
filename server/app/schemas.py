@@ -163,6 +163,73 @@ class RealtimeResponse(BaseModel):
     errors: dict[str, str] = {}
 
 
+#: Which way a move went, once a threshold has decided that "barely moved"
+#: counts as flat. Composed pairwise on the client: gap x drift is what spells
+#: 開高走低 and its siblings, in whichever language is selected.
+MoveDirection = Literal["up", "down", "flat"]
+
+
+class OpenSnapshot(BaseModel):
+    """One instrument's opening picture for one trading day.
+
+    `last` is the day's close for a settled session and the current price for
+    an intraday one -- the frontend builds the intraday variant from the
+    realtime quote, because today's daily bar does not exist until TWSE
+    publishes the report. Everything derived from it (`change`, `from_open`)
+    follows the same rule, which is why `intraday` is on the wire: the UI has
+    to say whether it is showing a close or a tick.
+    """
+
+    sid: str
+    name: str
+    date: datetime.date
+    is_index: bool
+    intraday: bool
+
+    open: float | None
+    prev_close: float | None
+    #: 跳空: open - prev_close. The overnight repricing, before this session
+    #: traded a single share.
+    gap: float | None
+    gap_percent: float | None
+    gap_direction: MoveDirection
+
+    high: float | None
+    low: float | None
+    last: float | None
+    change: float | None
+    change_percent: float | None
+
+    #: last - open. What the session itself did, which the close alone hides:
+    #: a day that gaps up and fades ends near flat and looks like a quiet one.
+    from_open: float | None
+    from_open_percent: float | None
+    drift_direction: MoveDirection
+
+    capacity: int | None
+    turnover: int | None
+
+
+class MarketOpenResponse(BaseModel):
+    """The index plus the caller's watchlist, all on the same trading day."""
+
+    date: datetime.date
+    #: True when `date` is today on the exchange's calendar. The client uses it
+    #: to decide whether a live quote may override the settled numbers.
+    is_today: bool
+    #: True once the requested day's bar exists for the index -- i.e. TWSE has
+    #: published the report and the numbers below are final. False all through
+    #: the session, and on a holiday.
+    settled: bool
+    #: Newest index bar in the cache. What to offer when `date` turned out to
+    #: be a holiday and there is nothing to show.
+    latest_trading_day: datetime.date | None
+    items: list[OpenSnapshot]
+    #: Per-sid failures -- unknown code, or no cached bar for that day. Same
+    #: contract as RealtimeResponse.errors: one bad sid must not drop the rest.
+    errors: dict[str, str]
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     database: str
