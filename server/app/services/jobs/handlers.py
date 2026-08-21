@@ -13,8 +13,9 @@ returns -- which is not true of anything that logs its own success.
 
 import logging
 
-from app.services import code_sync
 from app.services import auth as auth_service
+from app.services import backtest_store
+from app.services import code_sync
 from app.services.jobs.registry import JobContext, JobResult
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,30 @@ def stock_code_sync(context: JobContext) -> JobResult:
     # the boundary, so the admin UI can label every job the same way.
     status = "success" if report.status == "synced" else report.status
     return JobResult(status=status, message=report.message, stats=report.as_stats())
+
+
+def backtest_refresh(context: JobContext) -> JobResult:
+    """Re-run the 四大買賣點 replay for every stock whose bars have moved.
+
+    `skipped` here means every stored replay was already computed through its
+    stock's newest bar -- the usual answer on a weekend, and the heartbeat that
+    says the job is running rather than that it has nothing to maintain.
+
+    Failures are counted rather than raised: each row is derived data that the
+    endpoint recomputes on demand anyway, so one stock with a malformed bar
+    must not cost the other few hundred their refresh.
+    """
+    stats = backtest_store.refresh_all(context.db, force=context.force)
+
+    if stats["failed"]:
+        status = "success" if stats["computed"] else "failed"
+        message = f"{stats['failed']} stock(s) could not be replayed"
+    elif stats["computed"]:
+        status, message = "success", None
+    else:
+        status, message = "skipped", "Every backtest is current"
+
+    return JobResult(status=status, message=message, stats=stats)
 
 
 def refresh_token_cleanup(context: JobContext) -> JobResult:

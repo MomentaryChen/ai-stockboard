@@ -173,6 +173,109 @@ class BacktestEdge(BaseModel):
     sell_excess_return: float | None
 
 
+class BacktestSignalOut(BaseModel):
+    """One historical verdict and what the price did after it.
+
+    `forward` is keyed by horizon in trading days; a key is absent when the
+    window ended before that horizon did. Absent means unknown, not zero.
+    """
+
+    date: datetime.date
+    signal: Literal["buy", "sell"]
+    close: float
+    reasons: list[str]
+    forward: dict[int, float]
+
+
+class BacktestTradeOut(BaseModel):
+    entry_date: datetime.date
+    entry_price: float
+    exit_date: datetime.date
+    exit_price: float
+    holding_days: int
+    profit: float
+
+
+class BacktestEquityPoint(BaseModel):
+    """Both curves on one point, indexed to 1.0 at the first judged bar.
+
+    Carried on shared points rather than as two series so the chart cannot draw
+    them over different date ranges, which is the one way an equity comparison
+    lies without looking wrong.
+    """
+
+    date: datetime.date
+    strategy: float
+    buy_hold: float
+
+
+class BacktestSimulationOut(BaseModel):
+    """Long-only replay: in on a Buy, out on a Sell, filled at the next open.
+
+    `strategy_return` includes any position still open at the end, marked to
+    the last close; `open_entry_date` is how a caller can tell. That position
+    is deliberately not one of `trades`, so it never reaches the trade stats.
+    """
+
+    trades: list[BacktestTradeOut]
+    trade_count: int
+    winning_trades: int
+    strategy_return: float
+    buy_hold_return: float
+    max_drawdown: float
+    buy_hold_max_drawdown: float
+    open_entry_date: datetime.date | None
+    open_entry_price: float | None
+    #: Fraction of judged days spent holding. A rule 80 % in cash can only ever
+    #: capture a fifth of a rally, however good its hit rate looks.
+    exposure: float
+    #: Null rather than 0 when nothing closed: "never won" and "never traded"
+    #: are different answers and must not render the same.
+    trade_win_rate: float | None
+    average_holding_days: float | None
+    #: Daily mark-to-market of both curves. Carried only by the single-stock
+    #: response, which draws it; the batch reports rates and would ship a
+    #: megabyte of points to plot nothing.
+    equity: list[BacktestEquityPoint] = []
+
+
+class BacktestResponse(BaseModel):
+    """One stock's replay in full, served from `backtest_result`.
+
+    The batch sibling below answers the same question across a basket and
+    stops at the rates. This one carries the equity curve, the trade list and
+    the recent signals, because it backs a card someone is reading about one
+    company.
+
+    `cached` says whether this came out of the table untouched or was
+    recomputed on the spot because the bars had moved past the stored row.
+    Surfaced rather than hidden: a board that quietly serves last week's answer
+    to "is this signal working" is worse than one that admits it is catching up.
+    """
+
+    sid: str
+    name: str
+    rule_set: Literal["grs", "twstock"]
+    #: The trailing window replayed, in months. Fixed by configuration rather
+    #: than chosen per request -- see `BacktestResult` for why.
+    window_months: int
+    start: datetime.date
+    end: datetime.date
+    bars: int
+    judged_days: int
+    signal_count: int
+    buy_stats: list[BacktestHorizonStats]
+    sell_stats: list[BacktestHorizonStats]
+    baseline: list[BacktestBaselineStats]
+    edges: list[BacktestEdge]
+    simulation: BacktestSimulationOut
+    signals: list[BacktestSignalOut]  # most recent first, capped
+
+    computed_at: datetime.datetime
+    computed_through: datetime.date
+    cached: bool
+
+
 class BacktestSummary(BaseModel):
     """One stock's scorecard: the rates, without the per-signal list.
 

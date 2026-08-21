@@ -26,12 +26,14 @@ from app.schemas import (
     BacktestEdge,
     BacktestHorizonStats,
     BacktestPooledHorizon,
+    BacktestResponse,
     BacktestSummary,
     BestFourPointResult,
     TraditionalAnalysisBatchResponse,
     TraditionalAnalysisResponse,
     TraditionalAnalysisSummary,
 )
+from app.services import backtest_store
 from app.services import codes as codes_service
 from app.services import history as history_service
 from app.services.analysis import backtest as backtest_service
@@ -120,6 +122,41 @@ def get_traditional_analysis(
         ma_series=traditional.ma_series(stock),
         best_four_point=traditional.best_four_point(stock, rule_set),
     )
+
+
+@router.get("/{sid}/analysis/backtest", response_model=BacktestResponse)
+def get_backtest(
+    sid: str,
+    rule_set: RuleSetParam = traditional.DEFAULT_RULE_SET,
+    db: Session = Depends(get_db),
+) -> BacktestResponse:
+    """How the 四大買賣點 verdict has actually performed, for one stock.
+
+    Answers the same question as `/api/analysis/backtest` and differs from it
+    on one axis, which is what makes each of them cheap in its own way:
+
+      * That route takes a `months` window and scores a basket fresh every
+        time. A caller-chosen window cannot be cached, and pooling is the point
+        there, so it does not try.
+      * This one is pinned to `BACKTEST_WINDOW_MONTHS` and reads
+        `backtest_result`. It backs a card on a page that anyone can load, so
+        it has to be a lookup rather than a 240-day replay per view -- and a
+        fixed window is what makes a stored row answerable at all.
+
+    Unmetered because it is cache-only: it replays bars already in
+    `daily_price` and never calls the exchange, so there is no upstream budget
+    to spend. A stock nobody has loaded history for has nothing to replay and
+    gets a 422 rather than a fabricated verdict; opening the stock page is what
+    fills `daily_price` for it.
+    """
+    info = codes_service.get_stock(sid)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")
+
+    try:
+        return backtest_store.get_or_compute(db, sid, info.name, rule_set)
+    except backtest_service.NotEnoughBars as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @batch_router.get("/traditional", response_model=TraditionalAnalysisBatchResponse)

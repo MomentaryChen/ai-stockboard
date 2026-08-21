@@ -1,5 +1,7 @@
 import { tokenStore } from './tokenStore'
 import type {
+  BacktestBatchResponse,
+  BacktestResponse,
   Job,
   JobListResponse,
   JobRunsResponse,
@@ -388,6 +390,25 @@ export const api = {
     request<TraditionalAnalysisBatchResponse>(
       `/api/analysis/traditional?sids=${sids.join(',')}&rule_set=${ruleSet}`,
       { timeoutMs: SLOW_TIMEOUT_MS },
+    ),
+
+  /** How the four-point verdict has actually performed over the past year.
+   *
+   *  No `months`: the window is fixed server-side, because a short one answers
+   *  with win rates drawn from two or three signals. Cache-only upstream, so
+   *  this is cheap and works signed out -- but a stock whose history has never
+   *  been loaded answers 422, which the card renders as "not enough bars yet"
+   *  rather than as an error. */
+  getBacktest: (sid: string, ruleSet: RuleSet = 'grs') =>
+    request<BacktestResponse>(
+      `/api/stocks/${sid}/analysis/backtest?rule_set=${ruleSet}`,
+    ),
+
+  /** Several stocks plus the pooled rates across them. `pooled` is the figure
+   *  worth reading: one stock over one year is a handful of samples. */
+  getBacktestBatch: (sids: string[], ruleSet: RuleSet = 'grs') =>
+    request<BacktestBatchResponse>(
+      `/api/analysis/backtest?sids=${sids.join(',')}&rule_set=${ruleSet}`,
     ),
 
   /** Signed in only -- the one market-data route that is not public. `auth`

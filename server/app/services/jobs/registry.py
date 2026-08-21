@@ -36,6 +36,7 @@ settings = get_settings()
 
 STOCK_CODE_SYNC = "stock_code_sync"
 REFRESH_TOKEN_CLEANUP = "refresh_token_cleanup"
+BACKTEST_REFRESH = "backtest_refresh"
 
 
 @dataclass(frozen=True)
@@ -183,5 +184,39 @@ def build() -> None:
             run_on_startup=False,
             expected_seconds=1,
             stat_labels={"deleted": "刪除"},
+        )
+    )
+
+    register(
+        JobDefinition(
+            id=BACKTEST_REFRESH,
+            name="訊號回測預算",
+            description=(
+                "把每檔已有日線的股票重跑一次四大買賣點回測，寫入 backtest_result。"
+                "只讀本地日線、不連交易所；沒有它，卡片第一次開啟要現算。"
+            ),
+            handler=handlers.backtest_refresh,
+            default_enabled=True,
+            default_kind=SCHEDULE_DAILY,
+            # After the daily-price jobs have had the night to land new bars.
+            # Running it before them would recompute every stock against
+            # yesterday's close and mark the result fresh.
+            default_daily_at="05:20",
+            default_interval_minutes=24 * 60,
+            # Pure CPU over local rows -- no exchange budget to protect, so the
+            # floor only stops a misconfiguration from pinning a core.
+            min_interval_minutes=30,
+            max_interval_minutes=7 * 24 * 60,
+            manual_cooldown_seconds=30,
+            # Every row is derived and the endpoint recomputes anything missing
+            # on demand, so a cold start costs a slower first card, not a wrong
+            # one -- which is not worth a replay of the whole table at boot.
+            run_on_startup=False,
+            expected_seconds=20,
+            stat_labels={
+                "computed": "重算",
+                "skipped": "略過",
+                "failed": "失敗",
+            },
         )
     )
