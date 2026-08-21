@@ -5,6 +5,11 @@
  * view and must never be confused with the order of the watchlist itself --
  * `sort.key === 'watchlist'` is the identity sort, and it is the default, so
  * "the order I added them in" is always one click away.
+ *
+ * `grouped` splits the same rows under one heading per group instead of hiding
+ * the ones that do not match. Showing everything and showing the folders are
+ * not opposite requests, and the headings double as the drop targets that make
+ * re-filing a drag rather than an expand-and-pick-from-a-select.
  */
 
 import { useMemo, useState } from 'react'
@@ -16,8 +21,10 @@ import {
   type BoardSort,
   type SortKey,
 } from '../boardPrefs'
+import { useGroupDrop } from '../hooks/useGroupDrop'
 import { useI18n, type MessageKey } from '../i18n'
 import { lastPrice } from '../utils/openIntel'
+import { groupSections } from '../utils/watchlistGroups'
 import QuoteRow, { type BoardEntry } from './QuoteRow'
 
 interface Column {
@@ -36,6 +43,10 @@ const COLUMNS: Column[] = [
   { key: 'volume', label: 'board.colVolume', className: 'col-num col-vol', initialDir: 'desc' },
   { key: null, label: 'board.colSignal', className: 'col-signal', initialDir: 'desc' },
 ]
+
+/** The toggle and the actions column bracket COLUMNS; a section heading spans
+ *  the lot. */
+const COLUMN_COUNT = COLUMNS.length + 2
 
 /** A missing number sorts last in either direction: "no quote" is not "zero". */
 function compareNullable(a: number | null, b: number | null, dir: 'asc' | 'desc'): number {
@@ -99,11 +110,14 @@ interface Props {
   groups?: WatchlistGroup[]
   groupBySid?: Record<string, number>
   onAssign?: (code: string, groupId: number | null) => void
+  /** Draw one section per group instead of one flat list. */
+  grouped?: boolean
   bfpLoading?: boolean
   fetching?: boolean
   /** The floating/mini variants drop the columns they have no room for. */
   compact?: boolean
 }
+
 
 export default function WatchBoard({
   entries,
@@ -111,6 +125,7 @@ export default function WatchBoard({
   groups,
   groupBySid,
   onAssign,
+  grouped,
   bfpLoading,
   fetching,
   compact,
@@ -120,8 +135,16 @@ export default function WatchBoard({
   // Only one row at a time: two open details push the rest off screen, which is
   // the problem the board exists to solve.
   const [expanded, setExpanded] = useState<string | null>(null)
+  const drop = useGroupDrop(groupBySid ?? {}, compact ? undefined : onAssign)
 
   const sorted = useMemo(() => sortEntries(entries, sort), [entries, sort])
+  const sections = useMemo(
+    () =>
+      grouped
+        ? groupSections(sorted, groups ?? [], groupBySid ?? {}, t('board.groupUngrouped'))
+        : null,
+    [grouped, sorted, groups, groupBySid, t],
+  )
 
   function toggleSort(column: Column) {
     const key = column.key
@@ -129,6 +152,25 @@ export default function WatchBoard({
     const next = nextSort(key, column.initialDir, sort)
     setSort(next)
     saveBoardSort(next)
+  }
+
+  function row(entry: BoardEntry) {
+    return (
+      <QuoteRow
+        key={entry.code}
+        entry={entry}
+        expanded={expanded === entry.code}
+        onToggle={(code) => setExpanded((open) => (open === code ? null : code))}
+        onRemove={onRemove}
+        groups={compact ? undefined : groups}
+        groupId={groupBySid?.[entry.code] ?? null}
+        onAssign={compact ? undefined : onAssign}
+        dragging={drop.dragging === entry.code}
+        onDragStateChange={drop.setDragging}
+        bfpLoading={bfpLoading}
+        fetching={fetching}
+      />
+    )
   }
 
   return (
@@ -160,22 +202,31 @@ export default function WatchBoard({
             <th className="col-actions" />
           </tr>
         </thead>
-        <tbody>
-          {sorted.map((entry) => (
-            <QuoteRow
-              key={entry.code}
-              entry={entry}
-              expanded={expanded === entry.code}
-              onToggle={(code) => setExpanded((open) => (open === code ? null : code))}
-              onRemove={onRemove}
-              groups={compact ? undefined : groups}
-              groupId={groupBySid?.[entry.code] ?? null}
-              onAssign={compact ? undefined : onAssign}
-              bfpLoading={bfpLoading}
-              fetching={fetching}
-            />
-          ))}
-        </tbody>
+        {sections
+          ? sections.map((section) => {
+              const target = drop.target(section.id)
+              return (
+                <tbody
+                  key={section.id ?? 'ungrouped'}
+                  className={`group-section${target.className}`}
+                  {...target.handlers}
+                >
+                  <tr className="group-section-row">
+                    <td colSpan={COLUMN_COUNT}>
+                      <span className="group-section-name">{section.name}</span>
+                      <span className="group-count">{section.items.length}</span>
+                    </td>
+                  </tr>
+                  {section.items.map(row)}
+                  {section.items.length === 0 && (
+                    <tr className="group-section-empty">
+                      <td colSpan={COLUMN_COUNT}>{t('board.groupEmptyDrop')}</td>
+                    </tr>
+                  )}
+                </tbody>
+              )
+            })
+          : <tbody>{sorted.map(row)}</tbody>}
       </table>
     </div>
   )

@@ -5,12 +5,16 @@
  * so switching groups never drops a request that was already paid for. Compact
  * (mini / floating) only switches; creating and renaming stay on the full board
  * where there is room to type.
+ *
+ * The chips are also the drop targets for a row dragged off the board, which is
+ * how a stock gets re-filed without being filtered into view first.
  */
 
 import { useEffect, useRef, useState } from 'react'
 
 import type { WatchlistGroup } from '../api/types'
 import type { GroupFilter } from '../boardPrefs'
+import { useGroupDrop } from '../hooks/useGroupDrop'
 import { useI18n } from '../i18n'
 import { MAX_WATCHLIST_GROUPS } from '../watchlistStorage'
 
@@ -23,6 +27,8 @@ interface Props {
   onCreate: (name: string) => Promise<unknown>
   onRename: (groupId: number, name: string) => Promise<unknown>
   onDelete: (groupId: number) => Promise<unknown>
+  /** Absent on the read-only variants, which makes the chips undroppable. */
+  onAssign?: (code: string, groupId: number | null) => void
   compact?: boolean
 }
 
@@ -43,12 +49,14 @@ export default function WatchlistGroups({
   onCreate,
   onRename,
   onDelete,
+  onAssign,
   compact,
 }: Props) {
   const { t } = useI18n()
   const [draft, setDraft] = useState<'create' | number | null>(null)
   const [name, setName] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const drop = useGroupDrop(groupBySid, onAssign)
 
   useEffect(() => {
     if (draft !== null) inputRef.current?.focus()
@@ -95,8 +103,11 @@ export default function WatchlistGroups({
       {groups.length > 0 && (
         <button
           type="button"
-          className={`group-chip${filter.kind === 'ungrouped' ? ' active' : ''}`}
+          className={`group-chip${filter.kind === 'ungrouped' ? ' active' : ''}${
+            drop.target(null).className
+          }`}
           onClick={() => onFilter({ kind: 'ungrouped' })}
+          {...drop.target(null).handlers}
         >
           {t('board.groupUngrouped')}
           <span className="group-count">{ungrouped}</span>
@@ -129,8 +140,13 @@ export default function WatchlistGroups({
             />
           )
         }
+        const target = drop.target(group.id)
         return (
-          <span key={group.id} className={`group-chip-wrap${selected ? ' active' : ''}`}>
+          <span
+            key={group.id}
+            className={`group-chip-wrap${selected ? ' active' : ''}${target.className}`}
+            {...target.handlers}
+          >
             <button
               type="button"
               className={`group-chip${selected ? ' active' : ''}`}
