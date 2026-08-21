@@ -31,6 +31,10 @@ interface Props {
   onDragStateChange?: (code: string | null) => void
   bfp?: BestFourPointResult
   bfpLoading?: boolean
+  /** The board read every card's verdict in one request -- see RealtimeBoard.
+   *  Without this each card reads its own, which is a connection per row. */
+  aiBatched?: boolean
+  aiLoading?: boolean
 }
 
 export default function RealtimeCard({
@@ -43,6 +47,8 @@ export default function RealtimeCard({
   onDragStateChange,
   bfp,
   bfpLoading,
+  aiBatched,
+  aiLoading,
 }: Props) {
   const { t } = useI18n()
   const last = lastPrice(quote)
@@ -104,7 +110,7 @@ export default function RealtimeCard({
 
       {/* Same order as the expanded board row, and for the same reason: the
           two verdicts together, then the numbers they were drawn from. */}
-      <AiVerdictSection sid={quote.code} />
+      <AiVerdictSection sid={quote.code} batched={aiBatched} batchLoading={aiLoading} />
 
       <div style={{ marginTop: 14 }}>
         <QuoteDetail quote={quote} />
