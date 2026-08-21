@@ -19,6 +19,7 @@ import type {
   HistoryResponse,
   MarketOpenResponse,
   DividendResponse,
+  ChipResponse,
   RealtimeResponse,
   SearchResponse,
   StockInfo,
@@ -375,6 +376,13 @@ export const api = {
 
   getDividends: (sid: string, years = 5) =>
     request<DividendResponse>(`/api/stocks/${sid}/dividends?years=${years}`, {
+      timeoutMs: SLOW_TIMEOUT_MS,
+    }),
+
+  /** Institutional net buying and margin balances. Cache-first; a cold
+   *  date range still hits TWSE, so this uses the slow timeout. */
+  getChips: (sid: string, days = 10) =>
+    request<ChipResponse>(`/api/stocks/${sid}/chips?days=${days}`, {
       timeoutMs: SLOW_TIMEOUT_MS,
     }),
 

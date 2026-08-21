@@ -75,6 +75,52 @@ class DividendResponse(BaseModel):
     events: list[DividendEventOut]
 
 
+class ChipFlow(BaseModel):
+    """One institutional column's recent picture, in shares.
+
+    `streak` is consecutive same-sign days counted back from the newest row
+    that has a figure -- not a Buy/Sell call, and not mixed into 四大買賣點.
+    """
+
+    streak: Literal["buy", "sell", "none"]
+    streak_days: int
+    net_5d: int | None
+
+
+class ChipDayOut(BaseModel):
+    date: datetime.date
+    foreign_net: int | None
+    trust_net: int | None
+    dealer_net: int | None
+    total_net: int | None
+    margin_balance: int | None
+    margin_change: int | None
+    short_balance: int | None
+    short_change: int | None
+
+
+class ChipResponse(BaseModel):
+    sid: str
+    name: str
+    source: Literal["twse", "tpex"]
+    # daily = the all-market reports; none = indices, which have no per-name chip.
+    coverage: Literal["daily", "none"]
+    days: int
+    as_of: datetime.date | None
+    count: int
+    fetched_dates: list[str]
+    cached_dates: list[str]
+    foreign: ChipFlow
+    trust: ChipFlow
+    dealer: ChipFlow
+    total: ChipFlow
+    margin_balance: int | None
+    margin_change: int | None
+    short_balance: int | None
+    short_change: int | None
+    rows: list[ChipDayOut]
+
+
 class MovingAverages(BaseModel):
     ma5: float | None
     ma10: float | None

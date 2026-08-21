@@ -531,6 +531,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/stocks/{sid}` | 個股基本資料 |
 | GET | `/api/stocks/{sid}/history?months=6` | 歷史日成交. `months` 上限 24; 12 without a token, and `force=true` is **ADMIN** -- see [the fetch budget](#the-upstream-fetch-budget) |
 | GET | `/api/stocks/{sid}/dividends?years=5` | 除權息. `years` 上限 10; 5 without a token, `force=true` is **ADMIN**, same reason |
+| GET | `/api/stocks/{sid}/chips?days=10` | Institutional net buying and margin balances. `days` cap 15; 10 without a token, `force=true` is **ADMIN**. Dates come from `daily_price`; a cold session hits the shared limiter -- see [chip flow](#chip-flow) |
 | GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點. Backfills like `/history`, so the same `months` cap applies |
 | GET | `/api/analysis/traditional?sids=2330,0050` | Batch 四大買賣點 from cached daily bars only (no TWSE fetch, max 20) |
 | GET | `/api/stocks/{sid}/analysis/backtest?rule_set=grs` | One stock's replay, served from `backtest_result` and recomputed when its bars move. Carries the equity curve the card draws; fixed window, so no `months`. 422 when too few bars are landed |
@@ -563,6 +564,7 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 curl 'http://localhost:8000/api/stocks/2330/history?months=3'
 curl 'http://localhost:8000/api/stocks/2330/analysis/traditional'
 curl 'http://localhost:8000/api/analysis/traditional?sids=2330,2317,0050'
+curl 'http://localhost:8000/api/stocks/2542/chips'
 
 # Was the signal any good? Pooled across stocks is the readable number.
 curl 'http://localhost:8000/api/stocks/2330/analysis/backtest'
@@ -950,6 +952,7 @@ are all driven off that list.
 | `stock_code_sync` | every 24 h (`STOCK_CODE_SYNC_INTERVAL_HOURS`), plus once at startup | reconciles `stock_code` with the exchanges' registry -- see above |
 | `refresh_token_cleanup` | daily at 04:10 | deletes expired refresh tokens, and revoked ones past their retention window |
 | `backtest_refresh` | daily at 05:20 | replays the four-point [signal backtest](#the-scorecard-on-the-board) for every stock whose bars have moved. Reads only local rows -- it is a cache warmer, and the endpoint recomputes anything it missed |
+| `chip_refresh` | daily at 20:30 | pulls the last few sessions of T86 / MI_MARGN (and the TPEX equivalents) into `chip_day`. One report covers the whole board, so stock pages share it -- see [chip flow](#chip-flow) |
 
 Each attempt lands in `job_run`, whose `stats` column is JSONB rather than a set
 of columns: every job counts different things, and the admin table renders
@@ -1034,6 +1037,28 @@ TWSE 有 **每 5 秒 3 個 request** 的限制，超過會被 ban。分析要跑
 
 所有對外請求都經過 `server/app/throttle.py` 的滑動視窗限流器。該限流器是 process
 內狀態，這也是整個服務只能單 process 部署的主因之一——見 [Deployment is single-process](#deployment-is-single-process)。
+
+---
+
+## Chip flow
+
+Institutional net buying and margin balances sit on the stock page as their
+own card, next to 四大買賣點 rather than inside it. The two measure different
+things -- an oversold turn vs who was buying -- and mixing them would make the
+backtest score a different rule than the verdict shows.
+
+The exchanges publish these as all-market daily reports (TWSE T86 and MI_MARGN;
+TPEX 3insti and margin balance), not per-stock monthlies like STOCK_DAY. One
+call fills every listed name for one session, so `chip_fetch_log` is stamped
+per (source, report, date): the second stock to ask for that session is free.
+Past dates with rows never re-fetch; empty results and today expire on
+`CURRENT_MONTH_TTL_SECONDS`, because an empty T86 at 14:00 is "not published
+yet".
+
+A stock page is capped at six upstream calls and fetches 法人 before 融資, so a
+first visit can still show a 買超 streak. `chip_refresh` at 20:30 warms the
+last few sessions after the reports land. Indices (`t00`, `o00`) have no
+per-name chip and return `coverage: none`.
 
 ---
 
@@ -1509,7 +1534,7 @@ not support.
   but there is no pager and no notification: something outside this deployment
   has to be watching, or someone has to look at `/admin/jobs`.
 - 四大買賣點只讀成交量、開盤、收盤三個欄位，且只比較最新一根與前一根 K 棒，沒有趨勢或部位概念；
-  籌碼面（法人買賣超、融資融券）完全不在裡面。
+  籌碼面（法人買賣超、融資融券）是獨立卡片，不進入這套規則，也還沒有自己的回測。
 - 同一套規則現在也跑在指數 `t00` / `o00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
   指數的「量」是全市場成交股數，性質與單一個股的量能不同。
 - grs 與 twstock 都沒有為四大買賣點提供書目出處，可驗證的「標準」只到 grs 這份參考實作為止。

@@ -191,6 +191,7 @@ export const en: Messages = {
     'Fetched {fetched} month(s) from the source{detail}; {cached} month(s) served from the PostgreSQL cache',
   'history.fetchDetail': ' ({months})',
   'section.traditional': 'Rule-based analysis',
+  'section.chip': 'Chip flow',
   'table.last10': 'Last 10 days',
   'table.date': 'Date',
   'table.close': 'Close',
@@ -350,6 +351,26 @@ export const en: Messages = {
   'dividendKind.cash': 'Ex-dividend',
   'dividendKind.stock': 'Ex-rights',
   'dividendKind.both': 'Ex-rights & dividend',
+
+  // ---------- chip flow ----------
+  'chip.title': 'Chip flow',
+  'chip.asOf': 'As of {date} (settled after the close)',
+  'chip.foreign': 'Foreign',
+  'chip.trust': 'Inv. trust',
+  'chip.dealer': 'Dealer',
+  'chip.total': 'Institutions',
+  'chip.margin': 'Margin',
+  'chip.short': 'Short',
+  'chip.lots': 'lots',
+  'chip.colDate': 'Date',
+  'chip.streakBuy': '{days}d net buy',
+  'chip.streakSell': '{days}d net sell',
+  'chip.streakNone': 'No streak',
+  'chip.net5d': '5-day {value} lots',
+  'chip.empty':
+    'No chip reports for this stock yet. The after-close job will fill them, or reopen the page once daily bars have landed.',
+  'chip.note':
+    'Independent of Best Four Point — not a buy or sell signal. Institutional nets are converted from shares to lots; margin balances are already in lots.',
 
   // ---------- charts ----------
   'chart.tooltipOpen': 'O',
@@ -559,10 +580,16 @@ export const en: Messages = {
   'jobName.refresh_token_cleanup': 'Refresh-token cleanup',
   'jobDesc.refresh_token_cleanup':
     'Deletes expired refresh tokens, and revoked ones past their retention window. Revocations inside the window must be kept — replay detection is what catches a stolen token.',
+  'jobName.chip_refresh': 'Chip-report cache',
+  'jobDesc.chip_refresh':
+    'Fetches the last few sessions of institutional net-buying and margin-balance reports into chip_day. One daily report covers the whole board, so stock pages share it; without the job the first visit pays the fetch.',
   'jobStat.inserted': 'Added',
   'jobStat.updated': 'Updated',
   'jobStat.delisted': 'Delisted',
   'jobStat.pruned': 'Pruned',
   'jobStat.active': 'Searchable',
   'jobStat.deleted': 'Deleted',
+  'jobStat.fetched': 'Dates fetched',
+  'jobStat.cached': 'Already cached',
+  'jobStat.rows': 'Rows written',
 }

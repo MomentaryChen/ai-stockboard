@@ -20,6 +20,10 @@ the tables they maintain untouched.
 signal would have performed over the trailing window, recomputed from
 `daily_price` whenever the bars move past it.
 
+`chip_day` is one stock's institutional net and margin balances for one
+session; `chip_fetch_log` stamps the all-market daily reports those rows
+came from, so a second stock for the same date is a cache hit.
+
 `app_user`, `refresh_token` and `watchlist_item` carry the account system: who
 may sign in, which refresh tokens are still live, and what each user watches.
 """
@@ -373,6 +377,64 @@ class BacktestResult(Base):
         # "Where does this signal work best" reads the whole table ordered by
         # one of the headline figures.
         Index("ix_backtest_result_rule_set", "rule_set"),
+    )
+
+
+class ChipDay(Base):
+    """Institutional net buying and margin balances for one stock on one day.
+
+    Two all-market daily reports write different columns of the same row
+    (T86 / TPEX 3insti for the nets, MI_MARGN / TPEX margin for the balances),
+    which is why every figure is nullable: a date can have 法人 and not yet
+    融資, or the other way around, and neither should blank the other on
+    upsert.
+
+    Nets are in shares, the unit TWSE publishes. Margin balances are in 張,
+    the unit both exchanges publish. The card converts the former for display
+    rather than storing a second unit.
+    """
+
+    __tablename__ = "chip_day"
+
+    sid: Mapped[str] = mapped_column(String(16), primary_key=True)
+    date: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
+
+    foreign_net: Mapped[int | None] = mapped_column(BigInteger)
+    trust_net: Mapped[int | None] = mapped_column(BigInteger)
+    dealer_net: Mapped[int | None] = mapped_column(BigInteger)
+    total_net: Mapped[int | None] = mapped_column(BigInteger)
+
+    margin_balance: Mapped[int | None] = mapped_column(Integer)
+    margin_change: Mapped[int | None] = mapped_column(Integer)
+    short_balance: Mapped[int | None] = mapped_column(Integer)
+    short_change: Mapped[int | None] = mapped_column(Integer)
+
+    source: Mapped[str] = mapped_column(String(8), default="twse")
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (Index("ix_chip_day_sid_date", "sid", "date"),)
+
+
+class ChipFetchLog(Base):
+    """Cache stamp for one all-market daily chip report.
+
+    Keyed on (source, report, date) rather than sid because T86 and MI_MARGN
+    (and the TPEX equivalents) return every listed name in one call. Storing
+    that stamp per stock would re-fetch the same 1,300-row payload for 2330
+    after we had already paid for 2542.
+    """
+
+    __tablename__ = "chip_fetch_log"
+
+    source: Mapped[str] = mapped_column(String(8), primary_key=True)
+    report: Mapped[str] = mapped_column(String(8), primary_key=True)
+    date: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
+
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    fetched_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
 

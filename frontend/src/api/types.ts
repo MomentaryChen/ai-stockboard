@@ -69,6 +69,48 @@ export interface DividendResponse {
   events: DividendEvent[]
 }
 
+/** Consecutive same-sign institutional days, counted back from the newest row. */
+export interface ChipFlow {
+  streak: 'buy' | 'sell' | 'none'
+  streak_days: number
+  /** Sum of up to 5 recent sessions, in 股. */
+  net_5d: number | null
+}
+
+export interface ChipDay {
+  date: string
+  foreign_net: number | null
+  trust_net: number | null
+  dealer_net: number | null
+  total_net: number | null
+  margin_balance: number | null
+  margin_change: number | null
+  short_balance: number | null
+  short_change: number | null
+}
+
+export interface ChipResponse {
+  sid: string
+  name: string
+  source: DataSource
+  /** daily = the all-market reports; none = indices, which have no per-name chip. */
+  coverage: 'daily' | 'none'
+  days: number
+  as_of: string | null
+  count: number
+  fetched_dates: string[]
+  cached_dates: string[]
+  foreign: ChipFlow
+  trust: ChipFlow
+  dealer: ChipFlow
+  total: ChipFlow
+  margin_balance: number | null
+  margin_change: number | null
+  short_balance: number | null
+  short_change: number | null
+  rows: ChipDay[]
+}
+
 export interface MovingAverages {
   ma5: number | null
   ma10: number | null
