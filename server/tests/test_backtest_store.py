@@ -1,8 +1,8 @@
 """Pins what the cache layer adds on top of the engine.
 
 `backtest.py` is replayed and pooled by its own tests; `backtest_store.py` only
-turns a report into a row and back. Two things there are worth pinning because
-a wrong answer still looks like a tidy percentage:
+turns a report into a row and back. What is worth pinning there is whatever a
+wrong answer would still render as a tidy percentage:
 
   * **`computed_through` is the newest bar the replay saw.** It is the whole
     staleness rule -- a row is rebuilt when the stock has traded since, not on
@@ -14,13 +14,20 @@ a wrong answer still looks like a tidy percentage:
     would inflate the win rate by exactly the trades that have not had to be
     closed at a loss yet.
 
-No database: both go through `_to_row`, which is pure.
+  * **A row maps back to the response it came from.** Every field crosses a
+    JSONB boundary as a plain dict, so a renamed payload key does not fail at
+    the write -- it fails at the next read, for the rows written before it.
+
+No database anywhere here: `_to_row` and `_to_response` are both pure, and the
+write path (JSONB plus an ON CONFLICT upsert) is PostgreSQL-only, which is why
+the round trip is pinned rather than the insert.
 """
 
 from __future__ import annotations
 
 import datetime
 
+from app.models import BacktestResult
 from app.services import backtest_store
 from app.services.analysis import backtest
 
@@ -137,6 +144,48 @@ def test_signals_are_stored_newest_first():
     ]
     # JSONB keys are strings; the response model coerces them back to int.
     assert stored[0]["forward"] == {"5": 0.01}
+
+
+def test_a_stored_row_maps_back_to_the_response_it_was_built_from():
+    """Round-trips `_to_row` through `_to_response` without a database.
+
+    The write path needs PostgreSQL (JSONB, and an ON CONFLICT upsert), so this
+    is the only place the mapping itself can be pinned. It is worth pinning:
+    every field crosses a JSONB boundary as a plain dict, so a renamed payload
+    key does not fail at the write, it fails at the next read -- and only for
+    the stocks whose rows were written before the rename.
+    """
+    report = _report(trades=[_trade(True), _trade(False)], open_entry=None)
+    row_values = backtest_store._to_row(report)
+
+    # A detached ORM instance is enough: `_to_response` only reads attributes.
+    row = BacktestResult(**row_values)
+    out = backtest_store._to_response(row, name="台積電", cached=True)
+
+    assert out.sid == "2330"
+    assert out.name == "台積電"
+    assert out.cached is True
+    assert out.window_months == row_values["window_months"]
+    assert out.computed_through == report.end
+
+    sim = out.simulation
+    assert sim.trade_count == 2
+    assert sim.winning_trades == 1
+    assert sim.trade_win_rate == 0.5
+    assert sim.strategy_return == report.simulation.strategy_return
+    assert sim.buy_hold_return == report.simulation.buy_hold_return
+    assert sim.open_entry_date is None
+    # The curve survives the JSONB round trip with both series intact.
+    assert [(p.strategy, p.buy_hold) for p in sim.equity] == [(1.0, 1.0), (1.1, 1.2)]
+
+
+def test_no_completed_trades_reports_a_null_win_rate_not_zero():
+    row = BacktestResult(**backtest_store._to_row(_report(trades=[])))
+    out = backtest_store._to_response(row, name="台積電", cached=False)
+
+    assert out.simulation.trade_count == 0
+    assert out.simulation.trade_win_rate is None
+    assert out.cached is False
 
 
 def test_window_start_is_month_aligned():
