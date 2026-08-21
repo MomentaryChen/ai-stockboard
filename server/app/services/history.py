@@ -52,7 +52,7 @@ def resolve_source(sid: str) -> str:
 
 
 def _fetcher_for(sid: str, source: str):
-    """An index reports through its own TWSE endpoints, not STOCK_DAY."""
+    """An index reports through its own exchange endpoints, not STOCK_DAY."""
     if market_index.is_index(sid):
         return market_index.IndexFetcher()
     return _FETCHERS[source]()

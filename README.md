@@ -527,6 +527,20 @@ curl 'http://localhost:8000/api/realtime?sids=t00' -H "Authorization: Bearer $AC
 
 指數沒有 `nf`（全名）也沒有單量欄位，MIS 回的 payload 少那幾個 key，這部分在 service 層補掉。
 
+The OTC index is the same sid trick with a different pair of monthly reports,
+because TPEx does not publish `MI_5MINS_HIST` / `FMTQIK`. **`o00`** (櫃買指數)
+uses `indexInfo/inx` for OHLC and `afterTrading/tradingIndex` for volume; those
+reports quote volume in 張 and turnover in 仟元, so the fetcher scales both
+×1000 before they land in `daily_price` as 股 / 元, the same convention OTC
+stocks already use. Realtime is the MIS channel `otc_o00.tw`. Search 「櫃買」 or
+`o00` and the chart is `/stock/o00` -- the landing board stays TAIEX.
+
+```bash
+curl 'http://localhost:8000/api/stocks/o00'
+curl 'http://localhost:8000/api/stocks/o00/history?months=3'
+curl 'http://localhost:8000/api/realtime?sids=o00' -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
 ---
 
 ## Opening intel (當日開盤情報)
@@ -1188,10 +1202,9 @@ not support.
 - **The English UI covers interface copy only.** Stock names and industry groups
   stay as the exchange publishes them; server error `detail` strings are already
   English by convention.
-- 即時報價不寫入資料庫，只有歷史日成交落地（大盤的日線同樣落在 `daily_price`，sid = `t00`）。
+- 即時報價不寫入資料庫，只有歷史日成交落地（指數日線同樣落在 `daily_price`，sid = `t00` / `o00`）。
 - 大盤看板非交易時段顯示最近一個交易日的收盤。13:30 收盤到 TWSE 發布當日報表之間，
   日線還是前一天，此時改用 MIS 的最後成交值，避免看板倒退一天。
-- 目前只接了加權指數。櫃買指數（`o00`）的即時頻道可用，但歷史報表端點不同，尚未接。
 - 上市櫃名冊預設每 24 小時才對一次。當天早上剛掛牌的標的最久要等一天才查得到，
   急用可到 `/admin/stock-codes` 按「立即同步」。
 - Scheduling is per process; there is no leader election across replicas. Run with
@@ -1203,7 +1216,7 @@ not support.
   the database. Nothing alerts anywhere; someone has to look at `/admin/jobs`.
 - 四大買賣點只讀成交量、開盤、收盤三個欄位，且只比較最新一根與前一根 K 棒，沒有趨勢或部位概念；
   籌碼面（法人買賣超、融資融券）完全不在裡面。
-- 同一套規則現在也跑在大盤 `t00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
+- 同一套規則現在也跑在指數 `t00` / `o00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
   指數的「量」是全市場成交股數，性質與單一個股的量能不同。
 - grs 與 twstock 都沒有為四大買賣點提供書目出處，可驗證的「標準」只到 grs 這份參考實作為止。
 - Schema changes are Alembic revisions under `server/alembic/versions/`, applied
