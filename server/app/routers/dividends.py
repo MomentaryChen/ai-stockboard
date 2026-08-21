@@ -1,9 +1,18 @@
+"""除權息 events, served database-first.
+
+Metered like `/history`, and for a sharper reason: the TWSE cache buckets are
+per *year*, not per sid, so one forced refresh here throws away work that every
+other stock's page was reading. See the fetch-budget section of `app.deps`.
+"""
+
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app import deps
 from app.db import get_db
+from app.models import AppUser
 from app.schemas import DividendEventOut, DividendResponse
 from app.services import codes as codes_service
 from app.services import dividend as dividend_service
@@ -19,9 +28,12 @@ def _as_float(value) -> float | None:
 def get_dividends(
     sid: str,
     years: int = Query(5, ge=1, le=10, description="往回抓幾年（含今年）"),
-    force: bool = Query(False, description="忽略快取，強制向 TWSE/TPEX 重抓"),
+    force: bool = Depends(deps.force_refresh),
+    user: AppUser | None = Depends(deps.get_optional_user),
     db: Session = Depends(get_db),
 ) -> DividendResponse:
+    deps.limit_anonymous_window(user, years, deps.ANONYMOUS_MAX_YEARS, "years")
+
     info = codes_service.get_stock(sid)
     if info is None:
         raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")

@@ -15,10 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from app import models  # noqa: F401  -- registers tables on Base.metadata
-from app import schema_patches
+from app import migrations
+from app import models  # noqa: F401  -- maps every table before the first query
 from app.config import get_settings
-from app.db import Base, SessionLocal, engine
+from app.db import SessionLocal, engine
 from app.routers import (
     analysis,
     auth,
@@ -35,7 +35,6 @@ from app.schemas import HealthResponse
 from app.services import auth as auth_service
 from app.services import codes as codes_service
 from app.services.jobs import scheduler as job_scheduler
-from app.services.jobs import store as job_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -47,14 +46,13 @@ FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        Base.metadata.create_all(bind=engine)
-        # create_all never ALTERs an existing table, so columns added after a
-        # table shipped are applied separately. No-op on a fresh database.
-        schema_patches.apply(engine)
-        logger.info("Database tables ready")
+        migrations.upgrade_to_head(engine)
     except Exception:
         # Let the app boot so /api/health can report *why* the DB is unreachable.
-        logger.exception("Could not create tables -- is PostgreSQL running?")
+        # A schema that is genuinely behind will surface as failing queries
+        # rather than a silent wrong answer, which is the trade this has always
+        # made in exchange for a diagnosable health endpoint.
+        logger.exception("Could not migrate the database -- is PostgreSQL running?")
 
     try:
         with SessionLocal() as db:
@@ -62,14 +60,6 @@ async def lifespan(app: FastAPI):
     except Exception:
         # Same reasoning: a failed seed must not take the whole service down.
         logger.exception("Could not seed the ADMIN account")
-
-    try:
-        with SessionLocal() as db:
-            job_store.backfill_legacy_sync_runs(db)
-    except Exception:
-        # Only the audit trail of the old single-job table; losing it must not
-        # stop the service from booting.
-        logger.exception("Could not backfill the legacy sync-run history")
 
     # Background jobs -- among them the one that seeds `stock_code` and
     # reconciles it with the exchanges' ISIN registry. Each runs on its own

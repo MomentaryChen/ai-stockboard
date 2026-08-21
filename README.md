@@ -163,7 +163,7 @@ silently if someone "simplified" them, or if twstock's return types changed:
 | `_GrsBestFourPoint` | The 乖離 gate and close-vs-close volume-shrink rules regress to twstock's bugs. The 20 000-sequence experiment in this README never became a regression check. |
 | Refresh-token replay | A reused token would stop wiping every session. |
 | `must_change_password` | Restricted mode is two `Depends()` choices, not middleware. A third bare `get_authenticated_user` compiles. |
-| `schema_patches.apply` | A boot against a database that already has the column, or a second replica, would be the first time a bad statement is noticed. |
+| Alembic baseline / `upgrade_to_head` | `create_all` and `schema_patches.py` are gone. Editing the frozen baseline, or booting without `upgrade head`, is how a running database silently drifts from the models. |
 | Sliding-window throttle | TWSE's 3-per-5s ban is enforced only by this loop. |
 | `refreshPromise` in `client.ts` | Concurrent 401s would fire parallel refreshes; all but one look stolen to the server and the user is signed out at random. |
 
@@ -198,6 +198,7 @@ docker compose ps               # db / server / frontend 都要 (healthy)
 | `db` | postgres:16-alpine，資料存在 `stockboard-pgdata` volume | `5433` |
 | `server` | FastAPI + uvicorn，`server/Dockerfile` | `8000` |
 | `frontend` | vite build 產物由 nginx 提供，`frontend/Dockerfile` | `8100` |
+| `db-backup` | nightly `pg_dump` into `deployment/backups/` on the host | — |
 
 nginx 把 `/api` 與 `/docs` proxy 到 `server:8000`，瀏覽器全程同源，所以 CORS 不會參與；
 其餘路徑 fallback 到 `index.html` 交給 react-router。啟動順序由 healthcheck 串起來：
@@ -219,6 +220,102 @@ nginx 把 `/api` 與 `/docs` proxy 到 `server:8000`，瀏覽器全程同源，�
 docker compose up -d --build server     # 或 frontend
 ```
 
+### Backups
+
+The database is the only copy of everything this service cannot fetch again:
+user accounts, watchlists, the job schedules an admin edited, and the run
+history that says whether the nightly jobs are healthy. Prices can be pulled
+from the exchange a second time; none of that can.
+
+The `db-backup` container runs `pg_dump` once a day and writes into
+`deployment/backups/` **on the host**, not into a Docker volume. That is the
+whole point of the arrangement -- a named volume would be deleted by the same
+`docker compose down -v` that deletes the database, so it would fail in exactly
+the case a backup exists for.
+
+```bash
+cd deployment
+docker compose exec db-backup /opt/backup/backup.sh   # take one right now
+docker compose exec db-backup /opt/backup/restore.sh  # list what is on disk
+docker compose logs db-backup                         # did last night's run?
+ls backups/
+```
+
+Tuned in `.env` (`BACKUP_AT`, `BACKUP_KEEP_DAYS`, `BACKUP_DIR`). The first start
+takes a backup immediately when the directory is empty, so a new deployment is
+covered from day one rather than from the first time 04:00 comes around.
+
+Each dump is written under a `.partial` name and moved into place only after
+`pg_restore --list` has read it back, so a run interrupted half way through
+never leaves a file that looks like a good backup. Old dumps are pruned only
+after a new one has been verified -- a failed backup must not also cost you the
+copies it failed to replace.
+
+To restore, stop the API first so it is not writing into the database being
+replaced:
+
+```bash
+cd deployment
+docker compose stop server
+docker compose exec db-backup /opt/backup/restore.sh stockboard-20260821-040000.dump
+docker compose start server
+```
+
+The restore asks you to type the database name before it does anything, and
+terminates any other session still connected -- an open `psql` holds locks on
+the objects `pg_restore` is about to drop, which is how a restore turns into a
+half-applied schema.
+
+Two things this is not. It is one machine's disk: a dump next to the database
+covers a mistaken `down -v`, an accidental `delete`, and a bad migration, but
+not the disk itself. Point `BACKUP_DIR` somewhere else if that matters. And
+nothing alerts -- `docker compose logs db-backup` is the only place a failing
+backup shows up, the same limitation the batch jobs have.
+
+### Schema migrations
+
+Schema changes go through **Alembic**. The database is migrated on startup by
+`app/migrations.py`, so `docker compose up -d --build` remains the whole
+deployment procedure; a PostgreSQL advisory lock keeps two replicas booting at
+once from running the same DDL twice.
+
+```bash
+cd server
+uv run alembic current                                  # where is this database
+uv run alembic revision --autogenerate -m "add x"       # write one from the models
+uv run alembic upgrade head                             # apply
+uv run alembic check                                    # models vs database: any drift?
+uv run alembic upgrade head --sql                       # review the SQL, apply nothing
+```
+
+Always read what `--autogenerate` produced before committing it. It compares
+the models against a live database and is good at columns, indexes and types;
+it cannot know that a column is being renamed rather than dropped and re-added,
+and it will happily generate the second.
+
+`alembic check` is the one worth running in anger: it fails when the models and
+the database disagree, which is the class of bug that used to be invisible.
+
+**Why this replaced `create_all`.** `Base.metadata.create_all` only ever creates
+tables that do not exist. It never alters one that does -- so a column added to
+a shipped model was invisible to any database with data in it, and there was a
+second mechanism (`app/schema_patches.py`, now deleted) holding one idempotent
+`add column if not exists` per such column. That covered adding a column and
+nothing else: no type change, no composite index, no drop, no data backfill.
+The drift was not hypothetical. Adopting Alembic turned up an orphaned
+`stock_code_sync_run` table and an `ix_dividend_event_sid_ex_date` index that
+had been removed from the models but not from any running database, because
+dropping is precisely what `create_all` cannot do; `0002_retire_create_all_leftovers`
+is what finally removes them.
+
+An existing deployment needs no manual step. `0001_baseline` is written
+entirely in `IF NOT EXISTS` form, so it is a no-op against a database
+`create_all` already built and fills in whatever it could not add after the
+fact -- notably an index added to a model after its table had shipped, which
+`create_all` never revisits. Stamping the database as up to date would have
+been shorter, but a stamp asserts a match instead of establishing one, and
+`alembic check` afterwards proves the difference.
+
 ### 單一服務部署（不用 Docker）
 
 ```bash
@@ -227,6 +324,9 @@ cd ../server && uv run uvicorn app.main:app --port 8000
 ```
 
 server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port 就能跑完整站台。
+
+**不要加 `--workers`。** 服務有數項 process 內狀態，多開一個 worker 會讓對 TWSE 的
+速率變成兩倍，見 [Deployment is single-process](#deployment-is-single-process)。
 
 ---
 
@@ -237,8 +337,9 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/health` | 服務與資料庫狀態 |
 | GET | `/api/stocks/search?q=&limit=` | 代碼／名稱搜尋 |
 | GET | `/api/stocks/{sid}` | 個股基本資料 |
-| GET | `/api/stocks/{sid}/history?months=6&force=false` | 歷史日成交 |
-| GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點 |
+| GET | `/api/stocks/{sid}/history?months=6` | 歷史日成交. `months` 上限 24; 12 without a token, and `force=true` is **ADMIN** -- see [the fetch budget](#the-upstream-fetch-budget) |
+| GET | `/api/stocks/{sid}/dividends?years=5` | 除權息. `years` 上限 10; 5 without a token, `force=true` is **ADMIN**, same reason |
+| GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點. Backfills like `/history`, so the same `months` cap applies |
 | GET | `/api/analysis/traditional?sids=2330,0050` | Batch 四大買賣點 from cached daily bars only (no TWSE fetch, max 20) |
 | GET | `/api/realtime?sids=2330,0050` | 即時報價，最多 20 檔（**需登入**） |
 | GET | `/api/market/open?date=&sids=` | Opening intel for one trading day: gap and drift for the index plus up to 20 watchlist codes. Defaults to today in Taipei; cache-only apart from the index's own backfill |
@@ -473,7 +574,8 @@ twstock 把上市櫃名冊做成兩個 CSV 打包在套件裡，更新方式是 
 - **新鮮度檢查**：重啟不會重抓，`max(synced_at)` 還在區間內就直接跳過。
 - **不跨 replica 協調**。最壞情況是多抓一次同樣的兩頁，upsert 是冪等的；
   為此在 40 秒的爬取上壓一把鎖不划算。要只讓一個副本跑排程，把其他副本的
-  `JOBS_SCHEDULER_ENABLED` 關掉即可（關掉後仍可手動執行）。
+  `JOBS_SCHEDULER_ENABLED` 關掉即可（關掉後仍可手動執行）。不過本服務目前無論如何
+  都只能跑單一 process，見 [Deployment is single-process](#deployment-is-single-process)。
 - 下市標的**仍可用完整代碼查到**（`get_stock` 照樣解析、線圖照畫），只是不再出現在搜尋的前綴／名稱比對裡。
 
 ### Background jobs
@@ -570,7 +672,8 @@ TWSE 有 **每 5 秒 3 個 request** 的限制，超過會被 ban。分析要跑
 
 實測：2317 抓 12 個月第一次 **17.9 秒**（卡在速率限制），第二次 **瞬回**。
 
-所有對外請求都經過 `server/app/throttle.py` 的滑動視窗限流器。
+所有對外請求都經過 `server/app/throttle.py` 的滑動視窗限流器。該限流器是 process
+內狀態，這也是整個服務只能單 process 部署的主因之一——見 [Deployment is single-process](#deployment-is-single-process)。
 
 ---
 
@@ -639,8 +742,11 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 
 ## 帳號與權限
 
-帳號（username）、Email、密碼為必填，手機選填。角色只有 `ADMIN` 與 `USER` 兩種，
-行情 API 中 `/api/health` 與 `/api/stocks/*` 維持公開，只有 `/api/realtime` 需要登入。
+帳號（username）、Email、密碼為必填，手機選填。角色只有 `ADMIN` 與 `USER` 兩種。
+Every market-data route stays readable without an account. What a token buys is a bigger
+share of the upstream rate limit: `/api/realtime` needs one at all, and the cached routes
+widen their backfill range for a caller who has signed in. See
+[the fetch budget](#the-upstream-fetch-budget).
 
 ### Token
 
@@ -692,7 +798,8 @@ ADMIN 不能重設自己的密碼（會被擋成 400），要改自己的密碼�
 
 `JWT_SECRET` 沒設時，server 仍然會啟動，改用一把隨程序產生的隨機密鑰並記一筆 WARNING。
 代價是**每次重啟所有人的 access token 失效**（refresh token 存在資料庫，客戶端會自動換發，使用者無感），
-而且**不能跑多個 uvicorn worker**（各自的密鑰不同，會互相拒絕）。正式環境請設定：
+而且**不能跑多個 uvicorn worker**（各自的密鑰不同，會互相拒絕；這只是其中一項限制，
+完整清單見 [Deployment is single-process](#deployment-is-single-process)）。正式環境請設定：
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -831,8 +938,95 @@ never render and nothing polls.
 
 ---
 
+## The upstream fetch budget
+
+Requiring a sign-in for `/api/realtime` only helps if the cached routes cannot be
+used to spend the same budget. They reach TWSE/TPEX too -- just not on every call
+-- and the query parameters below decide how much:
+
+| Knob | Cost of one request | Rule |
+|---|---|---|
+| `force=true` on `/history`, `/dividends` | every bucket in the range, **every time** | **ADMIN** only |
+| `months` on `/history` and `/analysis/traditional` | one request per month **missing from the cache** | 24 signed in, 12 anonymous |
+| `years` on `/dividends` | one report per year missing from the cache | 10 signed in, 5 anonymous |
+
+`force` is the one that mattered. It skips every staleness check, so the answer is
+never cached and the *next* identical request pays in full again. Anonymous
+`?months=24&force=true` queued 24 fetches; at 3 requests per 5 seconds that is
+roughly **44 seconds during which the service has no TWSE allowance left** -- and
+one thread-pool worker parked for the duration. A handful of tabs rotating over
+different codes was enough to starve every signed-in user's quote poll, using the
+public route to walk straight around the sign-in that was protecting it.
+
+Nothing in the UI sends `force`; it is a curl-and-ops affordance, which is why
+restricting it costs nothing. `/api/analysis/traditional` (batch) is unmetered on
+purpose -- it is cache-only by construction and never reaches upstream. The
+anonymous ceilings are the ranges the public chart actually offers (1/3/6/12
+months), so no signed-out visitor meets one by clicking.
+
+An over-budget request is **refused, not quietly trimmed**: the response reports
+the range it answered for, and silently halving it would read as "the exchange has
+no older data".
+
+Presenting a token that is expired or belongs to a disabled account still fails
+these routes rather than falling back to the anonymous tier. That is deliberate --
+otherwise an expired session asking for 24 months would be told "sign in to
+request more than 12 months", which is both wrong and unactionable. The frontend
+sends no token here at all, so it never sees either case.
+
+One upstream path is left public on purpose: `/api/market/open` backfills the
+index, and only the index, for at most two months per requested date, recorded in
+`fetch_log` and a no-op once warm. The sid cannot be varied and the cost of any
+given month is paid once, ever -- see [Why the endpoint is cache-only](#why-the-endpoint-is-cache-only).
+
+---
+
+## Deployment is single-process
+
+**This service can only run as one process.** Not "should preferably" — four
+separate pieces of state live in process memory, and a second process silently
+gets its own copy of each:
+
+| In-process state | Where it lives | What a second process does to it |
+|---|---|---|
+| The TWSE rate-limit window | `server/app/throttle.py` — a module-level `SlidingWindowThrottle`: a `deque` behind a `threading.Lock` | Each process throttles only itself, so N processes hit TWSE at N × `THROTTLE_MAX_CALLS` per `THROTTLE_WINDOW_SECONDS`. The 3 / 5.5 s default is there because TWSE bans clients that exceed 3 requests per 5 seconds — two workers are already over the line. |
+| "Is this job already running?" | `server/app/services/jobs/runner.py` — `_locks: dict[str, threading.Lock]` | `JobBusyError` can only fire against a run in the same process, so two processes will happily run the same job at the same time. |
+| The listed-instrument snapshot (~44k rows) | `server/app/services/codes.py` — `_snapshot` | Every process pays the memory, and `invalidate()` after a sync clears only the caller's copy. A database-backed snapshot has no TTL, so the other processes keep serving the pre-sync listing until they happen to restart. |
+| `JWT_SECRET`, when it is not set | `server/app/security.py` — `secrets.token_urlsafe(48)`, resolved once at import | Each process signs with a different key, so a token minted by one is rejected by the others and the user bounces between signed-in and signed-out. |
+
+The rate limit is the one that matters, because the entire caching design in
+[資料為什麼要落地](#資料為什麼要落地) exists to stay under it. The other three
+degrade; that one gets the deployment banned by the upstream.
+
+Nothing enforces the constraint. `server/Dockerfile` runs `uvicorn` without
+`--workers`, which is correct, but it is correct by convention — no code refuses
+to start when a second process is already live. Setting
+`JOBS_SCHEDULER_ENABLED=false` on the extra replicas covers the scheduler only;
+the throttle, the snapshot and the signing key are untouched by it.
+
+### What horizontal scaling would take
+
+Each item has to move out of process memory before a second process is safe:
+
+- the rate-limit window into a shared counter — Redis, or a timestamp table
+  guarded by a PostgreSQL advisory lock;
+- the per-job lock into a PostgreSQL advisory lock keyed on the job id, which
+  also retires `JOBS_SCHEDULER_ENABLED` as a hand-run leader election;
+- the listing snapshot behind a shared invalidation signal, or a version column
+  each process can check cheaply before serving from its own copy;
+- `JWT_SECRET` into a required setting, dropping the per-process fallback.
+
+None of that is scheduled. At the current size one process with a thread pool is
+enough, and stating the limit is more useful than a scaling story the code does
+not support.
+
+---
+
 ## 已知限制
 
+- **這個服務目前只能單 process 部署。** 限流視窗、job 鎖、名冊快照與未設定時的
+  `JWT_SECRET` 全都是 process 內狀態，跑第二個 process 會直接違反 TWSE 的速率限制。
+  見 [Deployment is single-process](#deployment-is-single-process)。
 - **即時報價需要登入**，未登入只看得到最近一個交易日的收盤（頁面不會被擋掉，見上一節）。
 - **即時報價只在交易時段有效**（週一至週五 09:00–13:30）。非交易時段來源會回最後一筆或空值，UI 有提示。
 - **上櫃（TPEX）資料比上市晚一天**發布，屬於來源行為。
@@ -849,7 +1043,9 @@ never render and nothing polls.
   急用可到 `/admin/stock-codes` 按「立即同步」。
 - Scheduling is per process; there is no leader election across replicas. Run with
   `JOBS_SCHEDULER_ENABLED=true` on exactly one of them, or every job runs several
-  times over -- harmless, since they are idempotent, but wasted work.
+  times over -- harmless, since they are idempotent, but wasted work. Note that
+  this switch covers the scheduler only, not the other per-process state: see
+  [Deployment is single-process](#deployment-is-single-process).
 - Run history is capped at the most recent 200 attempts per job and lives only in
   the database. Nothing alerts anywhere; someone has to look at `/admin/jobs`.
 - 四大買賣點只讀成交量、開盤、收盤三個欄位，且只比較最新一根與前一根 K 棒，沒有趨勢或部位概念；
@@ -857,10 +1053,15 @@ never render and nothing polls.
 - 同一套規則現在也跑在大盤 `t00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
   指數的「量」是全市場成交股數，性質與單一個股的量能不同。
 - grs 與 twstock 都沒有為四大買賣點提供書目出處，可驗證的「標準」只到 grs 這份參考實作為止。
-- 資料表用 `Base.metadata.create_all` 在啟動時建立。它只建立**不存在的表**，永遠不會 ALTER 既有的表。
-  既有的表要加欄位，改在 `server/app/schema_patches.py` 補一行冪等的
-  `add column if not exists`，每次啟動都會跑一次。那裡只放**加欄位**——
-  改型別、改名、刪欄位都不適合無人值守地對著正在跑的資料庫執行，需要時仍應導入 Alembic。
+- Schema changes are Alembic revisions under `server/alembic/versions/`, applied
+  at startup. A revision runs against a live database with no operator watching,
+  so anything that rewrites a large table or takes a long lock is still a manual
+  job -- write it, then run `alembic upgrade head` by hand at a quiet hour rather
+  than letting a deploy do it. See the schema migrations section above.
+- Backups are a nightly `pg_dump` to one directory on the same host. That covers
+  a mistaken `down -v`, a bad migration and a wrong `delete`; it does not cover
+  losing the machine. Nothing alerts when a backup fails -- it shows up in
+  `docker compose logs db-backup` and nowhere else.
 - 重設密碼產生的臨時密碼**只顯示一次**，且只能靠 ADMIN 自己轉交。沒有寄信、沒有簡訊，
   也沒有「忘記密碼」的自助流程——使用者一定要找得到管理員。
 - **Token 存在 localStorage**，任何 XSS 都讀得到。專案沒有 cookie/CSRF 基礎建設，
@@ -883,11 +1084,40 @@ docker compose exec db psql -U stockboard -d stockboard -c "select * from fetch_
 docker compose exec db psql -U stockboard -d stockboard -c "select id, username, email, role, is_active from app_user order by id;"
 ```
 
-清掉快取重來：
+### Clearing cached market data
+
+Prices, the month-bucket bookkeeping and the dividend history are a cache of
+what the exchanges publish: deleting them costs a re-fetch and nothing else.
+Accounts, watchlists, schedules and job history are not a cache, and this
+leaves them where they are.
 
 ```bash
-cd deployment && docker compose down -v && docker compose up -d
+cd deployment
+docker compose exec db psql -U stockboard -d stockboard \
+  -c "truncate daily_price, fetch_log, dividend_event, dividend_fetch_log;"
 ```
+
+The listed-instrument table is re-fetchable too, but on its own schedule --
+emptying `stock_code` leaves search returning nothing until the next sync
+finishes, so prefer the "立即同步" button at `/admin/stock-codes` over
+truncating it.
+
+### Starting the deployment over from nothing
+
+`docker compose down -v` is **not** a cache flush. The `-v` deletes the
+`stockboard-pgdata` volume, and with it every user account, every watchlist,
+every job run, and the schedules an admin edited -- none of which can be
+fetched again from anywhere. It is the right command for throwing a deployment
+away, and the wrong one for a stale price.
+
+```bash
+cd deployment
+docker compose exec db-backup /opt/backup/backup.sh   # so this is reversible
+docker compose down -v && docker compose up -d
+```
+
+A dump taken first makes it reversible: the backups live on the host, so
+`down -v` does not touch them, and `restore.sh` puts the accounts back.
 
 ---
 

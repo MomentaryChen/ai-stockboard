@@ -10,6 +10,10 @@ dependencies = [
     "pydantic-settings>=2.6",
     "sqlalchemy>=2.0.36",
     "psycopg[binary]>=3.2",
+    # Schema migrations. `create_all` only ever creates missing tables, so
+    # anything that is not a brand-new table -- a type change, a composite
+    # index, a dropped column -- has no unattended path without this.
+    "alembic>=1.14",
     "python-dotenv>=1.0",
     # Market data source: TWSE/TPEX fetchers, stock code database, technical
     # analytics. Vendored under ../vendor/twstock and installed editable, so the

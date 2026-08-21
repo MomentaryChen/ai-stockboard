@@ -1,0 +1,5 @@
+# Shell scripts run inside Linux containers straight off a bind mount, so they
+# have to keep LF endings even when the repository is checked out on Windows
+# with core.autocrlf=true -- /bin/sh reads a CRLF script as commands that end in
+# a stray \r and fails with "not found" on the first line.
+*.sh text eol=lf

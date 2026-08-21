@@ -14,7 +14,7 @@ import datetime
 import logging
 import re
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -366,52 +366,3 @@ def next_run_at(
     if state.kind == SCHEDULE_DAILY:
         return _next_daily(state.daily_at, now)
     return last.started_at + datetime.timedelta(minutes=state.interval_minutes)
-
-
-# --------------------------------------------------------------------------
-# One-off migration
-# --------------------------------------------------------------------------
-
-_LEGACY_BACKFILL = """
-insert into job_run
-    (job_id, started_at, finished_at, status, trigger, actor, stats, message)
-select
-    'stock_code_sync',
-    started_at,
-    finished_at,
-    case when status = 'synced' then 'success' else status end,
-    trigger,
-    null,
-    jsonb_build_object(
-        'active', active, 'inserted', inserted, 'updated', updated,
-        'delisted', delisted, 'pruned', pruned
-    ),
-    message
-from stock_code_sync_run
-order by started_at
-"""
-
-
-def backfill_legacy_sync_runs(db: Session) -> int:
-    """Copy any old `stock_code_sync_run` rows into `job_run`, once.
-
-    The listing sync used to own a table of its own, and those rows are the
-    only evidence of how the job has been behaving. This project has no
-    migration tool -- `create_all` adds `job_run` happily but would leave the
-    history stranded next to it. Guarded on the target being empty, so it runs
-    exactly once and is a no-op everywhere else, including on a fresh database
-    that never had the old table.
-
-    Deliberately not in `app/schema_patches.py`: that file is additive DDL only,
-    and this moves rows.
-    """
-    if db.execute(text("select to_regclass('public.stock_code_sync_run')")).scalar() is None:
-        return 0
-    if count_runs(db, "stock_code_sync") > 0:
-        return 0
-
-    copied = db.execute(text(_LEGACY_BACKFILL)).rowcount or 0
-    db.commit()
-    if copied:
-        logger.info("Backfilled %d stock_code_sync_run rows into job_run", copied)
-    return copied
