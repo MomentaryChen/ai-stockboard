@@ -16,11 +16,17 @@ import { fmtInt, fmtLotsAxis } from '../utils/format'
 const UP = '#f0464a'
 const DOWN = '#22b573'
 
-function VolumeTooltip({ active, payload }: any) {
+function VolumeTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean
+  payload?: ReadonlyArray<{ payload: ChartRow }>
+}) {
   const { t } = useI18n()
 
   if (!active || !payload?.length) return null
-  const row = payload[0].payload as ChartRow
+  const row = payload[0].payload
   return (
     <div className="chart-tooltip">
       <div className="t-date">{row.date}</div>

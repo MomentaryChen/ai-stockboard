@@ -76,12 +76,18 @@ export function buildChartRows(
     })
 }
 
-function ChartTooltip({ active, payload }: any) {
+function ChartTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean
+  payload?: ReadonlyArray<{ payload: ChartRow }>
+}) {
   // Rendered inside the chart subtree, so the provider is still above it.
   const { t } = useI18n()
 
   if (!active || !payload?.length) return null
-  const row = payload[0].payload as ChartRow
+  const row = payload[0].payload
   const dir = row.close >= row.open ? 'up' : 'down'
 
   const lines: Array<[string, string, string?]> = [
