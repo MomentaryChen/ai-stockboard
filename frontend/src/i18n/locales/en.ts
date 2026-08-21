@@ -182,8 +182,6 @@ export const en: Messages = {
   'open.badgeHistory': 'History',
   'open.gap': 'Gap',
   'open.fromOpen': 'Since open',
-  'open.colStock': 'Stock',
-  'open.colLast': 'Last / close',
   'open.pattern.up.up': 'Gapped up, kept climbing',
   'open.pattern.up.down': 'Gapped up, faded',
   'open.pattern.up.flat': 'Gapped up, went nowhere',
@@ -193,10 +191,6 @@ export const en: Messages = {
   'open.pattern.flat.up': 'Flat open, climbed',
   'open.pattern.flat.down': 'Flat open, fell',
   'open.pattern.flat.flat': 'Flat open, flat session',
-  'open.watchlistTitle': 'Watchlist at the open',
-  'open.watchlistEmpty': 'Your watchlist is empty. Add stocks with the search box above.',
-  'open.watchlistSignInNote':
-    'Sign in to follow your watchlist from the open while the session runs. Signed out, only settled trading days are shown.',
   'open.noSession': 'No session on {date} -- a holiday or a non-trading day.',
   'open.jumpLatest': 'Go to the latest trading day, {date}',
   'open.pendingReport':
@@ -204,8 +198,6 @@ export const en: Messages = {
   'open.pendingLocked':
     'TWSE has not published today’s daily report yet. Sign in to follow the session from the open.',
   'open.noBars': 'No daily bars cached for this stock yet -- open its page to fetch them',
-  'open.rowNoBars': 'No daily bars cached',
-  'open.rowNoSession': 'No session',
   'open.futureDate': 'That day has not happened yet.',
   'open.showingLastSession':
     'Nothing for today yet; the figures below are the last trading day, {date}.',

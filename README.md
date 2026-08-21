@@ -470,7 +470,9 @@ curl 'http://localhost:8000/api/realtime?sids=t00' -H "Authorization: Bearer $AC
 ## Opening intel (當日開盤情報)
 
 The market board opens on **today's session** and leads with the two numbers a
-close alone cannot give you:
+close alone cannot give you. Its subject is the index alone — the watchlist has
+its own board at `/realtime`, and the market board carried a second, thinner
+copy of it until it was removed:
 
 | | |
 |---|---|
@@ -493,8 +495,7 @@ Three sources answer the same question and none covers every case, so
 prefers them in this order:
 
 1. **Settled daily bars**, via `GET /api/market/open`. Final, and the only
-   source carrying turnover and a previous close for a *watchlist* stock on an
-   arbitrary date.
+   source carrying turnover and a previous close for an arbitrary past date.
 2. **The realtime quote**, for today until TWSE publishes the day's report —
    it carries `y` (yesterday's close), which is what makes the gap computable.
    Signed-in only.
@@ -506,8 +507,12 @@ last settled session and says so rather than showing an empty card.
 
 ### Why the endpoint is cache-only
 
+The endpoint still takes `sids` and answers for up to 20 codes beside the
+index; the frontend stopped asking when the market board dropped its watchlist
+section, so today only the index comes back.
+
 `/api/market/open` reads `daily_price` and does not call the exchange for
-watchlist codes, for the same reason the batch 四大買賣點 endpoint does not: a
+those extra codes, for the same reason the batch 四大買賣點 endpoint does not: a
 cold 20-stock watchlist would queue tens of TWSE month-fetches on the very
 limiter (3 requests / 5 s) the realtime poll depends on. A stock with nothing
 cached is reported as such, not fetched.

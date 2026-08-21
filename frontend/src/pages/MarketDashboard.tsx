@@ -4,17 +4,14 @@ import { useQuery } from '@tanstack/react-query'
 
 import { MARKET_INDEX_SID, api } from '../api/client'
 import type { RuleSet } from '../api/types'
-import { useAuth } from '../auth/AuthContext'
 import BestFourPointCard from '../components/BestFourPointCard'
 import MaPanel from '../components/MaPanel'
 import OpenIntelStrip from '../components/OpenIntelStrip'
-import OpenWatchlistTable from '../components/OpenWatchlistTable'
 import PriceChart, { buildChartRows } from '../components/PriceChart'
 import SignInPrompt from '../components/SignInPrompt'
 import StockSearch from '../components/StockSearch'
 import VolumeChart from '../components/VolumeChart'
 import { POLL_MS, useLiveQuote } from '../hooks/useLiveQuote'
-import { useWatchlist } from '../hooks/useWatchlist'
 import { useI18n, type MessageKey } from '../i18n'
 import { direction, fmtCompact, fmtIndex, fmtLots, fmtSigned } from '../utils/format'
 import { taipeiToday } from '../utils/market'
@@ -43,12 +40,16 @@ const MA_OPTIONS = ['ma5', 'ma10', 'ma20', 'ma60']
  * turnover a quote does not), the live quote covers today until TWSE publishes
  * the report, and the chart's own history is the last resort -- which is what
  * lets a signed-out visitor still read today's board after the close.
+ *
+ * The index and nothing else. The watchlist is the /realtime board's subject
+ * and it lives there in full -- quotes, the four points, add and remove. A
+ * second, thinner copy of it under the index only ever answered the same
+ * question worse, and it dragged a signed-in-only quote poll onto the one page
+ * that has to work signed out.
  */
 export default function MarketDashboard() {
   const navigate = useNavigate()
   const { locale, t } = useI18n()
-  const { status } = useAuth()
-  const authenticated = status === 'authenticated'
 
   const today = taipeiToday()
   // The selected day lives in the URL, not in component state: a board showing
@@ -88,8 +89,6 @@ export default function MarketDashboard() {
   // Defaults to the corrected rules; 'twstock' is there to compare against.
   const [ruleSet, setRuleSet] = useState<RuleSet>('grs')
 
-  const { sids: watchlist, isLoading: watchlistLoading } = useWatchlist()
-
   const history = useQuery({
     queryKey: ['history', MARKET_INDEX_SID, months],
     queryFn: () => api.getHistory(MARKET_INDEX_SID, months),
@@ -100,11 +99,11 @@ export default function MarketDashboard() {
     queryFn: () => api.getTraditionalAnalysis(MARKET_INDEX_SID, months, ruleSet),
   })
 
-  // Settled bars for the selected day: the index, plus the watchlist in one
-  // request. Public and cache-only, so it answers signed out too.
+  // The index's settled bar for the selected day. Public and cache-only, so it
+  // answers signed out too.
   const openBoard = useQuery({
-    queryKey: ['market-open', date, watchlist],
-    queryFn: () => api.getMarketOpen(date, watchlist),
+    queryKey: ['market-open', date],
+    queryFn: () => api.getMarketOpen(date),
   })
 
   const rows = useMemo(
@@ -118,27 +117,9 @@ export default function MarketDashboard() {
     lastClose,
   )
 
-  // Quotes for the watchlist, on the same key RealtimeBoard uses, so having
-  // both pages open shares one poll rather than running two.
-  //
-  // It is still a second request alongside the index's own, and merging them
-  // would be worse than it looks: /api/realtime quotes at most 20 codes and a
-  // full watchlist is already 20, so asking for the index in the same call
-  // would silently drop somebody's twentieth stock. Two bounded polls, both
-  // behind the server's shared TWSE limiter, beats one that quietly lies.
-  //
-  // Today only. A past session has settled bars, and a quote would be
-  // answering about a different day entirely.
-  const watchQuotes = useQuery({
-    queryKey: ['realtime', watchlist],
-    queryFn: () => api.getRealtime(watchlist),
-    enabled: authenticated && isToday && watchlist.length > 0,
-    refetchInterval: live ? POLL_MS : false,
-    staleTime: 0,
-  })
-
-  const snapshots = useMemo(
-    () => new Map((openBoard.data?.items ?? []).map((item) => [item.sid, item])),
+  /** The index's own row out of the open board, when the day has settled. */
+  const settled = useMemo(
+    () => (openBoard.data?.items ?? []).find((item) => item.sid === MARKET_INDEX_SID) ?? null,
     [openBoard.data],
   )
 
@@ -150,11 +131,10 @@ export default function MarketDashboard() {
   )
 
   const indexView = useMemo<OpenView | null>(() => {
-    const settled = snapshots.get(MARKET_INDEX_SID)
     if (settled) return fromSnapshot(settled)
     if (isToday && quote && quote.open !== null) return fromQuote(quote, date)
     return indexFromHistory
-  }, [snapshots, isToday, quote, date, indexFromHistory])
+  }, [settled, isToday, quote, date, indexFromHistory])
 
   // Today before the report lands and with no quote to read -- a signed-out
   // visitor mid-session. Falling back to the last settled bar is what the board
@@ -172,43 +152,6 @@ export default function MarketDashboard() {
 
   const shown = indexView ?? fallbackView
   const stale = indexView === null && fallbackView !== null
-
-  // Whether the requested day was a trading day at all, as far as the index --
-  // the one instrument that trades every session -- is concerned.
-  const indexTraded = openBoard.data?.settled ?? false
-
-  const watchRows = useMemo(() => {
-    const quotes = new Map((watchQuotes.data?.quotes ?? []).map((q) => [q.code, q]))
-    const views: OpenView[] = []
-    const missing: Array<{ sid: string; reason: string }> = []
-
-    for (const sid of watchlist) {
-      const settled = snapshots.get(sid)
-      if (settled) {
-        views.push(fromSnapshot(settled))
-        continue
-      }
-      const tick = isToday ? quotes.get(sid) : undefined
-      if (tick && tick.open !== null) {
-        views.push(fromQuote(tick, date))
-        continue
-      }
-      missing.push({
-        sid,
-        // Short by design: the reason repeats on every row, so the sentence
-        // that explains it lives once, under the table. A past day the *index*
-        // did not trade is a holiday, not a gap in this stock's cache.
-        reason: isToday
-          ? authenticated
-            ? t('realtime.noQuote')
-            : t('signIn.badge')
-          : indexTraded
-            ? t('open.rowNoBars')
-            : t('open.rowNoSession'),
-      })
-    }
-    return { views, missing }
-  }, [watchlist, snapshots, watchQuotes.data, isToday, authenticated, indexTraded, date, t])
 
   const latestTradingDay = openBoard.data?.latest_trading_day ?? null
   const dir = direction(shown?.change)
@@ -396,30 +339,6 @@ export default function MarketDashboard() {
             {note}
           </p>
         ))}
-      </section>
-
-      <section className="card">
-        <div className="row-between wrap" style={{ marginBottom: 12 }}>
-          <h2 className="card-title" style={{ margin: 0 }}>
-            {t('open.watchlistTitle')}
-          </h2>
-          <span className="dim">{date}</span>
-        </div>
-
-        {watchlist.length === 0 ? (
-          <p className="dim" style={{ margin: 0 }}>
-            {watchlistLoading ? <span className="spinner" /> : t('open.watchlistEmpty')}
-          </p>
-        ) : (
-          <>
-            <OpenWatchlistTable views={watchRows.views} missing={watchRows.missing} />
-            {!authenticated && (
-              <p className="dim" style={{ margin: '10px 0 0' }}>
-                {t('open.watchlistSignInNote')}
-              </p>
-            )}
-          </>
-        )}
       </section>
 
       <div className="grid-detail">
