@@ -2,6 +2,7 @@ import { tokenStore } from './tokenStore'
 import type {
   AiAnalysisResponse,
   AiHoldAnalysisResponse,
+  AiModelSettings,
   AiQuotaStatus,
   BacktestBatchResponse,
   ChenAnalysisResponse,
@@ -560,6 +561,18 @@ export const api = {
 
   deleteUser: (userId: number) =>
     request<void>(`/api/users/${userId}`, { method: 'DELETE', auth: true }),
+
+  // --- AI model settings (ADMIN only) ---
+
+  getAiSettings: () =>
+    request<AiModelSettings>('/api/admin/ai/settings', { auth: true }),
+
+  updateAiSettings: (model: string) =>
+    request<AiModelSettings>('/api/admin/ai/settings', {
+      method: 'PUT',
+      body: { model },
+      auth: true,
+    }),
 
   // --- background jobs (ADMIN only) ---
 

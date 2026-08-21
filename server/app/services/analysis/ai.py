@@ -1,9 +1,10 @@
-"""AI-assisted analysis: when to spend a Gemini request, and when not to.
+"""AI-assisted analysis: when to spend a provider request, and when not to.
 
-The generation itself is one call in `gemini.py`. Almost everything here is
-about *not* making that call, because this is the first feature in the service
-whose upstream costs money per request and is triggered by a button rather than
-by a schedule.
+The generation itself is one call into the active provider adapter (Gemini
+today). Almost everything here is about *not* making that call, because this is
+the first feature in the service whose upstream costs money per request and is
+triggered by a button rather than by a schedule. Prompt wording is shared in
+`prompts.py`; adapters only transport it.
 
 Three gates, in order:
 
@@ -16,8 +17,8 @@ Three gates, in order:
    charged for reading someone else's answer. One allowance covers every AI
    lane: `quota_status` counts `ai_hold_analysis` alongside this table, because
    the budget belongs to the deployment's bill rather than to a prompt.
-3. **The process-wide rate limiter** in `gemini.py`, which is the last line and
-   protects the deployment's quota rather than any one account's.
+3. **The process-wide rate limiter** in the provider adapter, which is the last
+   line and protects the deployment's quota rather than any one account's.
 
 `force` re-generates past gate 1. It is ADMIN-only at the router, for the same
 reason `force` on the history routes is: it is the one knob that turns a cached
@@ -44,14 +45,14 @@ from app.schemas import (
     PriceFeatures,
 )
 from app.services.analysis import features as feature_service
-from app.services.analysis import gemini, traditional
+from app.services.analysis import gemini, model_settings, prompts, traditional
 
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
 #: Locales the prompt has wording for. Anything else is served the default
-#: rather than silently asking Gemini to write in a language nobody reviewed.
+#: rather than silently asking the model to write in a language nobody reviewed.
 SUPPORTED_LOCALES = ("zh-TW", "en")
 DEFAULT_LOCALE = "zh-TW"
 
@@ -125,13 +126,15 @@ def _row_to_verdict(row: AiAnalysis) -> AiVerdict:
     )
 
 
-def _find(db: Session, sid: str, as_of: datetime.date, locale: str) -> AiAnalysis | None:
+def _find(
+    db: Session, sid: str, as_of: datetime.date, locale: str, model: str
+) -> AiAnalysis | None:
     return db.execute(
         select(AiAnalysis).where(
             AiAnalysis.sid == sid,
             AiAnalysis.as_of == as_of,
-            AiAnalysis.model == settings.gemini_model,
-            AiAnalysis.prompt_version == gemini.PROMPT_VERSION,
+            AiAnalysis.model == model,
+            AiAnalysis.prompt_version == prompts.PROMPT_VERSION,
             AiAnalysis.locale == locale,
         )
     ).scalar_one_or_none()
@@ -183,8 +186,14 @@ def get_or_create(
     stock = traditional.build_stock(rows)
     traditional_result = traditional.best_four_point(stock)
 
+    # Resolved once per call so the cache lookup, the provider request and the
+    # stored row all name the same engine. Re-reading the setting later in the
+    # function would let an admin flip mid-request and produce a row keyed
+    # under a model that never ran.
+    model = model_settings.active_model(db)
+
     if not force:
-        existing = _find(db, sid, extracted.as_of, locale)
+        existing = _find(db, sid, extracted.as_of, locale, model)
         if existing is not None:
             return _response(
                 sid=sid,
@@ -209,13 +218,14 @@ def get_or_create(
         features=extracted,
         traditional=traditional_result,
         locale=locale,
+        model=model,
     )
 
     row = AiAnalysis(
         sid=sid,
         as_of=extracted.as_of,
-        model=settings.gemini_model,
-        prompt_version=gemini.PROMPT_VERSION,
+        model=model,
+        prompt_version=prompts.PROMPT_VERSION,
         locale=locale,
         action=generation.verdict.action,
         size=generation.verdict.size,
@@ -244,8 +254,8 @@ def get_or_create(
             AiAnalysis.__table__.delete().where(
                 AiAnalysis.sid == sid,
                 AiAnalysis.as_of == extracted.as_of,
-                AiAnalysis.model == settings.gemini_model,
-                AiAnalysis.prompt_version == gemini.PROMPT_VERSION,
+                AiAnalysis.model == model,
+                AiAnalysis.prompt_version == prompts.PROMPT_VERSION,
                 AiAnalysis.locale == locale,
             )
         )
@@ -258,7 +268,7 @@ def get_or_create(
         # loser keeps the winner's row rather than its own, so every reader of
         # this trading day sees one verdict.
         db.rollback()
-        existing = _find(db, sid, extracted.as_of, locale)
+        existing = _find(db, sid, extracted.as_of, locale, model)
         if existing is None:
             raise
         logger.info("ai verdict raced for sid=%s as_of=%s", sid, extracted.as_of)

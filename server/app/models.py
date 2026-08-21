@@ -34,6 +34,9 @@ user watches, and the named folders they sort that list into.
 `ai_hold_analysis` is that lane's verdict cache -- the same shape as
 `ai_analysis` and a separate table, because suitability-over-years and
 action-at-a-size share no columns worth merging.
+`system_setting` holds operator overrides that must survive a restart -- today
+the active Gemini model, for the same reason `job_schedule` exists instead of
+editing an env var and bouncing the process.
 """
 
 import datetime
@@ -850,3 +853,24 @@ class AiHoldAnalysis(Base):
             name="ck_ai_hold_analysis_rule_suitability",
         ),
     )
+class SystemSetting(Base):
+    """One admin-overridable runtime knob.
+
+    The environment seeds the first-boot default; a row here wins after an
+    operator has changed something at /admin/ai. The allowlist of legal values
+    stays in env (`GEMINI_MODELS`) so deploying a new model is a config change,
+    not a code change, while picking which of those models is live stays a UI
+    action that does not require a restart.
+
+    `updated_by` is username text rather than a foreign key: same audit-trail
+    rule as `job_schedule`.
+    """
+
+    __tablename__ = "system_setting"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(256))
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(32))

@@ -379,6 +379,14 @@ export interface AiHoldAnalysisResponse {
   rules: ChenRuleResult
 }
 
+/** Live Gemini model and the env allowlist the admin picker may choose from. */
+export interface AiModelSettings {
+  model: string
+  available_models: string[]
+  updated_at: string | null
+  updated_by: string | null
+}
+
 /** How a signal type scored over one forward horizon.
  *
  *  `samples` counts only signals whose horizon has fully elapsed; `pending` is

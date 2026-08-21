@@ -530,6 +530,17 @@ class AiHoldAnalysisResponse(BaseModel):
     #: The checklist's answer for the same snapshot, so the card can show the
     #: deterministic and the generated verdict side by side.
     rules: ChenRuleResult
+class AiModelSettingsOut(BaseModel):
+    """What /admin/ai shows: the live model and the closed set it may be."""
+
+    model: str
+    available_models: list[str]
+    updated_at: datetime.datetime | None = None
+    updated_by: str | None = None
+
+
+class AiModelSettingsUpdate(BaseModel):
+    model: str = Field(min_length=1, max_length=64)
 
 
 class BacktestHorizonStats(BaseModel):

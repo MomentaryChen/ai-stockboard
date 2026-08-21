@@ -21,6 +21,7 @@ from app.config import get_settings
 from app.db import SessionLocal, engine
 from app.middleware import RequestContextMiddleware
 from app.routers import (
+    ai_settings,
     analysis,
     auth,
     chips,
@@ -100,6 +101,7 @@ app.add_middleware(
 
 app.include_router(stocks.router)
 app.include_router(jobs.router)
+app.include_router(ai_settings.router)
 app.include_router(history.router)
 app.include_router(dividends.router)
 app.include_router(chips.router)

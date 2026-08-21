@@ -31,7 +31,15 @@ from app.schemas import (
     HoldLiquidityFeatures,
     HoldPriceFeatures,
 )
-from app.services.analysis import ai, chen_rules, gemini, hold_ai, hold_gemini
+from app.services.analysis import (
+    ai,
+    chen_rules,
+    gemini,
+    hold_ai,
+    hold_gemini,
+    hold_prompts,
+    prompts,
+)
 
 SID = "2880"
 
@@ -126,16 +134,16 @@ _VALID = {
 
 def test_the_hold_prompt_is_not_the_technical_prompt():
     """Sharing one would ask a decade-horizon question with a day-trade rubric."""
-    assert hold_gemini.SYSTEM_INSTRUCTION != gemini.SYSTEM_INSTRUCTION
+    assert hold_prompts.SYSTEM_INSTRUCTION != prompts.SYSTEM_INSTRUCTION
     # Position sizing has no meaning over a ten-year hold.
     for word in ("enter", "exit", "size"):
-        assert word not in hold_gemini.SYSTEM_INSTRUCTION.lower().split()
+        assert word not in hold_prompts.SYSTEM_INSTRUCTION.lower().split()
 
 
 def test_prompt_versions_cannot_collide_between_lanes():
     """An evaluation reading both tables must never average two engines."""
-    assert hold_gemini.PROMPT_VERSION.startswith("hold-")
-    assert hold_gemini.PROMPT_VERSION != gemini.PROMPT_VERSION
+    assert hold_prompts.PROMPT_VERSION.startswith("hold-")
+    assert hold_prompts.PROMPT_VERSION != prompts.PROMPT_VERSION
 
 
 def test_both_lanes_share_one_rate_limiter():
@@ -148,7 +156,7 @@ def test_both_lanes_share_one_rate_limiter():
 
 def test_the_prompt_forbids_fundamentals_the_model_was_not_given():
     """The failure mode unique to this lane: a model filling in what it recalls."""
-    text = hold_gemini.SYSTEM_INSTRUCTION
+    text = hold_prompts.SYSTEM_INSTRUCTION
     assert "Do not use them" in text
     assert "coverage_gaps" in text
 
@@ -156,20 +164,20 @@ def test_the_prompt_forbids_fundamentals_the_model_was_not_given():
 def test_the_prompt_frames_the_horizon_as_years_not_days():
     # Rewrapped rather than matched line by line: the rubric is hard-wrapped,
     # so a phrase that spans a break is still one phrase.
-    text = " ".join(hold_gemini.SYSTEM_INSTRUCTION.split())
+    text = " ".join(hold_prompts.SYSTEM_INSTRUCTION.split())
     assert "long-horizon dividend-accumulation strategy" in text
     assert "You are not judging a trade" in text
 
 
 def test_the_prompt_refuses_yield_as_a_reason_on_its_own():
     """The trap this method walks into: a collapsing price lifts the yield."""
-    assert "Yield alone is not a reason to hold" in hold_gemini.SYSTEM_INSTRUCTION
+    assert "Yield alone is not a reason to hold" in hold_prompts.SYSTEM_INSTRUCTION
 
 
 def test_the_prompt_carries_the_measurements_and_the_checklist_with_its_evidence():
     features = _features()
     rules = _rules()
-    prompt = hold_gemini._prompt(features=features, rules=rules)
+    prompt = hold_prompts.user_prompt(features=features, rules=rules)
 
     assert SID in prompt and "華南金" in prompt
     # The measurements go in as the JSON the browser receives.
@@ -184,7 +192,7 @@ def test_the_prompt_carries_the_measurements_and_the_checklist_with_its_evidence
 def test_an_uncovered_company_reaches_the_model_with_its_gaps_named():
     """Silence about missing EPS is exactly what invites the model to invent it."""
     rules = _rules(covered=False)
-    prompt = hold_gemini._prompt(features=_features(covered=False), rules=rules)
+    prompt = hold_prompts.user_prompt(features=_features(covered=False), rules=rules)
 
     assert "no_annual_fundamentals" in prompt
     assert "unknown" in prompt
@@ -194,7 +202,7 @@ def test_an_uncovered_company_reaches_the_model_with_its_gaps_named():
 
 
 def test_wire_schema_is_json_schema_serialisable_with_closed_enums():
-    schema = hold_gemini._WireVerdict.model_json_schema()
+    schema = hold_prompts.WireVerdict.model_json_schema()
     json.dumps(schema)  # must not raise
 
     props = schema["properties"]
@@ -220,19 +228,19 @@ def test_agreement_with_an_unscored_checklist_is_dropped_not_recorded():
     )
     assert unscored.suitability is None
 
-    verdict = hold_gemini._to_verdict(
-        hold_gemini._WireVerdict(**_VALID), unscored
+    verdict = hold_prompts.to_verdict(
+        hold_prompts.WireVerdict(**_VALID), unscored
     )
     assert verdict.agrees_with_rules is None
 
     # ...and is kept whenever there was something to agree with.
-    kept = hold_gemini._to_verdict(hold_gemini._WireVerdict(**_VALID), _rules())
+    kept = hold_prompts.to_verdict(hold_prompts.WireVerdict(**_VALID), _rules())
     assert kept.agrees_with_rules is True
 
 
 def test_blank_reasons_and_risks_are_dropped_not_rendered():
-    verdict = hold_gemini._to_verdict(
-        hold_gemini._WireVerdict(**{**_VALID, "reasons": ["  ", "連十年配息"], "risks": [""]}),
+    verdict = hold_prompts.to_verdict(
+        hold_prompts.WireVerdict(**{**_VALID, "reasons": ["  ", "連十年配息"], "risks": [""]}),
         _rules(),
     )
     assert verdict.reasons == ["連十年配息"]

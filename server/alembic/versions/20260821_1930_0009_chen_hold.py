@@ -1,8 +1,8 @@
 """chen hold analysis: annual fundamentals and the hold verdict cache
 
-Revision ID: 0008_chen_hold
-Revises: 0007_watchlist_groups
-Create Date: 2026-08-21 19:00:00.000000+00:00
+Revision ID: 0009_chen_hold
+Revises: 0008_system_setting
+Create Date: 2026-08-21 19:30:00.000000+00:00
 
 Three tables for a second analysis lane that asks a different question from the
 technical one: not "what should I do with this position today" but "is this a
@@ -28,8 +28,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0008_chen_hold"
-down_revision: str | None = "0007_watchlist_groups"
+revision: str = "0009_chen_hold"
+down_revision: str | None = "0008_system_setting"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

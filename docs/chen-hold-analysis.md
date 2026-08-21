@@ -234,6 +234,17 @@ Two things the build changed from the design above:
   said to exclude the current year, which is right while a payment is pending
   and wrong the moment it goes ex — excluding it would make every streak lag
   its own evidence by a year.
+* **Rebased onto three refactors that landed on develop mid-build.** The
+  prompt/adapter split (#33) moved wording out of `gemini.py`, so the hold
+  wording moved to `hold_prompts.py` and `hold_gemini.py` became transport
+  only. The admin model picker (#34) made the active model a database value,
+  so `hold_ai.py` resolves it through `model_settings.active_model()` rather
+  than reading `settings.gemini_model`. The AI spotlight (#32) moved the
+  technical call out of the analysis column and deleted `section.ai`; the hold
+  section stays in that column under `section.hold`. The migration also had to
+  renumber from `0008_chen_hold` to `0009_chen_hold` -- develop's
+  `0008_system_setting` had claimed the number, and two revisions sharing a
+  parent is a branched graph, not a merge.
 * **`years_observed` had to be added to the dividend features.** The design
   leaned on `coverage` to decide whether an absent payout year was evidence,
   but `coverage` describes the exchange, not this table: on a fresh database

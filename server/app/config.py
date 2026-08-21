@@ -144,7 +144,20 @@ class Settings(BaseSettings):
     # that silently swaps in a different engine would invalidate every stored
     # verdict's `model` column without saying so.
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    # First-boot / fallback default only. Once an admin picks a model at
+    # /admin/ai the `system_setting` row wins, for the same reason job
+    # schedules outlive their env seeds -- a UI change has to survive a
+    # container restart, and an env var cannot be written back from a running
+    # process. Pin a concrete id, never a `-latest` alias: the model string is
+    # part of every stored verdict's cache key.
+    gemini_model: str = "gemini-3.5-flash"
+    # Closed set the admin UI may choose from. Deployments add or remove
+    # entries here; the picker refuses anything outside this list so a typo
+    # in the UI cannot point generation at a model the key cannot call.
+    gemini_models: str = (
+        "gemini-3.5-flash,gemini-3.6-flash,gemini-2.5-flash,"
+        "gemini-2.5-flash-lite,gemini-2.5-pro"
+    )
     # Generation is capped rather than sampled at 1.0: this is a position call,
     # and the same bars giving a different answer on each press would be read as
     # the market changing when it is only the sampler.
@@ -201,6 +214,26 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def gemini_model_list(self) -> list[str]:
+        """Ordered allowlist for the admin picker.
+
+        `gemini_model` is always included even when omitted from
+        `gemini_models`, so the fallback default is never an illegal choice.
+        """
+        models: list[str] = []
+        seen: set[str] = set()
+        for raw in self.gemini_models.split(","):
+            name = raw.strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            models.append(name)
+        default = self.gemini_model.strip()
+        if default and default not in seen:
+            models.insert(0, default)
+        return models
 
 
 @lru_cache

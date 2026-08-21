@@ -370,14 +370,91 @@ tr.row-active { background: var(--bg-input); box-shadow: inset 2px 0 0 var(--acc
 .reason-list li { margin-bottom: 4px; }
 
 /* ---------- AI position call ---------- */
-/* Inline layout: a rule under the quote, not a second card. The card layout
-   reuses `.card` / `.card-title` / `.signal` / `.reason-list` so it sits next
-   to 四大買賣點 without a private visual language. */
+/* All three layouts reuse `.card-title` / `.signal` / `.reason-list`, so the
+   panel never speaks a private visual language -- what marks it out is the
+   accent, and only the accent.
+
+   Inline: a tinted band between the 四大買賣點 chip and 開高低收, not a second
+   card. It sits mid-card now rather than last, so it needs a bottom edge as
+   well as a top one; a border all the way round would make it a box inside a
+   box, which is the thing this layout exists to avoid. The wash and the accent
+   rule bound it instead. */
 .ai-panel {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  margin: 12px 0 14px;
+  padding: 10px 12px 12px;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  background: linear-gradient(90deg, rgba(76, 141, 255, 0.09), rgba(76, 141, 255, 0) 70%);
 }
+
+/* Spotlight: the 個股 band, full page width under the price header. The same
+   card surface as everything else on that page, lit from the left -- enough to
+   read as its own region at a glance, not so much that it competes with the
+   red/green the prices are carrying. */
+.ai-spotlight {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(76, 141, 255, 0.3);
+  background:
+    linear-gradient(90deg, rgba(76, 141, 255, 0.1), rgba(76, 141, 255, 0.02) 45%, transparent 75%),
+    var(--bg-elevated);
+}
+/* The lit edge. A pseudo-element rather than border-left, so it survives the
+   1px border the card already has instead of replacing one side of it. */
+.ai-spotlight::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--accent), rgba(76, 141, 255, 0.2));
+}
+/* Bigger and in full text colour: .card-title is sized to label a 320px card
+   from the corner of the eye, and this one is the heading of a page-wide band. */
+.ai-spotlight .card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0.01em;
+}
+.ai-spotlight .ai-headline { color: var(--text); font-size: 15px; line-height: 1.6; }
+
+/* The "press the button" line, in every layout. A paragraph's default margin
+   under it would leave the panel looking padded twice when that line is the
+   whole body. */
+.ai-lead { margin: 0; }
+
+.ai-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: rgba(76, 141, 255, 0.16);
+  color: var(--accent);
+  font-size: 12px;
+}
+
+/* Reasons and risks side by side. A page-wide band would otherwise set six
+   words per line across 1200px and then start a second list underneath it. */
+.ai-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 4px 32px;
+  align-items: start;
+  margin-top: 12px;
+}
+.ai-columns .ai-block-title { margin-top: 0; }
+@media (max-width: 860px) {
+  .ai-columns { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .ai-columns > div + div .ai-block-title { margin-top: 12px; }
+}
+
 .ai-quota { white-space: nowrap; }
 
 /* Size, as filled pips. The label already says 大/中/小; this is for the glance

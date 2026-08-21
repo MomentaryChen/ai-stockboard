@@ -77,6 +77,10 @@ export default function RealtimeCard({
 
       <BfpChip result={bfp} loading={bfpLoading} />
 
+      {/* Same order as the expanded board row, and for the same reason: the
+          two verdicts together, then the numbers they were drawn from. */}
+      <AiVerdictSection sid={quote.code} />
+
       <div style={{ marginTop: 14 }}>
         <QuoteDetail quote={quote} />
       </div>
@@ -103,8 +107,6 @@ export default function RealtimeCard({
           </select>
         </label>
       )}
-
-      <AiVerdictSection sid={quote.code} />
     </article>
   )
 }

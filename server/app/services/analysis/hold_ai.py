@@ -32,7 +32,6 @@ import logging
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
 from app.models import AiHoldAnalysis, AppUser
 from app.schemas import (
     AiHoldAnalysisResponse,
@@ -41,11 +40,9 @@ from app.schemas import (
     HoldFeatures,
 )
 from app.services.analysis import ai as ai_service
-from app.services.analysis import hold_gemini
+from app.services.analysis import hold_gemini, hold_prompts, model_settings
 
 logger = logging.getLogger(__name__)
-
-settings = get_settings()
 
 #: Same set the technical lane supports, and for the same reason: a locale the
 #: prompt has no wording for is served the default rather than asking Gemini to
@@ -74,7 +71,7 @@ def _row_to_verdict(row: AiHoldAnalysis) -> AiHoldVerdict:
 
 
 def _find(
-    db: Session, sid: str, as_of: datetime.date, locale: str
+    db: Session, sid: str, as_of: datetime.date, locale: str, model: str
 ) -> AiHoldAnalysis | None:
     from sqlalchemy import select
 
@@ -82,8 +79,8 @@ def _find(
         select(AiHoldAnalysis).where(
             AiHoldAnalysis.sid == sid,
             AiHoldAnalysis.as_of == as_of,
-            AiHoldAnalysis.model == settings.gemini_model,
-            AiHoldAnalysis.prompt_version == hold_gemini.PROMPT_VERSION,
+            AiHoldAnalysis.model == model,
+            AiHoldAnalysis.prompt_version == hold_prompts.PROMPT_VERSION,
             AiHoldAnalysis.locale == locale,
         )
     ).scalar_one_or_none()
@@ -138,8 +135,14 @@ def get_or_create(
         )
     as_of = features.as_of
 
+    # Resolved once per call, exactly as ai.py does it, so the cache lookup, the
+    # provider request and the stored row all name the same engine. The admin
+    # can change the active model between requests; re-reading it later in this
+    # function would let that produce a row keyed under a model that never ran.
+    model = model_settings.active_model(db)
+
     if not force:
-        existing = _find(db, features.sid, as_of, locale)
+        existing = _find(db, features.sid, as_of, locale, model)
         if existing is not None:
             return _response(row=existing, features=features, rules=rules, cached=True)
 
@@ -147,13 +150,15 @@ def get_or_create(
     if status.used >= status.limit:
         raise ai_service.QuotaExceeded(status)
 
-    generation = hold_gemini.generate(features=features, rules=rules, locale=locale)
+    generation = hold_gemini.generate(
+        features=features, rules=rules, locale=locale, model=model
+    )
 
     row = AiHoldAnalysis(
         sid=features.sid,
         as_of=as_of,
-        model=settings.gemini_model,
-        prompt_version=hold_gemini.PROMPT_VERSION,
+        model=model,
+        prompt_version=hold_prompts.PROMPT_VERSION,
         locale=locale,
         suitability=generation.verdict.suitability,
         confidence=generation.verdict.confidence,
@@ -179,8 +184,8 @@ def get_or_create(
             AiHoldAnalysis.__table__.delete().where(
                 AiHoldAnalysis.sid == features.sid,
                 AiHoldAnalysis.as_of == as_of,
-                AiHoldAnalysis.model == settings.gemini_model,
-                AiHoldAnalysis.prompt_version == hold_gemini.PROMPT_VERSION,
+                AiHoldAnalysis.model == model,
+                AiHoldAnalysis.prompt_version == hold_prompts.PROMPT_VERSION,
                 AiHoldAnalysis.locale == locale,
             )
         )
@@ -193,7 +198,7 @@ def get_or_create(
         # loser keeps the winner's row, so every reader of this day sees one
         # verdict.
         db.rollback()
-        existing = _find(db, features.sid, as_of, locale)
+        existing = _find(db, features.sid, as_of, locale, model)
         if existing is None:
             raise
         logger.info("hold verdict raced for sid=%s as_of=%s", features.sid, as_of)
