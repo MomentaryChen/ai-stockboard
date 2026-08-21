@@ -138,6 +138,37 @@ class Settings(BaseSettings):
     # like in it. Blank means trust nobody and use the socket peer address.
     trusted_proxy_ips: str = "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
+    # --- Fundamentals (存股 lane) ---
+    # How many calendar years of annual EPS / ROE the history backfill asks
+    # for. Ten is what the Earn dimension judges over; one more would be
+    # fetched and never read.
+    fundamentals_history_years: int = 11
+
+    # FinMind supplies the annual history the exchanges do not publish. It is
+    # a one-off data mover, not a runtime dependency: the backfill job writes
+    # into `fundamentals_annual` and nothing user-facing calls it. Blank token
+    # still works -- the datasets used are served anonymously -- but a
+    # verified account doubles the hourly allowance and so halves how many
+    # nights a full sweep takes.
+    finmind_token: str = ""
+    # Companies per backfill run, at two upstream requests each. 120 companies
+    # is 240 requests, which fits inside the hourly budget below with room to
+    # spare -- so a run finishes at network speed rather than sitting on a
+    # limiter, and never provokes the quota refusal that would end it early.
+    #
+    # There are roughly 1,950 listed companies, so a daily run covers the
+    # board in about seventeen nights. To finish sooner, move the job to
+    # hourly at /admin/jobs for a day; to go faster still, set FINMIND_TOKEN
+    # (a verified account doubles the ceiling to 600/hour) and raise
+    # FINMIND_THROTTLE_MAX_CALLS with it.
+    finmind_backfill_batch: int = 120
+    # An hourly budget rather than a per-minute drip, because that is the
+    # shape of the limit being respected: 300/hour anonymous, 600/hour with a
+    # verified account. Set under the anonymous tier so the default
+    # configuration works with no account at all.
+    finmind_throttle_max_calls: int = 250
+    finmind_throttle_window_seconds: float = 3600.0
+
     # --- AI analysis (Google Gemini) ---
     # Blank disables the feature outright: the endpoint answers 503 and the
     # frontend hides the button. There is no fallback model, because a service

@@ -63,6 +63,7 @@ from app.schemas import (
 )
 from app.services import chip as chip_service
 from app.services import fundamentals as fundamentals_service
+from app.services import valuation as valuation_service
 from app.services.analysis import deep_features, deep_prompts
 from app.services.analysis import features as feature_service
 from app.services.analysis import gemini, hold_features, model_settings, prompts, traditional
@@ -163,6 +164,10 @@ def _deep_inputs(
         prices=rows,
         chips=chip_service.read_recent(db, sid, deep_features.CHIP_WINDOW),
         fundamentals=fundamentals_service.read(db, sid, hold_features.WINDOW_YEARS),
+        # The exchange's own PE, preferred over one derived from last completed
+        # year's EPS -- see `hold_features.fundamentals_features`. `latest` is
+        # cache-only, which is the constraint this whole function is under.
+        valuation=valuation_service.latest(db, sid),
     )
 
 

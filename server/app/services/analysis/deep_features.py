@@ -15,9 +15,10 @@ stock trades: 8 000 000 shares is a takeover on one name and a quiet Tuesday on
 was accumulated over, which is the form a citable reason takes.
 
 **Coverage is an output, not an absence.** Every figure here can be missing for
-a reason that is nobody's fault -- an ETF has no institutional report, the
-fundamentals ingest does not exist yet -- and "we did not look" must never
-reach the model looking like "we looked and it was zero". `coverage_gaps`
+a reason that is nobody's fault -- an ETF has no institutional report, a newly
+listed company has not filed a full year, the nightly job has not reached this
+name yet -- and "we did not look" must never reach the model looking like "we
+looked and it was zero". `coverage_gaps`
 carries stable slugs, the same contract `chen_rules` uses, and the prompt is
 told to cap its confidence against them.
 """
@@ -26,7 +27,7 @@ from __future__ import annotations
 
 import datetime
 
-from app.models import ChipDay, DailyPrice, FundamentalsAnnual
+from app.models import ChipDay, DailyPrice, FundamentalsAnnual, ValuationDay
 from app.schemas import (
     DeepChipColumn,
     DeepChipFeatures,
@@ -211,6 +212,7 @@ def extract(
     prices: list[DailyPrice],
     chips: list[ChipDay],
     fundamentals: list[FundamentalsAnnual],
+    valuation: ValuationDay | None = None,
 ) -> DeepInputs:
     """The deep prompt's extra inputs for one stock, plus what is missing.
 
@@ -221,7 +223,9 @@ def extract(
     to generate would leave the button dead on every ETF.
     """
     chip = _chip_features(chips, prices)
-    annual = hold_features.fundamentals_features(fundamentals, as_of, latest_close)
+    annual = hold_features.fundamentals_features(
+        fundamentals, valuation, as_of, latest_close
+    )
     return DeepInputs(
         chip=chip,
         fundamentals=annual,

@@ -7,8 +7,8 @@
  */
 export const zhTW = {
   // ---------- shell ----------
-  'app.title': 'ai-stockboard 台股看板',
-  'app.brandSuffix': '-stockboard 台股看板',
+  'app.title': 'AI TW Stock',
+  'app.brandSuffix': ' TW Stock',
   'nav.market': '大盤',
   'nav.stock': '個股分析',
   'nav.realtime': '即時報價',

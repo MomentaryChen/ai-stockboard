@@ -39,6 +39,8 @@ REFRESH_TOKEN_CLEANUP = "refresh_token_cleanup"
 BACKTEST_REFRESH = "backtest_refresh"
 CHIP_REFRESH = "chip_refresh"
 DIVIDEND_BOARD_WARMUP = "dividend_board_warmup"
+FUNDAMENTALS_REFRESH = "fundamentals_refresh"
+FUNDAMENTALS_BACKFILL = "fundamentals_backfill"
 
 
 @dataclass(frozen=True)
@@ -254,6 +256,71 @@ def build() -> None:
                 "fetched": "新抓區間",
                 "buckets": "已快取區間",
                 "events": "除權息筆數",
+            },
+        )
+    )
+
+    register(
+        JobDefinition(
+            id=FUNDAMENTALS_REFRESH,
+            name="本益比與年度 EPS",
+            description=(
+                "抓上市櫃的本益比／殖利率／股價淨值比日報，以及各公司年度 EPS。"
+                "四次請求涵蓋全市場，不需金鑰；存股分析的「買得便宜」靠它。"
+            ),
+            handler=handlers.fundamentals_refresh,
+            default_enabled=True,
+            default_kind=SCHEDULE_DAILY,
+            # After the close and after the chip reports, same as the other
+            # end-of-day pulls. The valuation board is only final once the
+            # session is.
+            default_daily_at="20:50",
+            default_interval_minutes=24 * 60,
+            min_interval_minutes=60,
+            max_interval_minutes=7 * 24 * 60,
+            manual_cooldown_seconds=120,
+            run_on_startup=False,
+            expected_seconds=30,
+            stat_labels={
+                "valuations": "本益比列數",
+                "annuals": "年度 EPS 列數",
+                "fetched": "新抓",
+                "cached": "已快取",
+            },
+        )
+    )
+
+    register(
+        JobDefinition(
+            id=FUNDAMENTALS_BACKFILL,
+            name="歷年 EPS／ROE 回補",
+            description=(
+                "交易所只公布當季，不給歷史；這個作業向 FinMind 逐檔補十年年度 "
+                "EPS 與 ROE，補完就不再呼叫。每次跑一批並記錄進度，可以中斷續跑。"
+                "全部補完約需十七個晚上，想快一點就在這裡改成每小時跑。"
+            ),
+            handler=handlers.fundamentals_backfill,
+            default_enabled=True,
+            default_kind=SCHEDULE_DAILY,
+            # Deep in the quiet hours: it is the longest-running job here and
+            # it competes with nothing.
+            default_daily_at="03:40",
+            default_interval_minutes=24 * 60,
+            # Hourly is the floor because the upstream budget is hourly. Any
+            # faster and consecutive runs would share one window and the
+            # second would spend its time asleep on the limiter.
+            min_interval_minutes=60,
+            max_interval_minutes=7 * 24 * 60,
+            manual_cooldown_seconds=300,
+            # Never at boot: a crash loop would turn into a quota burn, and
+            # every row it writes is history that is not going anywhere.
+            run_on_startup=False,
+            expected_seconds=300,
+            stat_labels={
+                "stocks": "完成檔數",
+                "rows": "寫入年數",
+                "empty": "查無資料",
+                "failed": "失敗",
             },
         )
     )

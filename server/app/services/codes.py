@@ -285,6 +285,28 @@ def search(
     return len(index_hits) + len(ranked), results[:limit]
 
 
+#: The only instrument type that has earnings. ETFs, warrants and the rest
+#: either have no EPS at all or have one that means something different, and
+#: the listing is 95% warrants -- so a fundamentals sweep that did not filter
+#: here would spend forty-four thousand upstream requests learning nothing.
+COMPANY_TYPE = "股票"
+
+
+def company_codes() -> list[str]:
+    """Live company codes, in listing order. What a fundamentals sweep walks.
+
+    Delisted codes are excluded: their history is still worth charting, which
+    is why `get_stock` resolves them, but there is no future filing to fetch
+    and a backfill that included them would retry the same dead names for
+    ever.
+    """
+    return [
+        row.code
+        for row in _current().rows
+        if row.is_active and row.type == COMPANY_TYPE
+    ]
+
+
 def code_count() -> int:
     """Instruments currently on offer -- what /api/health reports."""
     snapshot = _current()

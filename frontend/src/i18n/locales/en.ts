@@ -10,8 +10,8 @@ import type { Messages } from '../types'
  */
 export const en: Messages = {
   // ---------- shell ----------
-  'app.title': 'ai-stockboard · Taiwan Stock Board',
-  'app.brandSuffix': '-stockboard',
+  'app.title': 'AI TW Stock',
+  'app.brandSuffix': ' TW Stock',
   'nav.market': 'Market',
   'nav.stock': 'Stocks',
   'nav.realtime': 'Realtime',

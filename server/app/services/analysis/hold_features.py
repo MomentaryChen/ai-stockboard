@@ -27,7 +27,7 @@ from __future__ import annotations
 import datetime
 import statistics
 
-from app.models import DailyPrice, DividendEvent, FundamentalsAnnual
+from app.models import DailyPrice, DividendEvent, FundamentalsAnnual, ValuationDay
 from app.schemas import (
     HoldDividendFeatures,
     HoldFeatures,
@@ -200,15 +200,23 @@ def _liquidity_features(rows: list[DailyPrice]) -> HoldLiquidityFeatures:
 
 def fundamentals_features(
     rows: list[FundamentalsAnnual],
+    valuation: ValuationDay | None,
     as_of: datetime.date | None,
     latest_close: float | None,
 ) -> HoldFundamentalsFeatures:
-    """EPS, ROE and the trailing PE drawn from them.
+    """EPS, ROE, and the trailing PE -- preferring the exchange's own figure.
 
-    Returns an all-null structure when `fundamentals_annual` is empty, which is
-    the normal state until the ingest lands. It is a distinct shape from "we
-    looked and the company lost money", and the checklist relies on the
-    difference.
+    `trailing_pe` has two possible sources and the order matters. The exchange
+    publishes a PE it maintains from quarterly filings and refreshes daily; the
+    fallback here is last completed year's annual EPS against today's close,
+    which lags a turnaround by up to a year and is undefined for a company
+    that has not filed a full year yet. Preferring theirs means the Cheap
+    dimension is answerable for names we have no annual history for at all --
+    which, before the backfill reaches them, is most of the board.
+
+    Returns an all-null structure when nothing is stored, which is a distinct
+    shape from "we looked and the company lost money". The checklist relies on
+    the difference.
 
     Public, unlike its siblings here, because the deep technical lane reads the
     same annual figures and asking a different question of them is not a reason
@@ -225,8 +233,11 @@ def fundamentals_features(
     roe = [float(r.roe) for r in window if r.roe is not None]
 
     latest_year, latest_eps = eps[-1] if eps else (None, None)
+
     trailing_pe = None
-    if latest_close is not None and latest_eps is not None and latest_eps > 0:
+    if valuation is not None and valuation.pe_ratio is not None:
+        trailing_pe = round(float(valuation.pe_ratio), 2)
+    elif latest_close is not None and latest_eps is not None and latest_eps > 0:
         trailing_pe = round(latest_close / latest_eps, 2)
 
     return HoldFundamentalsFeatures(
@@ -290,6 +301,7 @@ def extract(
     coverage: str,
     observed_dividend_years: set[int],
     fundamentals: list[FundamentalsAnnual],
+    valuation: ValuationDay | None = None,
 ) -> HoldFeatures:
     """The 存股 snapshot for whatever rows the caller supplies.
 
@@ -312,6 +324,8 @@ def extract(
             dividends, coverage, observed_dividend_years, as_of, price.latest_close
         ),
         liquidity=_liquidity_features(prices),
-        fundamentals=fundamentals_features(fundamentals, as_of, price.latest_close),
+        fundamentals=fundamentals_features(
+            fundamentals, valuation, as_of, price.latest_close
+        ),
         price=price,
     )

@@ -29,7 +29,9 @@ account system: who may sign in, which refresh tokens are still live, what each
 user watches, and the named folders they sort that list into.
 
 `fundamentals_annual` is one company-year of EPS and ROE, with
-`fundamentals_fetch_log` stamping the pulls that filled it; together with
+`fundamentals_fetch_log` stamping the pulls that filled it; `valuation_day` is
+the exchange's own PE / PBR / yield for one session, shaped like `chip_day`
+because it comes from the same kind of all-market daily report. Together with
 `dividend_event` they are what the 存股 lane scores a company on.
 `ai_hold_analysis` is that lane's verdict cache -- the same shape as
 `ai_analysis` and a separate table, because suitability-over-years and
@@ -781,6 +783,44 @@ class FundamentalsFetchLog(Base):
     fetched_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class ValuationDay(Base):
+    """The exchange's own PE, PBR and yield for one stock on one session.
+
+    Shaped like `chip_day`, not like `fundamentals_annual`, because that is
+    what the source is: TWSE's BWIBBU and TPEx's equivalent are all-market
+    daily reports, so one request fills every listed name for one date and the
+    second stock to ask for that session is free.
+
+    Worth storing rather than deriving. A PE computed here would be last
+    year's annual EPS against today's close, which lags a turnaround by up to
+    a year; the exchange publishes a trailing figure it maintains itself. And
+    because these rows accumulate, "cheap against its own five-year band" --
+    the other half of Chen's 買得便宜 -- becomes a query later rather than a
+    second data source.
+
+    Every figure is nullable, and blank means undefined rather than zero: the
+    exchange leaves PE empty for a company with no positive trailing earnings,
+    which the checklist reports as `unknown` rather than as a valuation
+    failure.
+    """
+
+    __tablename__ = "valuation_day"
+
+    sid: Mapped[str] = mapped_column(String(16), primary_key=True)
+    date: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
+
+    pe_ratio: Mapped[float | None] = mapped_column(Numeric(12, 4))
+    pb_ratio: Mapped[float | None] = mapped_column(Numeric(12, 4))
+    dividend_yield: Mapped[float | None] = mapped_column(Numeric(12, 4))  # percent
+
+    source: Mapped[str] = mapped_column(String(8), default="twse")
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (Index("ix_valuation_day_sid_date", "sid", "date"),)
 
 
 class AiHoldAnalysis(Base):

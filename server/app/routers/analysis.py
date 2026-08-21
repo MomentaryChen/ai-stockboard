@@ -68,6 +68,7 @@ from app.services import codes as codes_service
 from app.services import dividend as dividend_service
 from app.services import fundamentals as fundamentals_service
 from app.services import history as history_service
+from app.services import valuation as valuation_service
 from app.services.analysis import ai as ai_service
 from app.services.analysis import backtest as backtest_service
 from app.services.analysis import chen_rules, gemini, hold_features, hold_gemini, traditional
@@ -535,6 +536,7 @@ def _hold_snapshot(db: Session, sid: str, info) -> tuple[HoldFeatures, ChenRuleR
         db, sid, HOLD_DIVIDEND_YEARS
     )
     annual = fundamentals_service.read(db, sid, hold_features.WINDOW_YEARS)
+    valuation = valuation_service.latest(db, sid)
 
     features = hold_features.extract(
         sid=sid,
@@ -545,6 +547,7 @@ def _hold_snapshot(db: Session, sid: str, info) -> tuple[HoldFeatures, ChenRuleR
         coverage=coverage,
         observed_dividend_years=observed,
         fundamentals=annual,
+        valuation=valuation,
     )
     return features, chen_rules.evaluate(features)
 

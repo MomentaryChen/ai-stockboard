@@ -20,7 +20,7 @@ wire schema changes. It is part of the `ai_analysis` unique key alongside
 `depth`, so a bump re-generates on demand and keeps old verdicts attributable
 to the wording that produced them. The `deep-` prefix is documentation, not
 the discriminator: `depth` is the column that keeps the two lanes apart, and
-`0010_ai_depth` says why that had to be a column.
+`0011_ai_depth` says why that had to be a column.
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
 """ai_analysis: a depth discriminator so quick and deep verdicts coexist
 
-Revision ID: 0010_ai_depth
-Revises: 0009_chen_hold
-Create Date: 2026-08-21 20:00:00.000000+00:00
+Revision ID: 0011_ai_depth
+Revises: 0010_valuation_day
+Create Date: 2026-08-21 20:30:00.000000+00:00
 
 The technical lane grows a second, more expensive answer: the same enter/exit/
 hold question, asked with institutional flow and annual fundamentals alongside
@@ -27,8 +27,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0010_ai_depth"
-down_revision: str | None = "0009_chen_hold"
+revision: str = "0011_ai_depth"
+down_revision: str | None = "0010_valuation_day"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
