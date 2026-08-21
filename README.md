@@ -161,6 +161,9 @@ silently if someone "simplified" them, or if twstock's return types changed:
 | | What would go missing without the test |
 |---|---|
 | `_GrsBestFourPoint` | The 乖離 gate and close-vs-close volume-shrink rules regress to twstock's bugs. The 20 000-sequence experiment in this README never became a regression check. |
+| Backtest `WINDOW_BARS` | The replay feeds each day a trailing slice so the walk is O(n). If it is ever too short the stock page and the backtest disagree about the same day, and neither says so. |
+| Backtest look-ahead | Orders fill at the *next* bar's open. Filling at the signal bar's close would lift every number in the product and is invisible in the output. |
+| Backtest pooling | Pooled rates come from summed counts. Averaging per-stock rates lets a three-signal stock weigh as much as an eighty-signal one -- the exact distortion pooling removes. |
 | Refresh-token replay | A reused token would stop wiping every session. |
 | `must_change_password` | Restricted mode is two `Depends()` choices, not middleware. A third bare `get_authenticated_user` compiles. |
 | Alembic baseline / `upgrade_to_head` | `create_all` and `schema_patches.py` are gone. Editing the frozen baseline, or booting without `upgrade head`, is how a running database silently drifts from the models. |
@@ -341,6 +344,8 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/stocks/{sid}/dividends?years=5` | 除權息. `years` 上限 10; 5 without a token, `force=true` is **ADMIN**, same reason |
 | GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點. Backfills like `/history`, so the same `months` cap applies |
 | GET | `/api/analysis/traditional?sids=2330,0050` | Batch 四大買賣點 from cached daily bars only (no TWSE fetch, max 20) |
+| GET | `/api/stocks/{sid}/analysis/backtest?rule_set=grs` | Signal backtest: how the four-point verdict actually performed over the trailing window. Cache-only, so no `months` and no fetch budget; 422 when too few bars are landed |
+| GET | `/api/analysis/backtest?sids=2330,0050` | The same for several stocks, **plus the pooled rates across them** (max 20) |
 | GET | `/api/realtime?sids=2330,0050` | 即時報價，最多 20 檔（**需登入**） |
 | GET | `/api/market/open?date=&sids=` | Opening intel for one trading day: gap and drift for the index plus up to 20 watchlist codes. Defaults to today in Taipei; cache-only apart from the index's own backfill |
 | GET | `/api/auth/registration-policy` | Whether signing up needs an ADMIN's approval. Public, read before the form renders |
@@ -369,6 +374,10 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 curl 'http://localhost:8000/api/stocks/2330/history?months=3'
 curl 'http://localhost:8000/api/stocks/2330/analysis/traditional'
 curl 'http://localhost:8000/api/analysis/traditional?sids=2330,2317,0050'
+
+# Was the signal any good? Pooled across stocks is the readable number.
+curl 'http://localhost:8000/api/stocks/2330/analysis/backtest'
+curl 'http://localhost:8000/api/analysis/backtest?sids=2330,2317,0050'
 
 # 即時報價要帶 access token，其餘行情端點不用
 curl 'http://localhost:8000/api/realtime?sids=2330,6488' -H "Authorization: Bearer $ACCESS_TOKEN"
@@ -436,6 +445,113 @@ twstock 版在兩萬組裡**沒有一次回傳 Don't touch**，而且與 grs 版
 
 有一個差異刻意保留：grs 的均線四捨五入到小數 6 位，twstock 是 2 位。只在極接近的平手情況下才有差別，
 要對齊得連 `Analytics` 一起 fork，不值得。
+
+---
+
+## Signal backtest — was any of this worth following?
+
+The board has always been able to say **Buy**. What it could not say is whether
+Buy has ever been worth acting on. Everything needed to answer that was already
+in `daily_price`, so the backtest adds no upstream traffic at all: it replays
+the rules day by day over bars we already hold.
+
+```bash
+curl 'http://localhost:8000/api/stocks/2330/analysis/backtest'
+```
+
+The card sits under the Best Four Point verdict on both the stock page and the
+market board, and follows the rule-set switch on the card above it, so the
+corrected and the upstream rules can be graded side by side.
+
+### What it reports, and why each part is there
+
+**Signal hit rate.** For every historical Buy and Sell, what the price did over
+the next 5 / 10 / 20 trading days.
+
+**A baseline, always next to it.** The same horizons measured over *every*
+judged day, signal or not. This is the part that makes the rest readable. A Buy
+that was right 25 % of the time sounds bad and a Sell right 55 % sounds fine —
+but in a window where 63 % of all days closed higher, the first is catastrophic
+and the second is worse than a coin. A published win rate without its base rate
+makes the reader supply an assumption they cannot check, and the assumption
+they supply is 50 %, which is almost never what the window did. The `edge`
+column does the subtraction for them.
+
+**A trade simulation.** Long-only: in on a Buy, out on a Sell, one position at
+a time, compared against having bought on the first day and done nothing.
+
+Three things keep it from flattering itself:
+
+- **No look-ahead.** A verdict comes off bar *i*'s close, so it cannot be
+  traded until bar *i+1* opens. Filling at the close that produced the signal
+  is the classic way to backtest a fantasy, and it is invisible in the output.
+- **Unfinished business stays unfinished.** A Buy four days before the window
+  ends has no 20-day outcome; it is counted as `pending` and left out of the
+  rate rather than scored on a partial result. A position still open at the end
+  is marked to market but is never a completed trade.
+- **The same engine.** Signals come from `traditional.best_four_point`, the
+  exact function the card above calls. A backtest of a reimplementation
+  measures the reimplementation.
+
+### What it actually says
+
+Uncomfortable things, mostly, which is the point of having built it:
+
+| 2330, 12 months to 2026-08-20 | |
+|---|---|
+| Trading the signal | **+2.2 %** |
+| Buying and holding | **+85.5 %** |
+| Trade win rate | 75 % (3 of 4) |
+| Time in market | **12 %** |
+
+Three of four trades made money and the strategy still returned almost nothing,
+because it was in cash seven days out of eight. That is why exposure is a
+headline figure rather than a footnote: it is the number that reconciles a good
+hit rate with a bad result, and without it the two look contradictory.
+
+The hit rates are worse news than the returns. Over the same window every buy
+horizon lands 37–43 percentage points *below* the baseline — the rule picked
+entries that did worse than picking days at random in a market that mostly
+went up.
+
+One stock over one year is a handful of signals per horizon, though, and a rate
+off four samples swings twenty points on a single trade. That is what
+`/api/analysis/backtest?sids=...` is for: it sums the counts across stocks
+before computing the rate, so the answer describes the *rule* rather than one
+company's year. The sample counts travel with every figure, because a pooled
+rate over thirty signals is still noise and the reader has to be able to see
+that.
+
+### Where the numbers live
+
+`backtest_result` holds one row per (stock, rule set) — headline figures as
+columns so "where does this signal work" is an `ORDER BY`, the equity curve and
+signal list as JSONB because nothing queries into them.
+
+Every row is derived and can be rebuilt from `daily_price`, which is what makes
+the arrangement safe:
+
+- the nightly **訊號回測預算** job is only a *warmer*, walking the stocks that
+  already have bars;
+- the endpoint is *self-healing* — a stock the job has never seen, or one that
+  has traded since, is recomputed on the spot and stored on the way out.
+
+So a cold cache costs a slower first card, never a missing or a wrong one. That
+matters because the job can only ever know about stocks somebody has already
+looked at.
+
+Staleness is measured against the newest bar in `daily_price`, not against a
+clock: a stock that has not traded since the last run does not need
+recomputing however long ago that was, and one that has does, however recently
+the job happened to fire.
+
+### The window is fixed, on purpose
+
+Twelve months (`BACKTEST_WINDOW_MONTHS`), not a range the caller picks. A
+one-month backtest produces two or three signals, and a win rate over three
+samples renders exactly as authoritatively as one over eighty. Offering the
+short window would mostly be offering a way to generate noise that looks like
+evidence.
 
 ---
 
@@ -597,6 +713,7 @@ are all driven off that list.
 |---|---|---|
 | `stock_code_sync` | every 24 h (`STOCK_CODE_SYNC_INTERVAL_HOURS`), plus once at startup | reconciles `stock_code` with the exchanges' registry -- see above |
 | `refresh_token_cleanup` | daily at 04:10 | deletes expired refresh tokens, and revoked ones past their retention window |
+| `backtest_refresh` | daily at 05:20 | replays the four-point [signal backtest](#signal-backtest--was-any-of-this-worth-following) for every stock whose bars have moved. Reads only local rows -- it is a cache warmer, and the endpoint recomputes anything it missed |
 
 Each attempt lands in `job_run`, whose `stats` column is JSONB rather than a set
 of columns: every job counts different things, and the admin table renders
@@ -690,6 +807,7 @@ TWSE 有 **每 5 秒 3 個 request** 的限制，超過會被 ban。分析要跑
 server/app/services/analysis/
 ├── __init__.py
 ├── traditional.py     規則式：均線 + 四大買賣點
+├── backtest.py        把 traditional 的訊號在歷史上重跑一遍，算命中率與績效
 └── (ai.py)            AI 分析，開發中
 ```
 
@@ -698,6 +816,10 @@ server/app/services/analysis/
 
 傳統分析沒有自己重寫演算法：`_CachedStock` 把資料庫的資料餵回 twstock 的
 `Analytics` / `BestFourPoint`，因此結果與該套件本身一致，也不會多打一次交易所。
+
+`backtest.py` 同理，只是把時間軸往回推：它逐日呼叫 `traditional.best_four_point`
+本身，而不是另外寫一份規則，所以回測評的一定是頁面上那張卡片真正在用的引擎。
+落地與排程的部分在 `services/backtest_store.py`，引擎本身維持純函式。
 
 ```
 本服務  : close 2375.0  MA5 2380.0  MA10 2389.5  MA20 2358.25  buy / 量縮價不跌
@@ -742,6 +864,7 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin` / （未設） / （未設） | 啟動時建立的第一個管理員，email 與密碼都設了才生效 |
 | `STOCK_CODE_SYNC_ENABLED` | `true` | First-boot default for the listing sync. Once an admin saves a schedule at `/admin/jobs`, the `job_schedule` row wins |
 | `STOCK_CODE_SYNC_INTERVAL_HOURS` | `24` | First-boot default for its interval, same as above |
+| `BACKTEST_WINDOW_MONTHS` | `12` | Trailing window the signal backtest replays. One window is offered rather than a per-request range -- a short one answers with win rates drawn from two or three signals |
 | `JOBS_SCHEDULER_ENABLED` | `true` | Master switch. Off means this process fires nothing on its own (manual runs still work); leave it on for exactly one replica |
 | `SCHEDULER_TIMEZONE` | `Asia/Taipei` | Wall clock a "daily at HH:MM" schedule is read in. `TZ` comes from the same .env, so the two agree by default |
 

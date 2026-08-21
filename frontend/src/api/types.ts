@@ -113,6 +113,155 @@ export interface TraditionalAnalysisBatchResponse {
   errors: Record<string, string>
 }
 
+/** How a signal type scored over one forward horizon.
+ *
+ *  `samples` counts only signals whose horizon has fully elapsed; `pending` is
+ *  the rest. Every derived field is null rather than 0 when there is nothing to
+ *  derive it from -- "0% of the time" and "no signals yet" are opposite
+ *  messages and must not render the same. */
+export interface BacktestHorizonStats {
+  horizon: number
+  samples: number
+  wins: number
+  pending: number
+  win_rate: number | null
+  average_return: number | null
+  median_return: number | null
+}
+
+/** The same horizon over every judged day, signal or not.
+ *
+ *  Read `BacktestHorizonStats.win_rate` against this and never against 50%. */
+export interface BacktestBaselineStats {
+  horizon: number
+  samples: number
+  ups: number
+  up_rate: number | null
+  average_return: number | null
+  median_return: number | null
+}
+
+/** Signal minus baseline. At or below zero, the rule added nothing.
+ *
+ *  Precomputed by the server because the sell side's arithmetic is not what
+ *  anyone guesses: a Sell competes with the days that *fell*. */
+export interface BacktestEdge {
+  horizon: number
+  buy_edge: number | null
+  sell_edge: number | null
+  buy_excess_return: number | null
+  sell_excess_return: number | null
+}
+
+export interface BacktestSignal {
+  date: string
+  signal: 'buy' | 'sell'
+  close: number
+  reasons: string[]
+  /** Keyed by horizon in trading days. A key is absent when the window ended
+   *  before that horizon did -- absent means unknown, not zero. */
+  forward: Record<string, number>
+}
+
+export interface BacktestTrade {
+  entry_date: string
+  entry_price: number
+  exit_date: string
+  exit_price: number
+  holding_days: number
+  profit: number
+}
+
+export interface BacktestEquityPoint {
+  date: string
+  strategy: number
+  buy_hold: number
+}
+
+export interface BacktestSimulation {
+  trades: BacktestTrade[]
+  trade_count: number
+  winning_trades: number
+  strategy_return: number
+  buy_hold_return: number
+  max_drawdown: number
+  buy_hold_max_drawdown: number
+  open_entry_date: string | null
+  open_entry_price: number | null
+  /** Fraction of judged days spent holding. A rule 80% in cash can only ever
+   *  capture 20% of a rally, however good its hit rate looks. */
+  exposure: number
+  trade_win_rate: number | null
+  average_holding_days: number | null
+  equity: BacktestEquityPoint[]
+}
+
+export interface BacktestResponse {
+  sid: string
+  name: string
+  rule_set: RuleSet
+  window_months: number
+  start: string
+  end: string
+  bars: number
+  judged_days: number
+  signal_count: number
+  buy_stats: BacktestHorizonStats[]
+  sell_stats: BacktestHorizonStats[]
+  baseline: BacktestBaselineStats[]
+  edges: BacktestEdge[]
+  simulation: BacktestSimulation
+  signals: BacktestSignal[]
+  computed_at: string
+  computed_through: string
+  cached: boolean
+}
+
+export interface BacktestSummary {
+  sid: string
+  name: string
+  rule_set: RuleSet
+  start: string | null
+  end: string | null
+  bars: number
+  judged_days: number
+  signal_count: number
+  buy_stats: BacktestHorizonStats[]
+  sell_stats: BacktestHorizonStats[]
+  baseline: BacktestBaselineStats[]
+  edges: BacktestEdge[]
+  strategy_return: number | null
+  buy_hold_return: number | null
+  exposure: number | null
+  trade_count: number
+  /** Why this stock could not be scored. Non-null means every figure is null. */
+  note: string | null
+}
+
+export interface BacktestPooledHorizon {
+  horizon: number
+  stocks: number
+  buy_samples: number
+  buy_win_rate: number | null
+  buy_average_return: number | null
+  sell_samples: number
+  sell_win_rate: number | null
+  sell_average_return: number | null
+  baseline_samples: number
+  baseline_up_rate: number | null
+  baseline_average_return: number | null
+  buy_edge: number | null
+  sell_edge: number | null
+  buy_excess_return: number | null
+  sell_excess_return: number | null
+}
+
+export interface BacktestBatchResponse {
+  items: BacktestSummary[]
+  pooled: BacktestPooledHorizon[]
+  errors: Record<string, string>
+}
+
 export interface RealtimeQuote {
   code: string
   name: string

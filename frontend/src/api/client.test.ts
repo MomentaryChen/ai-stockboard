@@ -24,6 +24,12 @@ function user(overrides: Partial<User> = {}): User {
     role: 'USER',
     is_active: true,
     must_change_password: false,
+    // Both were added to `User` with the account-review work and never reached
+    // this fixture. Without them the literal only acquires them through the
+    // spread, where `Partial<User>` makes them optional -- so the helper stops
+    // satisfying `User` and `tsc -b` fails for the whole app.
+    pending_approval: false,
+    locked_until: null,
     created_at: '2024-01-01T00:00:00Z',
     ...overrides,
   }

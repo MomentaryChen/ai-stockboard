@@ -126,6 +126,209 @@ class TraditionalAnalysisBatchResponse(BaseModel):
     errors: dict[str, str]
 
 
+class BacktestHorizonStats(BaseModel):
+    """How a signal type scored over one forward horizon."""
+
+    horizon: int
+    samples: int
+    wins: int
+    #: Signals too recent to have run the horizon out. Excluded from `samples`,
+    #: so `win_rate` is never a partial outcome scored as a final one.
+    pending: int
+    win_rate: float | None
+    average_return: float | None
+    median_return: float | None
+
+
+class BacktestBaselineStats(BaseModel):
+    """The same horizon over every judged day, signal or not.
+
+    Read `BacktestHorizonStats.win_rate` against this and never against 50 %.
+    A rule that is right 55 % of the time in a window that rose 60 % of the
+    time is worse than doing nothing.
+    """
+
+    horizon: int
+    samples: int
+    ups: int
+    up_rate: float | None
+    average_return: float | None
+    median_return: float | None
+
+
+class BacktestEdge(BaseModel):
+    """Signal minus baseline. <= 0 means the rule added nothing.
+
+    Served precomputed because the sell side's arithmetic is not what a caller
+    guesses: a Sell competes with the days that *fell* (`1 - up_rate`), and its
+    excess return is the drop it avoided (baseline - signal).
+    """
+
+    horizon: int
+    buy_edge: float | None
+    sell_edge: float | None
+    buy_excess_return: float | None
+    sell_excess_return: float | None
+
+
+class BacktestSignalOut(BaseModel):
+    """One historical verdict and what the price did after it.
+
+    `forward` is keyed by horizon in trading days; a key is absent when the
+    window ended before that horizon did.
+    """
+
+    date: datetime.date
+    signal: Literal["buy", "sell"]
+    close: float
+    reasons: list[str]
+    forward: dict[int, float]
+
+
+class BacktestTradeOut(BaseModel):
+    entry_date: datetime.date
+    entry_price: float
+    exit_date: datetime.date
+    exit_price: float
+    holding_days: int
+    profit: float
+
+
+class BacktestEquityPoint(BaseModel):
+    """Both curves on one point, indexed to 1.0 at the first judged bar.
+
+    Carried on shared points rather than as two series so the chart cannot
+    draw them over different date ranges, which is the one way an equity
+    comparison lies without looking wrong.
+    """
+
+    date: datetime.date
+    strategy: float
+    buy_hold: float
+
+
+class BacktestSimulationOut(BaseModel):
+    """Long-only replay: in on a Buy, out on a Sell, filled at the next open.
+
+    `strategy_return` includes any position still open at the end, marked to
+    the last close; `open_entry_date` is how a caller can tell. That position
+    is deliberately not one of `trades`, so it never reaches the trade stats.
+    """
+
+    trades: list[BacktestTradeOut]
+    trade_count: int
+    winning_trades: int
+    strategy_return: float
+    buy_hold_return: float
+    max_drawdown: float
+    buy_hold_max_drawdown: float
+    open_entry_date: datetime.date | None
+    open_entry_price: float | None
+    #: Fraction of judged days spent holding. A rule that is 80 % in cash can
+    #: only ever capture 20 % of a rally, however good its hit rate looks.
+    exposure: float
+    #: Null rather than 0 when nothing closed: "never won" and "never traded"
+    #: are different answers and must not render the same.
+    trade_win_rate: float | None
+    average_holding_days: float | None
+    #: Daily mark-to-market of both curves. Empty in a batch summary, which
+    #: reports rates rather than drawing anything.
+    equity: list[BacktestEquityPoint] = []
+
+
+class BacktestResponse(BaseModel):
+    """Rule-based signal quality for one stock, replayed over cached bars.
+
+    `cached` says whether this came out of `backtest_result` untouched or was
+    recomputed on the spot because the bars had moved past the stored row.
+    Surfaced rather than hidden: a board that quietly serves last week's answer
+    to "is this signal working" is worse than one that admits it is catching up.
+    """
+
+    sid: str
+    name: str
+    rule_set: Literal["grs", "twstock"]
+    #: The trailing window replayed, in months. Fixed by configuration rather
+    #: than chosen per request -- see `BacktestResult` for why.
+    window_months: int
+    start: datetime.date
+    end: datetime.date
+    bars: int
+    judged_days: int
+    signal_count: int
+    buy_stats: list[BacktestHorizonStats]
+    sell_stats: list[BacktestHorizonStats]
+    baseline: list[BacktestBaselineStats]
+    edges: list[BacktestEdge]
+    simulation: BacktestSimulationOut
+    signals: list[BacktestSignalOut]
+
+    computed_at: datetime.datetime
+    computed_through: datetime.date
+    cached: bool
+
+
+class BacktestSummary(BaseModel):
+    """One stock inside a batch: the rates, without the per-signal list.
+
+    Everything is null and `note` explains why when the cache held too few
+    bars -- a stock the batch could not score must not silently vanish from a
+    pooled number that claims to cover it.
+    """
+
+    sid: str
+    name: str
+    rule_set: Literal["grs", "twstock"]
+    start: datetime.date | None
+    end: datetime.date | None
+    bars: int
+    judged_days: int
+    signal_count: int
+    buy_stats: list[BacktestHorizonStats]
+    sell_stats: list[BacktestHorizonStats]
+    baseline: list[BacktestBaselineStats]
+    edges: list[BacktestEdge]
+    strategy_return: float | None
+    buy_hold_return: float | None
+    exposure: float | None
+    trade_count: int
+    note: str | None
+
+
+class BacktestPooledHorizon(BaseModel):
+    """The batch summed per horizon -- the readable number.
+
+    Per-stock rates over a year are a handful of samples each and swing twenty
+    points on one trade. `stocks` and the `*_samples` counts are part of the
+    answer, not decoration: a pooled rate over 30 signals is still noise.
+    """
+
+    horizon: int
+    stocks: int
+    buy_samples: int
+    buy_win_rate: float | None
+    buy_average_return: float | None
+    sell_samples: int
+    sell_win_rate: float | None
+    sell_average_return: float | None
+    baseline_samples: int
+    baseline_up_rate: float | None
+    baseline_average_return: float | None
+    buy_edge: float | None
+    sell_edge: float | None
+    buy_excess_return: float | None
+    sell_excess_return: float | None
+
+
+class BacktestBatchResponse(BaseModel):
+    items: list[BacktestSummary]
+    #: Pooled over the stocks in `items` that had enough bars to score.
+    pooled: list[BacktestPooledHorizon]
+    #: Stocks that could not be scored at all (unknown code). Same contract as
+    #: the traditional batch: one bad sid does not drop the rest.
+    errors: dict[str, str]
+
+
 class MaSeriesPoint(BaseModel):
     date: datetime.date
     ma5: float | None

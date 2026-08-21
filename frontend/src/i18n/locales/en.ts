@@ -278,6 +278,45 @@ export const en: Messages = {
   'bfp.twstockWarning':
     'Porting defects in twstock 1.5.1 disable the bias-pivot gate, so signals skew bullish. Shown for comparison only.',
 
+  // ---------- signal backtest ----------
+  'bt.title': 'Signal backtest',
+  'bt.loading': 'Replaying the signal…',
+  'bt.window': 'Last {months} months',
+  'bt.beatBuyHold': 'Trading the signal beat buy-and-hold',
+  'bt.trailBuyHold': 'Trading the signal trailed buy-and-hold',
+  'bt.headlineDetail':
+    'Trading the signal returned {strategy}; buying and holding over the same days returned {buyHold}. The signal kept you in the market only {exposure} of the time.',
+  'bt.strategyReturn': 'Trading the signal',
+  'bt.buyHoldReturn': 'Buy and hold',
+  'bt.tradeWinRate': 'Trade win rate',
+  'bt.trades': 'Completed trades',
+  'bt.tradeCount': '{count} ({wins} won)',
+  'bt.exposure': 'Time in market',
+  'bt.maxDrawdown': 'Max drawdown',
+  'bt.legendStrategy': 'Trading the signal',
+  'bt.legendBuyHold': 'Buy and hold',
+  'bt.hitTitle': 'Signal hit rate',
+  'bt.horizon': 'Horizon',
+  'bt.horizonDays': '+{days}d',
+  'bt.buyHit': 'Buy hit',
+  'bt.sellHit': 'Sell hit',
+  'bt.baseline': 'Baseline',
+  'bt.edge': 'Buy edge',
+  'bt.samples': '({count})',
+  'bt.noSignals': 'The rules produced no buy or sell signal over this window.',
+  'bt.baselineNote':
+    'The baseline is the share of all trading days in the same window that closed higher. Read the buy hit rate against that, not against 50%. “Buy edge” is the difference: at or below zero the rule did no better than buying at random.',
+  'bt.openPosition':
+    'A position was still open when the window ended (entered {date}). It is marked to market but is not counted as a completed trade.',
+  'bt.pendingNote':
+    'The most recent signals have not run their full horizon yet and are excluded from the hit rate.',
+  'bt.holdingNote': 'Each trade was held for {days} trading days on average.',
+  'bt.coverage':
+    'Replayed {start} to {end}: {days} judged trading days, {signals} signals.',
+  'bt.notEnoughBars':
+    'Not enough daily bars to backtest yet. Load this stock’s history first and come back.',
+  'bt.failed': 'Could not load the backtest: {message}',
+
   // ---------- moving averages ----------
   'ma.title': 'Moving averages',
   'ma.period': 'Period',

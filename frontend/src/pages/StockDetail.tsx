@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 
-import { api } from '../api/client'
+import { ApiError, api } from '../api/client'
 import type { RuleSet } from '../api/types'
+import BacktestCard from '../components/BacktestCard'
 import BestFourPointCard from '../components/BestFourPointCard'
 import DividendCard from '../components/DividendCard'
 import MaPanel from '../components/MaPanel'
@@ -43,6 +44,14 @@ export default function StockDetail() {
   const analysis = useQuery({
     queryKey: ['analysis', 'traditional', sid, months, ruleSet],
     queryFn: () => api.getTraditionalAnalysis(sid, months, ruleSet),
+  })
+
+  const backtest = useQuery({
+    queryKey: ['backtest', sid, ruleSet],
+    queryFn: () => api.getBacktest(sid, ruleSet),
+    // A stock with too little history answers 422 for as long as that is
+    // true; retrying turns one honest "not enough bars" into four.
+    retry: false,
   })
 
   const dividends = useQuery({
@@ -286,6 +295,23 @@ export default function StockDetail() {
                 mas={analysis.data.moving_averages}
                 latestClose={analysis.data.latest_close}
               />
+              {/* Under the verdict it grades, and sharing its rule set: the
+                  card above says Buy, this one says what Buy has been worth. */}
+              {backtest.data ? (
+                <BacktestCard data={backtest.data} />
+              ) : backtest.isError ? (
+                <section className="card">
+                  <h2 className="card-title">{t('bt.title')}</h2>
+                  <p className="dim" style={{ margin: 0 }}>
+                    {backtest.error instanceof ApiError &&
+                    backtest.error.status === 422
+                      ? t('bt.notEnoughBars')
+                      : t('bt.failed', {
+                          message: (backtest.error as Error).message,
+                        })}
+                  </p>
+                </section>
+              ) : null}
             </>
           )}
 

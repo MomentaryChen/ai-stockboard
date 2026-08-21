@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     stock_code_sync_enabled: bool = True
     stock_code_sync_interval_hours: int = 24
 
+    # --- Signal backtest ---
+    # How far back the 四大買賣點 replay reaches. One window is offered, not a
+    # range the caller picks: a short window produces two or three signals, and
+    # a win rate over three samples reads exactly as authoritative as one over
+    # eighty. Twelve months is the shortest window that survives that objection
+    # while still describing the regime the stock is currently in.
+    backtest_window_months: int = 12
+
     # --- Auth / JWT ---
     # JWT_SECRET deliberately has no usable default: when it is blank,
     # app/security.py generates an ephemeral per-process secret and logs a

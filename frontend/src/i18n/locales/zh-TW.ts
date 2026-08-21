@@ -259,6 +259,41 @@ export const zhTW = {
   'bfp.twstockWarning':
     'twstock 1.5.1 的移植缺陷讓乖離轉折關卡失效，訊號會明顯偏多，僅供對照。',
 
+  // ---------- signal backtest ----------
+  'bt.title': '訊號回測',
+  'bt.loading': '回測計算中…',
+  'bt.window': '近 {months} 個月',
+  'bt.beatBuyHold': '照訊號做，贏過買進持有',
+  'bt.trailBuyHold': '照訊號做，輸給買進持有',
+  'bt.headlineDetail':
+    '依訊號進出 {strategy}，同期間買進持有 {buyHold}；訊號只讓你在場內 {exposure} 的時間。',
+  'bt.strategyReturn': '依訊號進出',
+  'bt.buyHoldReturn': '買進持有',
+  'bt.tradeWinRate': '交易勝率',
+  'bt.trades': '完成交易',
+  'bt.tradeCount': '{count} 筆 (贏 {wins})',
+  'bt.exposure': '在場時間',
+  'bt.maxDrawdown': '最大回撤',
+  'bt.legendStrategy': '依訊號進出',
+  'bt.legendBuyHold': '買進持有',
+  'bt.hitTitle': '訊號命中率',
+  'bt.horizon': '期間',
+  'bt.horizonDays': '+{days} 日',
+  'bt.buyHit': '買點命中',
+  'bt.sellHit': '賣點命中',
+  'bt.baseline': '同期基準',
+  'bt.edge': '買點淨勝',
+  'bt.samples': '({count} 次)',
+  'bt.noSignals': '這段期間沒有出現任何買賣訊號。',
+  'bt.baselineNote':
+    '「同期基準」是同一段期間內所有交易日上漲的比例。買點命中率要和它比，不是和 50% 比；「買點淨勝」就是兩者相減，小於 0 代表這條規則沒有比隨便買更好。',
+  'bt.openPosition': '回測結束時仍持有（{date} 進場），這筆未平倉不計入勝率。',
+  'bt.pendingNote': '最近的訊號還沒走完觀察期，不列入命中率計算。',
+  'bt.holdingNote': '平均每筆交易持有 {days} 個交易日。',
+  'bt.coverage': '回測區間 {start} ~ {end}，共 {days} 個可判讀交易日、{signals} 個訊號。',
+  'bt.notEnoughBars': '日線資料還不夠，無法回測。先載入這檔股票的歷史再回來看。',
+  'bt.failed': '回測載入失敗：{message}',
+
   // ---------- moving averages ----------
   'ma.title': '均線',
   'ma.period': '期間',
