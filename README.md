@@ -1249,9 +1249,9 @@ without touching a prompt.
 
 ### `unknown` is not `fail`
 
-This is the part that shapes everything else. There is no fundamentals ingest
-yet -- `fundamentals_annual` ships empty and a provider has not been chosen --
-so for most stocks today, Earn, Efficient and Cheap have no data at all.
+This is the part that shapes everything else. `fundamentals_annual` ships
+empty and the backfill works through the listing over a couple of weeks, so a
+company it has not reached yet has no EPS and no ROE at all.
 
 Scoring those as failures would report the entire board as unsuitable, and
 would then make every score "improve" the day the ingest lands, for reasons
@@ -1331,9 +1331,9 @@ prompt.
 
 ### What is not here yet
 
-- **Annual EPS and ROE.** The tables, the read path and the upsert seam exist;
-  no provider is wired. Until one is, three of five dimensions stay `unknown`
-  and the card says so.
+- ~~**Annual EPS and ROE.**~~ Landed -- see [where the numbers come
+  from](#where-the-fundamentals-come-from) below. All five dimensions score
+  once the backfill has reached a company.
 - **A hold backtest.** The 平測 this lane was built for needs total return
   including dividends over a multi-year window, not the hit rate the short
   scorecard uses. Until it lands, the hold section is a checklist and a
@@ -1341,6 +1341,76 @@ prompt.
 - **The qualitative half of the method.** 護城河 and 能傳 need judgement rather
   than arithmetic. They are left to the narrative model; a pass/fail for them
   would be an invented number wearing a checklist's authority.
+
+---
+
+## Where the fundamentals come from
+
+Three sources, and the split between them is the interesting part.
+
+| What | Source | Shape | Key needed |
+|---|---|---|---|
+| PE, PBR, 殖利率 | TWSE `BWIBBU_ALL`, TPEx `tpex_mainboard_peratio_analysis` | all-market **daily** report | no |
+| Current annual EPS | TWSE `t187ap14_L`, TPEx `mopsfin_t187ap14_O` | all-market, **current quarter** | no |
+| Ten years of EPS / ROE | FinMind | per company | no (a free account doubles the rate) |
+
+The first two are ordinary exchange endpoints, fetched by `fundamentals_refresh`
+in four requests that cover every listed name -- the same economics as the
+T86 / MI_MARGN reports behind `chip_day`. Nothing about them needs an account.
+
+### Why the exchange's PE and not one we compute
+
+We could divide today's close by last year's EPS. The exchange instead
+maintains a trailing figure from quarterly filings and republishes it every
+session, which is both fresher and defined for companies whose annual history
+we do not have yet. `hold_features` prefers theirs and falls back to the
+derived one, so Cheap is answerable for names the backfill has not reached.
+
+Those rows land in `valuation_day`, shaped like `chip_day`. They accumulate,
+which is what will make "cheap against its own five-year band" -- the half of
+買得便宜 that a fixed sector ceiling cannot express -- a query rather than
+another ingest.
+
+### Why FinMind, and why only once
+
+`t187ap14` is a *current quarter* snapshot with no date parameter. Going
+forward that is enough: one annual figure a year, free, keyless. Going backward
+it gives nothing, and 年年賺錢 is a question about the last decade.
+
+So `fundamentals_backfill` fetches that decade from FinMind, one company at a
+time, writes it into `fundamentals_annual`, and never calls it again. That is
+what makes the only third-party dependency in this service tolerable: it is a
+**data mover, not a runtime dependency**. If FinMind changes its terms or
+disappears tomorrow, the rows stay and nothing user-facing notices.
+
+The job takes a slice per run and stamps each company in
+`fundamentals_fetch_log` as it goes, so a run that hits a quota wall resumes
+from where it stopped rather than starting over. Roughly 1,950 listed
+companies at two requests each means about seventeen nightly runs; switch the
+job to hourly at `/admin/jobs` for a day if you want it sooner.
+
+### Three ways these sources disagree
+
+All three produce plausible-looking numbers when read wrongly, which is why
+each one is pinned in `server/tests/test_fundamentals_ingest.py`:
+
+- **Cumulative vs per-quarter.** The exchanges publish EPS accumulated
+  year-to-date, so only 季別 4 is an annual figure. FinMind publishes it per
+  quarter, so an annual figure is the sum of four. 台泥 115Q2 reads 0.38, which
+  is Q1+Q2 (0.10+0.29) and not Q2's 0.29 -- read either convention as the other
+  and earnings are wrong by roughly 4x, in opposite directions.
+- **Thousands vs units.** `稅後淨利` arrives in thousands of NTD from the
+  exchange and in units from FinMind. Normalised on the way in, or an ROE audit
+  would be out by 1000x depending on which ingest wrote the row.
+- **Matched pairs for ROE.** Consolidated profit includes minority interests;
+  equity attributable to the parent excludes them. The numerator and
+  denominator are therefore chosen together -- parent with parent, or total
+  with total, never one of each. This is not hypothetical: a general-industry
+  company publishes both bases, while a financial holding publishes parent
+  *income* but only 權益總計 for equity, and even the total-income key differs
+  (`IncomeAfterTaxes` vs `IncomeAfterTax`). Mixing them silently understates
+  ROE by whatever the minorities are worth, and the result looks entirely
+  reasonable.
 
 ---
 

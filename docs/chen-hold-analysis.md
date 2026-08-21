@@ -256,13 +256,39 @@ Two things the build changed from the design above:
 **Done when:** a TWSE name with dividend history shows a Chen score and can
 request a Hold AI verdict without touching technical AI cache keys. ✓
 
-### M2 — Fundamentals ingest
+### M2 — Fundamentals ingest — **done**
 
-1. Provider client behind env (e.g. `FINMIND_TOKEN`)  
-2. Warm/backfill annual EPS/ROE  
-3. Bump hold `PROMPT_VERSION` when feature JSON gains real Earn/Cheap fields  
+1. [x] `valuation_day` (`0010`) + `fundamentals_refresh` job: the exchanges'
+   own PE / PBR / yield and current annual EPS, four keyless requests  
+2. [x] `finmind.py` + `fundamentals_backfill` job: ten years of EPS and ROE,
+   resumable per company  
+3. [x] Hold `PROMPT_VERSION` bumped to `hold-v2`  
 
-**Done when:** Earn / Efficient / Cheap leave `unknown` for covered names.
+The design assumed one provider behind a token. What it actually took was
+three sources, and the split matters:
+
+* **The exchanges publish more than the plan credited them with.** `BWIBBU` /
+  `tpex_mainboard_peratio_analysis` give PE, PBR and yield board-wide daily,
+  and `t187ap14` gives annual EPS -- all keyless, all the same shape as the
+  chip reports. That covers Cheap outright and every year from now on.
+* **FinMind is only needed for history**, because `t187ap14` has no date
+  parameter. It is therefore a one-off data mover rather than a runtime
+  dependency, which is what makes the first third-party source in this repo
+  acceptable. Its free tier serves the datasets used without a token at all.
+* **`PROMPT_VERSION` was bumped for a data change, not a wording change.**
+  `trailing_pe` stopped being derived from annual EPS and became the
+  exchange's published figure. The rubric is identical; what the model is
+  shown is not.
+
+Three source disagreements had to be handled and are pinned by tests:
+cumulative-vs-per-quarter EPS, thousands-vs-units net income, and matched
+parent/total pairs for ROE (a financial holding publishes parent income but
+only total equity, and even the total-income key differs by industry).
+
+**Done when:** Earn / Efficient / Cheap leave `unknown` for covered names. ✓
+Verified end-to-end against live sources: 2330 and 2880 both score
+`known_weight` 100/100, with TSMC's 10-year average ROE at 28.3% and 華南金's
+at 9.0%.
 
 ### M3 — Hold backtest + comparison UX
 
@@ -327,10 +353,11 @@ compare” on the page; M3 makes 平測 numeric.
    every existing account could spend, without anyone deciding to raise the
    limit. Both cards read the same `['ai-quota']` key, so the number on screen
    moves whichever button is pressed.
-2. **Fundamentals provider: still open.** `services/fundamentals.py` has the
-   read path, the upsert and the fetch stamp; a client is a function producing
-   `Row`s and nothing above it needs to change. FinMind vs MOPS vs a
-   hand-maintained CSV is a licensing and reliability call, not a code one.
+2. **Fundamentals provider: exchanges first, FinMind for history only.**
+   Resolved during M2 after checking what the exchanges actually publish --
+   which turned out to be everything except the back-history. FinMind fills
+   that once and is never called again, so the dependency does not survive
+   into the request path.
 3. **Chen thresholds: named constants at the top of `chen_rules.py`,** as
    planned. Shipped defaults: EPS positive in all but one of ≥ 5 years, average
    ROE ≥ 10% with stdev ≤ 8 over ≥ 3 years, trailing PE ≤ 10 for financials and
