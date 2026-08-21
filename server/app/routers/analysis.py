@@ -58,6 +58,7 @@ from app.schemas import (
     BestFourPointResult,
     ChenAnalysisResponse,
     ChenRuleResult,
+    HoldBacktestResponse,
     HoldFeatures,
     TraditionalAnalysisBatchResponse,
     TraditionalAnalysisResponse,
@@ -71,7 +72,14 @@ from app.services import history as history_service
 from app.services import valuation as valuation_service
 from app.services.analysis import ai as ai_service
 from app.services.analysis import backtest as backtest_service
-from app.services.analysis import chen_rules, gemini, hold_features, hold_gemini, traditional
+from app.services.analysis import (
+    chen_rules,
+    gemini,
+    hold_backtest,
+    hold_features,
+    hold_gemini,
+    traditional,
+)
 from app.services.analysis import hold_ai as hold_ai_service
 
 router = APIRouter(prefix="/api/stocks", tags=["analysis"])
@@ -508,6 +516,13 @@ HOLD_MONTHS = 24
 #: still bounded by data rather than by the edge of the query.
 HOLD_DIVIDEND_YEARS = 11
 
+#: The hold replay reads as much history as it can rather than a fixed window
+#: -- see `hold_backtest.run`. These are the outer bounds of the query, not a
+#: promise about what is stored: the engine reports the window it actually
+#: found, and refuses under two years.
+HOLD_BACKTEST_MONTHS = 132
+HOLD_BACKTEST_YEARS = 11
+
 
 def _hold_snapshot(db: Session, sid: str, info) -> tuple[HoldFeatures, ChenRuleResult]:
     """Everything the 存股 lane needs, built once and shared by both routes.
@@ -634,6 +649,46 @@ def generate_hold_analysis(
 
     response.headers["Cache-Control"] = "no-store"
     return result
+
+
+@router.get("/{sid}/analysis/hold-backtest", response_model=HoldBacktestResponse)
+def get_hold_backtest(
+    sid: str,
+    db: Session = Depends(get_db),
+) -> HoldBacktestResponse:
+    """The long gradesheet: what buying and holding this actually returned.
+
+    The counterpart to `/analysis/backtest`, and deliberately not comparable
+    to it. That route reports how often a signal was right over 5, 10 and 20
+    days; this one reports total return with payouts reinvested over years.
+    Putting both on one page is the point of the 存股 lane -- averaging them
+    would not be.
+
+    Free, unmetered and cache-only, like `/analysis/chen`: it replays bars and
+    dividend rows already stored and never calls an exchange. A stock nobody
+    has loaded enough history for gets a 422 saying so rather than an
+    annualised return extrapolated from six months, which is the same refusal
+    the short backtest makes for the same reason.
+
+    Not cached in a table, unlike the short replay. That one recomputes 240
+    days of rule evaluation per stock and is worth storing; this is one pass
+    of arithmetic over the same rows the request already reads.
+    """
+    info = codes_service.get_stock(sid)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")
+
+    buckets = history_service.month_range(HOLD_BACKTEST_MONTHS)
+    start = datetime.date(buckets[0][0], buckets[0][1], 1)
+    rows = history_service.read_prices(db, sid, start)
+    events, coverage, _ = dividend_service.read_events(
+        db, sid, HOLD_BACKTEST_YEARS
+    )
+
+    try:
+        return hold_backtest.run(sid, info.name, rows, events, coverage)
+    except hold_backtest.NotEnoughBars as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # --- Backtest ----------------------------------------------------------------

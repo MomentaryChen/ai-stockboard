@@ -403,6 +403,50 @@ export interface ChenAnalysisResponse {
   rules: ChenRuleResult
 }
 
+export interface HoldEquityPoint {
+  date: string
+  /** Price alone, rebased to 100 at the window start. */
+  price: number
+  /** Same, with every payout reinvested. */
+  total: number
+}
+
+/** 填息: whether the price climbs back over the ex-dividend gap. */
+export interface HoldFillStats {
+  events: number
+  filled: number
+  /** Null when nothing has had time to be judged -- distinct from 0%. */
+  fill_rate_pct: number | null
+  median_days_to_fill: number | null
+  /** Still inside their window, excluded from the rate. */
+  pending: number
+  window_days: number
+}
+
+/** The long gradesheet. Shares no metric with `BacktestResponse` on purpose:
+ *  hit rate over 5/10/20 days is meaningless for a method that never trades. */
+export interface HoldBacktestResponse {
+  sid: string
+  name: string
+  start: string
+  end: string
+  years: number
+  bars: number
+  start_close: number
+  end_close: number
+  price_return_pct: number
+  total_return_pct: number
+  dividend_return_pct: number
+  annualised_return_pct: number | null
+  cash_collected: number
+  yield_on_cost_pct: number | null
+  max_drawdown_pct: number
+  fill: HoldFillStats
+  stock_dividend_years: number
+  dividend_coverage: 'history' | 'recent' | 'none'
+  curve: HoldEquityPoint[]
+}
+
 export interface AiHoldVerdict {
   suitability: HoldSuitability
   confidence: 'high' | 'medium' | 'low'

@@ -577,6 +577,100 @@ class ChenAnalysisResponse(BaseModel):
     rules: ChenRuleResult
 
 
+class HoldEquityPoint(BaseModel):
+    """One point on the accumulated-holding curve, per original share held."""
+
+    date: datetime.date
+    #: Price alone, ignoring everything the company paid out.
+    price: float
+    #: What the position is worth with every payout reinvested.
+    total: float
+
+
+class HoldFillStats(BaseModel):
+    """填息: does the price climb back over the ex-dividend gap, and how fast.
+
+    The one risk measure that is specific to this method rather than borrowed
+    from the short lane. A dividend is not income if the price never recovers
+    the gap it opened on the ex-date -- it is the holder's own capital handed
+    back and taxed on the way. A payer that fills reliably and one that does
+    not are completely different propositions at the same yield.
+    """
+
+    events: int
+    #: Events whose pre-ex close was regained inside the observation window.
+    filled: int
+    #: Null rather than 0 when no event has had time to be judged -- "never
+    #: fills" and "nothing to measure yet" are opposite statements.
+    fill_rate_pct: float | None
+    median_days_to_fill: int | None
+    #: Events still inside their window at the end of the series, excluded
+    #: from the rate for the same reason a pending signal is excluded from the
+    #: short lane's hit rate.
+    pending: int
+    window_days: int
+
+
+class HoldBacktestResponse(BaseModel):
+    """The long gradesheet: what accumulating and holding actually returned.
+
+    Deliberately shares no metric with the short backtest beside it. That one
+    reports hit rate over 5/10/20 days against the base rate of the same days,
+    which is the right question for a signal and a meaningless one for a
+    decade-long holding: a method that never trades has no hits to count.
+
+    So the two cards are the two gradesheets the whole lane exists to keep
+    apart. Comparing them means reading both, not averaging them.
+    """
+
+    sid: str
+    name: str
+    start: datetime.date
+    end: datetime.date
+    #: Length of the replay. Reported rather than fixed, because it is bounded
+    #: by whatever bars `daily_price` happens to hold for this stock -- see
+    #: `hold_backtest.run` for why that is honest rather than lazy.
+    years: float
+    bars: int
+    start_close: float
+    end_close: float
+
+    #: Price alone, over the window.
+    price_return_pct: float
+    #: Price plus every payout, reinvested on the ex-date.
+    total_return_pct: float
+    #: The difference between the two -- what holding through the payouts was
+    #: worth on top of the price move. Not a clean addition once reinvestment
+    #: compounds, which is exactly why it is derived rather than accumulated.
+    dividend_return_pct: float
+    #: Compounded annual rate on the total return. The only figure comparable
+    #: between two stocks whose stored history differs in length.
+    annualised_return_pct: float | None
+
+    #: Cash actually received per original share, before any reinvestment.
+    cash_collected: float
+    #: That cash as a percentage of what one share cost at the start -- 存股's
+    #: own headline number, and the one that keeps rising while the cost stays
+    #: fixed.
+    yield_on_cost_pct: float | None
+
+    #: Worst peak-to-trough fall of the reinvested curve. The question a
+    #: ten-year holder actually has to survive.
+    max_drawdown_pct: float
+
+    fill: HoldFillStats
+
+    #: Years inside the window that paid stock rather than cash. Reinvestment
+    #: accounts for them, but they are worth surfacing: a return built on
+    #: share count rather than cash reads differently to someone spending the
+    #: dividend.
+    stock_dividend_years: int
+    #: Straight from the dividend service. A `recent` window means the payouts
+    #: below are a floor, so every return here is understated.
+    dividend_coverage: Literal["history", "recent", "none"]
+    curve: list[HoldEquityPoint]
+
+
 class AiHoldVerdict(BaseModel):
     """The 存股 call.
 

@@ -428,6 +428,32 @@ export const zhTW = {
   'holdAi.disclaimer':
     '本評估由 AI 依配息與（若有）年度財報資料生成，未含產業前景與經營者判斷，僅供研究參考，不構成投資建議。',
 
+  // ---------- 存股回測（長期成績單） ----------
+  'hbt.title': '存股回測',
+  'hbt.window': '近 {years} 年',
+  'hbt.headline': '含息總報酬 {total}',
+  'hbt.headlineDetail': '其中價格貢獻 {price}，配息貢獻 {dividend}（配息再投入）。',
+  'hbt.totalReturn': '含息總報酬',
+  'hbt.priceReturn': '純價格',
+  'hbt.annualised': '年化報酬',
+  'hbt.yieldOnCost': '成本殖利率',
+  'hbt.cashCollected': '每股累計領息',
+  'hbt.maxDrawdown': '最大回撤',
+  'hbt.legendTotal': '含息再投入',
+  'hbt.legendPrice': '純價格',
+  'hbt.fillTitle': '填息',
+  'hbt.fillSummary': '{events} 次除息中有 {filled} 次填息（{rate}%），中位數 {days} 天填完。',
+  'hbt.fillPending': '另有 {pending} 次還在觀察期，不計入。',
+  'hbt.fillPendingOnly': '{pending} 次除息都還在觀察期，還無法判斷填息率。',
+  'hbt.fillNone': '這段期間沒有配發現金股利。',
+  'hbt.coverage': '回測區間 {start} ~ {end}，{years} 年、{bars} 個交易日。區間長度取決於已載入的日線。',
+  'hbt.stockDividendNote': '其中 {years} 年配過股票股利，已計入股數；報酬來自股數增加而非現金。',
+  'hbt.coverageRecent': '上櫃只公開近期除權息，配息紀錄不完整，這裡的報酬是低估值。',
+  'hbt.disclaimer':
+    '假設期初買進一股、配息於除息日收盤價再投入，未計稅負、二代健保與手續費，也沒有模擬定期定額。實際結果會比這個數字差一些。',
+  'hbt.notEnoughBars': '日線資料還不夠（至少要兩年）。先在上方把區間拉長載入歷史。',
+  'hbt.failed': '存股回測載入失敗：{message}',
+
   // ---------- signal backtest ----------
   'bt.title': '訊號回測',
   'bt.loading': '回測計算中…',

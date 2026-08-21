@@ -2,9 +2,9 @@
 
 Branch: `feat/chen-hold-analysis`  
 Worktree: `…/worktree/ai-stockboard--feat-chen-hold-analysis`  
-Status: **M1 shipped.** M2 (fundamentals ingest) and M3 (hold backtest) are
-still open; the checklist below records what each milestone covers and what
-M1 actually decided.
+Status: **M1, M2 and M3 shipped.** M4 is untouched and remains optional. The
+checklist below records what each milestone covered and where the build
+departed from the design.
 
 ## Goal
 
@@ -290,13 +290,35 @@ Verified end-to-end against live sources: 2330 and 2880 both score
 `known_weight` 100/100, with TSMC's 10-year average ROE at 28.3% and 華南金's
 at 9.0%.
 
-### M3 — Hold backtest + comparison UX
+### M3 — Hold backtest + comparison UX — **done**
 
-1. `hold_backtest.py` + GET endpoint  
-2. Hold scorecard card beside short backtest  
-3. Short README note: four engines, two gradesheets  
+1. [x] `hold_backtest.py` + GET `/analysis/hold-backtest`  
+2. [x] `HoldBacktestCard` under the checklist, opposite the short backtest  
+3. [x] README: "Two gradesheets, not one score"  
+
+Beyond the plan's list:
+
+* **填息 is reported as a headline.** The plan had it as "rough fill /
+  stickiness of ex-div gaps if data allows". It turned out to be the one risk
+  measure specific to this method rather than borrowed from the short lane --
+  a dividend whose gap never closes is the holder's own capital returned -- so
+  it earned a section rather than a footnote. Pending events are excluded from
+  the rate the same way pending signals are next door.
+* **Stock dividends had to be modelled, not noted.** `daily_price` is
+  unadjusted, so a 股票股利 shows up as a price fall the holder never took.
+  Handling only the price or only the share count is wrong by roughly 9% or
+  1000% respectively.
+* **`years` comes from the calendar, not from bars ÷ 240.** The bar-count
+  shortcut understates elapsed time for any name with gaps, which inflates
+  every annualised figure -- and thin names are precisely the ones where the
+  reader most needs the number to be honest.
+* **No result cache.** The short replay stores rows because it re-evaluates
+  240 days of rules per stock; this is one arithmetic pass over rows the
+  request already reads.
 
 **Done when:** one stock page shows traditional short grade + hold long grade.
+✓ The 存股 section now carries the checklist, the long backtest and the AI
+verdict, with the short backtest in the section above it.
 
 ### M4 — Optional
 
