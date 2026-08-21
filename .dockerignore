@@ -15,5 +15,11 @@ frontend/dist
 frontend/.pnpm-store
 **/*.tsbuildinfo
 
+# Documentation assets and the Playwright tool that produces them. Neither is
+# built into any image, and tools/screenshots/node_modules carries a browser
+# driver -- leaving them in the context makes every server build pay for it.
+docs
+tools
+
 deployment/.env
 **/*.log
