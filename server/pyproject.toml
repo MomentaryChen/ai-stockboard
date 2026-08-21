@@ -31,6 +31,19 @@ dependencies = [
 [tool.uv.sources]
 twstock = { path = "../vendor/twstock", editable = true }
 
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::starlette.exceptions.StarletteDeprecationWarning:fastapi.testclient",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
 

@@ -153,6 +153,31 @@ pnpm dev
 
 ---
 
+## Tests and CI
+
+These are not a coverage target. They pin the behaviours that would fail
+silently if someone "simplified" them, or if twstock's return types changed:
+
+| | What would go missing without the test |
+|---|---|
+| `_GrsBestFourPoint` | The 乖離 gate and close-vs-close volume-shrink rules regress to twstock's bugs. The 20 000-sequence experiment in this README never became a regression check. |
+| Refresh-token replay | A reused token would stop wiping every session. |
+| `must_change_password` | Restricted mode is two `Depends()` choices, not middleware. A third bare `get_authenticated_user` compiles. |
+| Alembic baseline / `upgrade_to_head` | `create_all` and `schema_patches.py` are gone. Editing the frozen baseline, or booting without `upgrade head`, is how a running database silently drifts from the models. |
+| Sliding-window throttle | TWSE's 3-per-5s ban is enforced only by this loop. |
+| `refreshPromise` in `client.ts` | Concurrent 401s would fire parallel refreshes; all but one look stolen to the server and the user is signed out at random. |
+
+```bash
+cd server && uv sync && uv run pytest
+cd frontend && pnpm install && pnpm lint && pnpm test && pnpm build
+```
+
+`pnpm build` still runs `tsc -b` (the English locale and the rest of the
+typecheck). GitHub Actions runs the same four commands on every push and pull
+request to `main` / `develop`.
+
+---
+
 ## 部署
 
 ### 全部跑在 Docker
