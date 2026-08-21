@@ -38,6 +38,7 @@ STOCK_CODE_SYNC = "stock_code_sync"
 REFRESH_TOKEN_CLEANUP = "refresh_token_cleanup"
 BACKTEST_REFRESH = "backtest_refresh"
 CHIP_REFRESH = "chip_refresh"
+DIVIDEND_BOARD_WARMUP = "dividend_board_warmup"
 
 
 @dataclass(frozen=True)
@@ -218,6 +219,41 @@ def build() -> None:
                 "computed": "重算",
                 "skipped": "略過",
                 "failed": "失敗",
+            },
+        )
+    )
+
+    register(
+        JobDefinition(
+            id=DIVIDEND_BOARD_WARMUP,
+            name="除權息年報預抓",
+            description=(
+                "把近十一年 TWSE 除權息年報與上櫃近期表抓進 dividend_event。"
+                "一次請求涵蓋全市場；沒有它，存股分析第一次開一檔就要現抓十年。"
+            ),
+            handler=handlers.dividend_board_warmup,
+            default_enabled=True,
+            default_kind=SCHEDULE_DAILY,
+            # After the chip job, and well clear of the daily-price window.
+            # Past years never move, so in practice this only re-reads the
+            # current year and the TPEX snapshot.
+            default_daily_at="21:10",
+            default_interval_minutes=24 * 60,
+            # A full run is up to a dozen multi-megabyte reports off the same
+            # limiter the realtime poll uses. Hourly is already more often than
+            # an annual archive can change.
+            min_interval_minutes=60,
+            max_interval_minutes=7 * 24 * 60,
+            manual_cooldown_seconds=300,
+            # Deliberately not at boot: a cold container would otherwise open
+            # with a dozen exchange calls, and the stock page still backfills
+            # any bucket this has not reached yet.
+            run_on_startup=False,
+            expected_seconds=60,
+            stat_labels={
+                "fetched": "新抓區間",
+                "buckets": "已快取區間",
+                "events": "除權息筆數",
             },
         )
     )

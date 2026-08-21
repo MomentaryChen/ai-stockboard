@@ -333,6 +333,216 @@ class AiQuotaStatus(BaseModel):
     resets_at: datetime.datetime
 
 
+# --- Hold analysis (存股) -----------------------------------------------------
+#
+# A third question about the same stock, and the reason it needs its own
+# vocabulary rather than another field on the two above: those ask what to do
+# with a position over days, this asks whether the company is worth accumulating
+# and holding for its dividend over years. Nothing about enter/exit/size
+# survives the change of horizon, and grading the two on one scale would be the
+# blended score this lane exists to avoid.
+
+
+class HoldDividendFeatures(BaseModel):
+    """What cash the company has actually paid, and what that is worth today.
+
+    `coverage` is repeated from the dividend card because it decides how much
+    of this can be believed: TWSE publishes a yearly archive, TPEX only the
+    current window, so `consecutive_years_with_cash` from a `recent` source is
+    a floor rather than a streak.
+    """
+
+    coverage: Literal["history", "recent", "none"]
+    window_years: int
+    #: Calendar years inside the window this database has actually pulled the
+    #: archive for. Distinct from `coverage`, which says what the exchange
+    #: publishes: on a fresh database TWSE coverage is still "history" while
+    #: only the handful of years the dividend card asked for are here. A
+    #: continuity rule that ignored this would fail a company for a gap that is
+    #: ours rather than theirs.
+    years_observed: int
+    #: Distinct calendar years inside the window with at least one cash payment.
+    years_with_cash: int
+    #: Unbroken run of such years, counted back from the last *complete* year.
+    #: The current year is excluded: a company that pays in August is not a
+    #: company that stopped paying, when read in March.
+    consecutive_years_with_cash: int
+    ttm_cash: float | None
+    cash_yield_pct: float | None
+    #: Mean cash per year across the window, and its yield -- what a holder
+    #: collects on average rather than in the last twelve months alone.
+    avg_cash_per_year: float | None
+    avg_yield_pct: float | None
+    latest_ex_date: datetime.date | None
+    #: Years that paid stock rather than (or as well as) cash. Dilution the
+    #: cash yield above does not show.
+    years_with_stock_dividend: int
+
+
+class HoldLiquidityFeatures(BaseModel):
+    """Whether a position can actually be built by buying a little at a time."""
+
+    trading_days: int
+    avg_daily_shares: int | None
+    avg_daily_turnover: int | None
+    #: Sessions inside the window that traded nothing at all. A thin name can
+    #: pass an average and still be impossible to accumulate.
+    no_trade_days: int
+
+
+class HoldFundamentalsFeatures(BaseModel):
+    """Annual EPS and ROE, and the valuation drawn from them.
+
+    Every field is nullable and `years_available` is the one to read first:
+    zero means `fundamentals_annual` has nothing for this sid, which is the
+    normal state until the ingest lands, and the Earn / Efficient / Cheap
+    dimensions report `unknown` rather than being scored from nothing.
+    """
+
+    years_available: int
+    #: Years inside the checklist window that have an EPS figure at all.
+    eps_years_checked: int
+    eps_positive_years: int | None
+    latest_eps: float | None
+    latest_eps_year: int | None
+    avg_eps: float | None
+    avg_roe_pct: float | None
+    #: Spread of ROE across the window. Chen's "efficient" is a return that
+    #: keeps happening, so a high average built from one spike is not it.
+    roe_stdev_pct: float | None
+    roe_years_checked: int
+    #: Latest close divided by the most recent annual EPS. Trailing and annual,
+    #: so it lags a turnaround by up to a year -- which is the conservative
+    #: direction for a checklist about not overpaying.
+    trailing_pe: float | None
+
+
+class HoldPriceFeatures(BaseModel):
+    """Where the price sits in its own multi-year range.
+
+    Not a signal. "Buy a good company when it is cheap" needs some notion of
+    cheap that does not depend on earnings data we may not have, and position
+    inside the long range is the one the bars alone can supply.
+    """
+
+    latest_close: float | None
+    window_high: float | None
+    window_low: float | None
+    position_pct: float | None
+    drawdown_from_high_pct: float | None
+    return_1y_pct: float | None
+
+
+class HoldFeatures(BaseModel):
+    """Everything the 存股 lane reasons from, derived from stored rows only.
+
+    Same contract as `PriceFeatures`: a closed structure, the arithmetic done
+    here rather than in a prompt, and no clock read inside the extractor -- so
+    a past date is replayed by slicing the inputs and nothing else.
+    """
+
+    sid: str
+    name: str
+    #: Trading day the price rows end on. None when there are no usable bars,
+    #: which is also the one case with no cache key to store a verdict under.
+    as_of: datetime.date | None
+    #: 產業別 from the ISIN listing. Carried because the valuation band differs
+    #: by sector -- a bank at 10x and a manufacturer at 10x are not the same
+    #: statement -- and because peer comparison will key on it later.
+    industry: str
+    dividend: HoldDividendFeatures
+    liquidity: HoldLiquidityFeatures
+    fundamentals: HoldFundamentalsFeatures
+    price: HoldPriceFeatures
+
+
+#: The five things the checklist asks. Named so the UI can render its own copy
+#: for each rather than displaying a server-composed sentence.
+ChenDimensionKey = Literal["earn", "efficient", "cheap", "collect", "liquid"]
+#: `unknown` is a first-class outcome: it shrinks the denominator instead of
+#: counting as a failure, so a company we have no EPS for is not scored as one
+#: that lost money.
+ChenStatus = Literal["pass", "fail", "unknown"]
+HoldSuitability = Literal["strong", "ok", "weak", "avoid"]
+
+
+class ChenDimension(BaseModel):
+    key: ChenDimensionKey
+    status: ChenStatus
+    #: Share of the checklist this dimension carries. Only known dimensions
+    #: contribute to either side of the score.
+    weight: int
+    #: English, and not shown to the user. It goes into the prompt and into an
+    #: operator's log; the card composes its own sentence from `metrics` so the
+    #: copy stays in the frontend catalogue where both locales can see it.
+    evidence: str
+    #: The numbers behind the verdict, for the UI to format and for a reader to
+    #: check the rule against. Values that could not be computed are omitted.
+    metrics: dict[str, float]
+
+
+class ChenRuleResult(BaseModel):
+    """The deterministic checklist. No model, no network, no cost.
+
+    `score` is out of 100 over the *known* dimensions only, so a thinly covered
+    name is not punished for the data we are missing -- but it is also not
+    comparable to a fully covered one beyond what `known_weight` supports,
+    which is why that number is in the response rather than left implicit.
+    """
+
+    score: int | None
+    suitability: HoldSuitability | None
+    dimensions: list[ChenDimension]
+    #: Weight of the dimensions that could be scored, out of `total_weight`.
+    known_weight: int
+    total_weight: int
+    #: Machine-readable reasons a dimension came back unknown, e.g.
+    #: "no_annual_fundamentals". The UI renders each from its own catalogue.
+    coverage_gaps: list[str]
+
+
+class ChenAnalysisResponse(BaseModel):
+    sid: str
+    name: str
+    as_of: datetime.date | None
+    features: HoldFeatures
+    rules: ChenRuleResult
+
+
+class AiHoldVerdict(BaseModel):
+    """The 存股 call.
+
+    One axis, not two. A holding decision has no equivalent of position size:
+    the method's answer to "how much" is "regularly, over years", which is the
+    same for every name it approves of.
+    """
+
+    suitability: HoldSuitability
+    confidence: Literal["high", "medium", "low"]
+    headline: str
+    reasons: list[str]
+    risks: list[str]
+    #: Whether the model landed on the same suitability as the checklist. Null
+    #: when the checklist could score nothing, so there was no verdict to agree
+    #: with.
+    agrees_with_rules: bool | None
+
+
+class AiHoldAnalysisResponse(BaseModel):
+    sid: str
+    name: str
+    as_of: datetime.date
+    generated_at: datetime.datetime
+    model: str
+    prompt_version: str
+    locale: str
+    #: False only when this call actually spent a Gemini request.
+    cached: bool
+    verdict: AiHoldVerdict
+    features: HoldFeatures
+    #: The checklist's answer for the same snapshot, so the card can show the
+    #: deterministic and the generated verdict side by side.
+    rules: ChenRuleResult
 class AiModelSettingsOut(BaseModel):
     """What /admin/ai shows: the live model and the closed set it may be."""
 

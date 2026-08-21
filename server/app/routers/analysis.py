@@ -18,6 +18,18 @@ because a verdict nobody can see without spending is a verdict nobody sees. The
 shared cache underneath both is keyed on the trading day; see
 `services/analysis/ai.py` for what each gate is defending. It has no backtest of
 its own yet, which is the honest gap between it and the route above.
+
+`/analysis/chen` and `/analysis/ai-hold` are the same pairing again -- free
+rules, metered model -- for a question the three routes above cannot answer.
+Those all ask what to do with a position over days; these ask whether the
+company is worth accumulating and holding for its dividend over years. Kept as
+separate routes with their own vocabulary rather than extra fields on the ones
+above, because a hit rate over 5/10/20 days is not a grade a holding strategy
+can be given, and one blended score across both horizons would mean nothing.
+
+`/analysis/ai-hold` still has only the metered half. The free read below is for
+the position-call lane alone, so a stored hold assessment is still invisible
+until somebody pays for it a second time.
 """
 
 import datetime
@@ -33,6 +45,7 @@ from app.models import AppUser
 from app.schemas import (
     AiAnalysisBatchResponse,
     AiAnalysisResponse,
+    AiHoldAnalysisResponse,
     AiQuotaStatus,
     BacktestBaselineStats,
     BacktestBatchResponse,
@@ -42,16 +55,22 @@ from app.schemas import (
     BacktestResponse,
     BacktestSummary,
     BestFourPointResult,
+    ChenAnalysisResponse,
+    ChenRuleResult,
+    HoldFeatures,
     TraditionalAnalysisBatchResponse,
     TraditionalAnalysisResponse,
     TraditionalAnalysisSummary,
 )
 from app.services import backtest_store
 from app.services import codes as codes_service
+from app.services import dividend as dividend_service
+from app.services import fundamentals as fundamentals_service
 from app.services import history as history_service
 from app.services.analysis import ai as ai_service
 from app.services.analysis import backtest as backtest_service
-from app.services.analysis import gemini, traditional
+from app.services.analysis import chen_rules, gemini, hold_features, hold_gemini, traditional
+from app.services.analysis import hold_ai as hold_ai_service
 
 router = APIRouter(prefix="/api/stocks", tags=["analysis"])
 batch_router = APIRouter(prefix="/api/analysis", tags=["analysis"])
@@ -453,6 +472,144 @@ def get_ai_quota(
     instead of letting the request come back 429.
     """
     return ai_service.quota_status(db, user)
+
+
+# --- Hold analysis (存股) -----------------------------------------------------
+
+#: How much price history the hold snapshot reads. Two years of sessions, which
+#: is what `hold_features.PRICE_WINDOW` needs to place today's close inside a
+#: cycle rather than inside a quarter.
+HOLD_MONTHS = 24
+
+#: How many calendar years of dividends. `hold_features.WINDOW_YEARS` is the
+#: checklist's window; one more is requested so a streak ending at last year is
+#: still bounded by data rather than by the edge of the query.
+HOLD_DIVIDEND_YEARS = 11
+
+
+def _hold_snapshot(db: Session, sid: str, info) -> tuple[HoldFeatures, ChenRuleResult]:
+    """Everything the 存股 lane needs, built once and shared by both routes.
+
+    Built here rather than inside each service so the free checklist and the
+    metered verdict are provably reading the same numbers: a model asked about
+    a yield the card never showed would make the two panels an argument about
+    data rather than a comparison of methods.
+
+    **Cache-only, by construction.** This snapshot wants two years of bars and
+    eleven years of dividend reports -- far more upstream work than any other
+    single-stock route -- and it backs a card on a page anyone can open. Left
+    lazy, one visitor to a cold stock would queue tens of exchange calls on the
+    limiter the realtime poll shares, which is the same trap the watchlist
+    batch routes are cache-only to avoid.
+
+    What fills the stores instead: `dividend_board_warmup` for the board-wide
+    payout archive, and the stock page's own history and dividend requests,
+    which the client waits for before asking for this. A stock nobody has
+    opened scores on what is there and says what it could not check.
+    """
+    buckets = history_service.month_range(HOLD_MONTHS)
+    start = datetime.date(buckets[0][0], buckets[0][1], 1)
+    rows = history_service.read_prices(db, sid, start)
+    events, coverage, observed = dividend_service.read_events(
+        db, sid, HOLD_DIVIDEND_YEARS
+    )
+    annual = fundamentals_service.read(db, sid, hold_features.WINDOW_YEARS)
+
+    features = hold_features.extract(
+        sid=sid,
+        name=info.name,
+        industry=info.group,
+        prices=rows,
+        dividends=events,
+        coverage=coverage,
+        observed_dividend_years=observed,
+        fundamentals=annual,
+    )
+    return features, chen_rules.evaluate(features)
+
+
+@router.get("/{sid}/analysis/chen", response_model=ChenAnalysisResponse)
+def get_chen_analysis(
+    sid: str,
+    db: Session = Depends(get_db),
+) -> ChenAnalysisResponse:
+    """The 存股 checklist: five dimensions, a score, and what could not be checked.
+
+    Free and a GET, like `/analysis/traditional` and for the same reason -- it
+    is arithmetic over rows, and the panel it backs sits on a page anyone can
+    open. It is the deterministic half of the hold lane; `/analysis/ai-hold`
+    below is the half that costs money.
+
+    Unmetered, and it takes no `user`, because `_hold_snapshot` never calls the
+    exchange: there is no upstream budget for an anonymous window to protect.
+    Capping it would have been worse than pointless -- the snapshot reads a
+    fixed two-year window, which is wider than ANONYMOUS_MAX_MONTHS, so every
+    signed-out reader would have been refused outright.
+    """
+    info = codes_service.get_stock(sid)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")
+
+    features, rules = _hold_snapshot(db, sid, info)
+    return ChenAnalysisResponse(
+        sid=sid, name=info.name, as_of=features.as_of, features=features, rules=rules
+    )
+
+
+@router.post("/{sid}/analysis/ai-hold", response_model=AiHoldAnalysisResponse)
+def generate_hold_analysis(
+    sid: str,
+    response: Response,
+    locale: str = Query(
+        hold_ai_service.DEFAULT_LOCALE, description="判讀要用哪個語言生成（zh-TW / en）"
+    ),
+    regenerate: bool = Depends(deps.regenerate_ai),
+    user: AppUser = Depends(deps.get_current_user),
+    db: Session = Depends(get_db),
+) -> AiHoldAnalysisResponse:
+    """A 存股 verdict for one company: is this worth accumulating and holding.
+
+    POST, signed-in and cached on the trading day, exactly like `/analysis/ai`
+    -- and drawing on the *same* daily allowance rather than a second one, so
+    shipping this lane did not double what an account can spend.
+    """
+    if not hold_gemini.is_configured():
+        raise HTTPException(
+            status_code=503, detail="AI analysis is not configured on this server"
+        )
+
+    info = codes_service.get_stock(sid)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")
+
+    features, rules = _hold_snapshot(db, sid, info)
+
+    try:
+        result = hold_ai_service.get_or_create(
+            db,
+            features=features,
+            rules=rules,
+            user=user,
+            locale=locale,
+            force=regenerate,
+        )
+    except hold_ai_service.InsufficientData as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ai_service.QuotaExceeded as exc:
+        wait = exc.status.resets_at - datetime.datetime.now(datetime.timezone.utc)
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(max(1, math.ceil(wait.total_seconds())))},
+        ) from exc
+    except hold_gemini.AiUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except hold_gemini.AiFailed as exc:
+        # 502: this service worked, its upstream did not.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 # --- Backtest ----------------------------------------------------------------

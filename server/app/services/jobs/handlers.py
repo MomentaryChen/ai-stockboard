@@ -17,9 +17,15 @@ from app.services import auth as auth_service
 from app.services import backtest_store
 from app.services import chip as chip_service
 from app.services import code_sync
+from app.services import dividend as dividend_service
 from app.services.jobs.registry import JobContext, JobResult
 
 logger = logging.getLogger(__name__)
+
+#: Calendar years of TWSE dividend history the warmup keeps. One more than
+#: `hold_features.WINDOW_YEARS` so a ten-year payout streak is bounded by the
+#: company's record rather than by the edge of what was fetched.
+DIVIDEND_WARMUP_YEARS = 11
 
 
 def stock_code_sync(context: JobContext) -> JobResult:
@@ -81,6 +87,28 @@ def chip_refresh(context: JobContext) -> JobResult:
     return JobResult(status=status, message=message, stats=stats)
 
 
+def dividend_board_warmup(context: JobContext) -> JobResult:
+    """Pull the board-wide dividend archive so the 存股 lane is not lazy-only.
+
+    One TWSE request covers every listed name for a calendar year, so warming
+    the last decade here is a handful of calls that spares the first visitor to
+    each cold stock the same work on the shared limiter -- and spares a
+    board-level screen from queueing it per row.
+
+    `skipped` means every bucket was already stamped fresh: past years are
+    immutable and never re-fetched, so on any day after the first run of the
+    year only the current year and the TPEX window can have anything to do.
+    """
+    stats = dividend_service.warm_board(
+        context.db, years=DIVIDEND_WARMUP_YEARS, force=context.force
+    )
+    if stats["fetched"]:
+        status, message = "success", None
+    else:
+        status, message = "skipped", "Every dividend bucket is current"
+    return JobResult(status=status, message=message, stats=stats)
+
+
 def refresh_token_cleanup(context: JobContext) -> JobResult:
     """Delete refresh tokens that can no longer be used for anything.
 
@@ -88,10 +116,19 @@ def refresh_token_cleanup(context: JobContext) -> JobResult:
     `auth_service.REVOKED_RETENTION_DAYS` so replaying a rotated token still
     matches a row and trips reuse detection instead of looking like a token we
     never issued. Only rows past that window are removed here.
+
+    Deleting nothing is a `success`, which is where this handler parts company
+    with the three above: they skip because they decided the work was not worth
+    doing yet, while this one has no such short circuit -- it always runs the
+    sweep, and a count of zero means the table was already clean, i.e. the job
+    finished its work. Calling that `skipped` froze `last_success_at` (see
+    `jobs/store.py`, which counts successes only) on any instance quiet enough
+    to expire no tokens between runs, so the console's staleness rule -- two
+    missed cycles -- flagged a job that had in fact run correctly every night.
     """
     deleted = auth_service.purge_dead_refresh_tokens(context.db)
     return JobResult(
-        status="success" if deleted else "skipped",
-        message=None if deleted else "No expired tokens to clear",
+        status="success",
+        message=None if deleted else "No dead tokens to clear",
         stats={"deleted": deleted},
     )
