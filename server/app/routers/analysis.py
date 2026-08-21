@@ -11,7 +11,9 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app import deps
 from app.db import get_db
+from app.models import AppUser
 from app.schemas import (
     BestFourPointResult,
     TraditionalAnalysisBatchResponse,
@@ -75,8 +77,14 @@ def get_traditional_analysis(
     sid: str,
     months: int = Query(6, ge=1, le=24),
     rule_set: RuleSetParam = traditional.DEFAULT_RULE_SET,
+    user: AppUser | None = Depends(deps.get_optional_user),
     db: Session = Depends(get_db),
 ) -> TraditionalAnalysisResponse:
+    # `_load_stock` backfills through the exchange, so this route spends the
+    # same TWSE budget `/history` does and is metered the same way. The batch
+    # sibling below needs no such check: it is cache-only by construction.
+    deps.limit_anonymous_window(user, months, deps.ANONYMOUS_MAX_MONTHS, "months")
+
     info, stock, error = _load_stock(db, sid, months)
     if info is None or stock is None:
         raise HTTPException(status_code=404, detail=error)

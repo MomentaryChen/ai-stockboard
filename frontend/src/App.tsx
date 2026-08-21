@@ -5,6 +5,7 @@ import PasswordGate from './components/PasswordGate'
 import RequireAuth from './components/RequireAuth'
 import UserMenu from './components/UserMenu'
 import { useI18n } from './i18n'
+import { useMiniView } from './utils/view'
 import AdminDashboard from './pages/AdminDashboard'
 import AdminJobDetail from './pages/AdminJobDetail'
 import AdminJobs from './pages/AdminJobs'
@@ -21,10 +22,14 @@ export default function App() {
   const { pathname } = useLocation()
   const { status } = useAuth()
   const { t } = useI18n()
+  // `?view=mini` turns a page into a widget: no topbar, no page padding, no
+  // max-width. It exists so /realtime can be opened in a 400px window and
+  // parked beside real work, where every row of chrome costs a stock.
+  const mini = useMiniView()
 
   return (
-    <div className="app">
-      <header className="topbar">
+    <div className={`app${mini ? ' app-mini' : ''}`}>
+      <header className="topbar" hidden={mini}>
         <div className="brand">
           <span>ai</span>
           {t('app.brandSuffix')}
@@ -55,7 +60,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="main">
+      <main className={`main${mini ? ' main-mini' : ''}`}>
         {/* Outside <Routes> so it covers the public market views too: an
             account holding an ADMIN-generated password has nothing it may do
             until it picks its own. */}

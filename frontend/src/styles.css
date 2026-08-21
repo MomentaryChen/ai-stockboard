@@ -101,7 +101,9 @@ body {
 .wrap { flex-wrap: wrap; }
 
 /* ---------- search ---------- */
-.search { position: relative; flex: 1; max-width: 420px; }
+/* min-width, so a crowded toolbar wraps this onto its own line rather than
+   shrinking it to a stub nobody can type a stock code into. */
+.search { position: relative; flex: 1; min-width: 220px; max-width: 420px; }
 
 .search input,
 .text-input {
@@ -397,6 +399,249 @@ table.data th {
 table.data td { border-bottom: 1px solid rgba(38, 45, 61, 0.5); }
 table.data th:first-child, table.data td:first-child { text-align: left; }
 table.data tbody tr:hover { background: var(--bg-input); }
+
+/* ---------- watchlist board (dense list) ---------- */
+
+/* The board is sized by its *container*, not by the viewport: the same markup
+   renders in the page, in a 400px popup and in a floating picture-in-picture
+   window, and only the first of those has anything to do with screen width. */
+.watch-board {
+  container-type: inline-size;
+  container-name: board;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+/* Fixed layout, not auto: the numeric columns must not resize when a price
+   gains a digit (a board that reflows on every tick is unreadable), and the
+   name's ellipsis needs a column width that does not depend on its content. */
+.quote-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.quote-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 7px 10px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+.quote-table thead th.col-sym { text-align: left; }
+
+.th-sort {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.th-sort:hover { color: var(--text); }
+.th-sort.active { color: var(--accent); }
+.sort-caret { margin-left: 4px; font-size: 9px; }
+
+/* One line per stock. The height is the whole point of the view -- twenty rows
+   fit where four cards used to -- so nothing in a row may wrap. */
+.quote-row > td {
+  padding: 0 10px;
+  height: 34px;
+  border-bottom: 1px solid rgba(38, 45, 61, 0.5);
+  white-space: nowrap;
+}
+.quote-row:hover > td { background: var(--bg-input); }
+.quote-row.expanded > td { background: var(--bg-input); }
+/* The rail marks the row, so it goes on the first cell only -- on every cell it
+   draws a line down each column border instead. */
+.quote-row.expanded > td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+
+.col-toggle { width: 26px; padding-left: 6px !important; }
+.col-toggle .toggle { color: var(--text-dim); font-size: 11px; }
+.col-toggle .toggle:hover { color: var(--text); background: none; }
+
+/* No width of its own: under table-layout: fixed it absorbs whatever the
+   numeric columns leave, which is what the name's ellipsis measures against. */
+.col-sym { text-align: left; }
+.sym-link {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+.sym-link:hover .sym-name { color: var(--text); }
+.sym-code { font-weight: 700; }
+.sym-name {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.col-num { text-align: right; }
+.col-price { width: 92px; font-weight: 600; font-size: 15px; }
+.col-change { width: 84px; }
+.col-vol { width: 92px; color: var(--text-muted); }
+
+/* The change bar is the only channel peripheral vision can read across twenty
+   rows; the percentage sits on top of it for the eye that has already stopped
+   here. Scaled against BAR_FULL_PCT in QuoteRow.tsx -- keep the two in step. */
+.col-pct { width: 132px; }
+.pct-cell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.change-pct { font-weight: 600; }
+/* The track is always drawn, so an unmoved stock reads as "flat" rather than
+   as "no data" -- and so every bar in the column starts from the same edge. */
+.change-track {
+  position: relative;
+  flex: none;
+  width: 54px;
+  height: 10px;
+  border-radius: 3px;
+  background: rgba(139, 147, 167, 0.14);
+  overflow: hidden;
+}
+.change-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  transition: width 0.35s ease-out;
+}
+.bar-up { background: var(--up); }
+.bar-down { background: var(--down); }
+.bar-flat { background: var(--flat); opacity: 0.5; }
+
+.col-signal { width: 92px; text-align: right; }
+.sig-cell { display: inline-flex; align-items: center; gap: 6px; }
+.sig-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background: var(--text-dim);
+}
+.sig-buy { background: var(--up); }
+.sig-sell { background: var(--down); }
+.sig-hold { background: var(--border-strong); }
+.sig-none { background: var(--border); }
+.sig-label { font-size: 12px; color: var(--text-muted); }
+
+.col-actions { width: 32px; text-align: right; padding-right: 6px !important; }
+/* Removing a stock is destructive and must not be the thing a stray click on a
+   busy board finds first -- it appears on hover, like a mail client's delete. */
+.col-actions .remove { opacity: 0; transition: opacity 0.15s; }
+.quote-row:hover .col-actions .remove,
+.col-actions .remove:focus-visible { opacity: 1; }
+
+.quote-detail-row > td { padding: 0; border-bottom: 1px solid var(--border); }
+.quote-detail {
+  padding: 14px 16px 16px 42px;
+  background: var(--bg);
+}
+.quote-detail .quote-bfp { margin-top: 0; margin-bottom: 12px; }
+/* Capped, because these are paired readings: stretched across a wide board a
+   五檔 price ends up a hand's width from its own volume. */
+.quote-detail .stat-grid { max-width: 760px; }
+.quote-detail .depth { max-width: 460px; }
+
+/* A tick, made visible. Without it a ten-second refresh is a digit quietly
+   swapping itself out, which nobody notices unless they were already looking
+   at that row -- see usePriceFlash. */
+@keyframes flash-up {
+  from { background-color: rgba(240, 70, 74, 0.35); }
+  to { background-color: transparent; }
+}
+@keyframes flash-down {
+  from { background-color: rgba(34, 181, 115, 0.35); }
+  to { background-color: transparent; }
+}
+.flash-up { animation: flash-up 0.7s ease-out; }
+.flash-down { animation: flash-down 0.7s ease-out; }
+
+/* Someone who has asked the OS to stop animating things did not mean "stop
+   telling me the price changed", so the colour still lands -- it just does not
+   fade. */
+@media (prefers-reduced-motion: reduce) {
+  .flash-up, .flash-down { animation-duration: 0.01ms; }
+  .flash-up { background-color: rgba(240, 70, 74, 0.22); }
+  .flash-down { background-color: rgba(34, 181, 115, 0.22); }
+  .change-bar { transition: none; }
+}
+
+/* Narrow boards drop columns in order of what a glance can spare: the volume
+   first, then the signal's wording, then the absolute change, then the name.
+   The last stop still answers "what is it, what is it worth, is it moving". */
+@container board (max-width: 760px) {
+  .col-vol, .quote-table thead th.col-vol { display: none; }
+  .sig-label { display: none; }
+  /* Wide enough for the header word in either language even though only a dot
+     is left below it -- a clipped 訊/Sig reads as a rendering fault. */
+  .col-signal, .quote-table thead th.col-signal { width: 62px; }
+}
+@container board (max-width: 480px) {
+  .col-change, .quote-table thead th.col-change { display: none; }
+  .quote-detail { padding-left: 16px; }
+}
+/* Below this the name would be two characters and an ellipsis, which is worse
+   than no name at all -- the code is the identifier people actually read. */
+@container board (max-width: 420px) {
+  .sym-name { display: none; }
+  .col-price { width: 78px; }
+  .col-pct { width: 108px; }
+  .change-track { width: 40px; }
+}
+
+/* ---------- mini / floating window ---------- */
+
+/* `hidden` alone loses to .topbar's `display: flex`. */
+.topbar[hidden] { display: none; }
+
+.main-mini { padding: 8px; max-width: none; }
+.app-mini { min-height: 100vh; background: var(--bg); }
+
+.mini-stack { gap: 8px; }
+.mini-bar { padding: 0 2px; }
+.mini-full-link { text-decoration: none; }
+.mini-full-link:hover { color: var(--text); }
+
+/* The board inside a small window: shorter rows, no card chrome around it, and
+   the header stays put while the rows scroll. */
+.watch-board.compact { border: 0; border-radius: 0; background: transparent; }
+.watch-board.compact .quote-row > td { height: 28px; padding: 0 6px; }
+.watch-board.compact .quote-table thead th { padding: 5px 6px; background: var(--bg); }
+.watch-board.compact .col-price { font-size: 14px; }
+/* No hover on a window you are not pointing at, so the remove button would be
+   unreachable there. */
+.watch-board.compact .col-actions .remove { opacity: 0.5; }
+
+/* The picture-in-picture document has no #root and no page chrome of its own. */
+.pip-body {
+  margin: 0;
+  padding: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+.pip-root { min-height: 0; }
 
 /* ---------- realtime board ---------- */
 .quote-grid {

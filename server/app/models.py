@@ -298,8 +298,11 @@ class DividendFetchLog(Base):
 
 
 # Role names are a closed set, but stay a plain String column guarded by a check
-# constraint: `create_all` can create a native PG enum but can never ALTER TYPE
-# it afterwards, and this project has no migration tool.
+# constraint. A native PG enum would need an ALTER TYPE migration to gain a
+# value, and ALTER TYPE ... ADD VALUE cannot run inside a transaction block --
+# so the one change this column is ever likely to want would be the one kind of
+# migration that cannot be applied atomically at startup. Editing a check
+# constraint can.
 ROLE_ADMIN = "ADMIN"
 ROLE_USER = "USER"
 ROLES = (ROLE_ADMIN, ROLE_USER)
@@ -321,9 +324,9 @@ class AppUser(Base):
     email: Mapped[str] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(32))
 
-    # bcrypt produces 60 chars; the extra room is because create_all never
-    # migrates an existing table, so changing algorithm later would need manual
-    # SQL if this were sized exactly.
+    # bcrypt produces 60 chars. The extra room means switching algorithm is a
+    # code change rather than a code change plus a migration that rewrites every
+    # row of the table while people are trying to sign in.
     password_hash: Mapped[str] = mapped_column(String(255))
 
     role: Mapped[str] = mapped_column(String(16), default=ROLE_USER, server_default=ROLE_USER)

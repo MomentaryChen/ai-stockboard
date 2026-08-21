@@ -23,9 +23,13 @@ Everything takes `get_current_user`. Exactly two routes take the bare one, and
 they are the two that let a user out of that state: `GET /api/auth/me`, so the
 client can discover *why* it is blocked, and `POST /api/auth/me/password`, so it
 can stop being blocked. Adding a third is almost certainly a mistake.
+
+`get_optional_user` is the odd one out: it answers `None` instead of 401ing, and
+exists for the public market-data routes, which serve anonymous callers but hand
+a signed-in one a wider upstream budget. See the fetch-budget section below.
 """
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -117,3 +121,84 @@ def require_role(*roles: str):
 
 
 require_admin = require_role(ROLE_ADMIN)
+
+
+# --- upstream fetch budget -------------------------------------------------
+#
+# TWSE allows this service 3 requests per 5 seconds, from one source IP, shared
+# by every caller. The routes below are public because they answer out of the
+# PostgreSQL cache -- but a cache miss still reaches the exchange, so a public
+# route can spend a budget the whole board depends on. `/api/realtime` is behind
+# a sign-in for exactly this reason; what follows stops the cached routes from
+# being a way around that.
+
+#: Months of daily bars an anonymous caller may ask us to backfill at once, and
+#: the widest range the public chart offers (frontend/src/pages/StockDetail.tsx).
+#: A signed-in caller keeps the full 24, because the spend is attributable.
+ANONYMOUS_MAX_MONTHS = 12
+
+#: Same idea for ex-dividend years. Each year is its own upstream report.
+ANONYMOUS_MAX_YEARS = 5
+
+
+def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> AppUser | None:
+    """The caller, when there is one. Does not 401 on a *missing* token.
+
+    A token that is present but bad still 401s, so a session expiring mid-poll
+    reaches the frontend's refresh interceptor instead of silently demoting the
+    user to the anonymous tier and halving their chart range.
+    """
+    if credentials is None:
+        return None
+    return get_current_user(get_authenticated_user(credentials, db))
+
+
+def force_refresh(
+    force: bool = Query(False, description="忽略快取，強制向 TWSE/TPEX 重抓（需 ADMIN）"),
+    user: AppUser | None = Depends(get_optional_user),
+) -> bool:
+    """Owns the `force` query parameter, and refuses it to non-ADMINs.
+
+    `force` skips every cache check, so one request re-fetches every bucket in
+    its range and the next identical request does it again -- the one knob on a
+    public route that an attacker can pull without limit. Twenty-four months of
+    it is ~44 seconds of the service's entire TWSE allowance, spent by someone
+    who never signed in, while `/api/realtime` politely queues behind it.
+
+    Declared as a dependency rather than repeated on each route so the rule
+    cannot drift between `/history` and `/dividends`, and so a new route that
+    wants a force switch gets the check by taking this instead of a bare bool.
+    """
+    if not force:
+        return False
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Sign in as ADMIN to force a refresh",
+            headers=_UNAUTHENTICATED,
+        )
+    if user.role != ROLE_ADMIN:
+        raise HTTPException(
+            status_code=403, detail="Only an ADMIN may force a refresh"
+        )
+    return True
+
+
+def limit_anonymous_window(
+    user: AppUser | None, requested: int, anonymous_max: int, unit: str
+) -> None:
+    """Reject a range wider than an anonymous caller is allowed to spend.
+
+    Refused rather than silently clamped: the response reports the range it
+    answered for, and quietly returning half of it would make the chart look
+    like the exchange has no older data.
+    """
+    if user is None and requested > anonymous_max:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Sign in to request more than {anonymous_max} {unit}",
+            headers=_UNAUTHENTICATED,
+        )
