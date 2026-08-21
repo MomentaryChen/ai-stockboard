@@ -14,6 +14,7 @@ import StockSearch from '../components/StockSearch'
 import VolumeChart from '../components/VolumeChart'
 import { POLL_MS, useLiveQuote } from '../hooks/useLiveQuote'
 import { useI18n, type MessageKey } from '../i18n'
+import { errorMessage } from '../utils/errors'
 import { direction, fmtCompact, fmtInt, fmtLots, fmtPrice, fmtSigned } from '../utils/format'
 
 const RANGES: Array<{ label: MessageKey; months: number }> = [
@@ -100,7 +101,7 @@ export default function StockDetail() {
 
       {error && (
         <div className="banner banner-error">
-          {t('error.loadFailed', { message: (error as Error).message })}
+          {t('error.loadFailed', { message: errorMessage(error, t) })}
           <br />
           <span className="dim">{t('error.dbHint')}</span>
         </div>

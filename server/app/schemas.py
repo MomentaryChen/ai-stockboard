@@ -127,7 +127,7 @@ class TraditionalAnalysisBatchResponse(BaseModel):
 
 
 class BacktestHorizonStats(BaseModel):
-    """How a signal type scored over one forward horizon."""
+    """How one signal type scored over one forward horizon."""
 
     horizon: int
     samples: int
@@ -144,8 +144,10 @@ class BacktestBaselineStats(BaseModel):
     """The same horizon over every judged day, signal or not.
 
     Read `BacktestHorizonStats.win_rate` against this and never against 50 %.
-    A rule that is right 55 % of the time in a window that rose 60 % of the
-    time is worse than doing nothing.
+    A rule that is right 55 % of the time, in a window where 58 % of all days
+    closed higher, lost to doing nothing -- and the win rate alone cannot say
+    so, which is why this ships in the same response rather than as something
+    the caller is trusted to look up.
     """
 
     horizon: int
@@ -157,11 +159,11 @@ class BacktestBaselineStats(BaseModel):
 
 
 class BacktestEdge(BaseModel):
-    """Signal minus baseline. <= 0 means the rule added nothing.
+    """Signal minus baseline. Zero or below means the rule added nothing.
 
-    Served precomputed because the sell side's arithmetic is not what a caller
+    Served precomputed because the sell side is not the arithmetic a caller
     guesses: a Sell competes with the days that *fell* (`1 - up_rate`), and its
-    excess return is the drop it avoided (baseline - signal).
+    excess return is the drop it avoided (baseline minus signal).
     """
 
     horizon: int
@@ -175,7 +177,7 @@ class BacktestSignalOut(BaseModel):
     """One historical verdict and what the price did after it.
 
     `forward` is keyed by horizon in trading days; a key is absent when the
-    window ended before that horizon did.
+    window ended before that horizon did. Absent means unknown, not zero.
     """
 
     date: datetime.date
@@ -197,9 +199,9 @@ class BacktestTradeOut(BaseModel):
 class BacktestEquityPoint(BaseModel):
     """Both curves on one point, indexed to 1.0 at the first judged bar.
 
-    Carried on shared points rather than as two series so the chart cannot
-    draw them over different date ranges, which is the one way an equity
-    comparison lies without looking wrong.
+    Carried on shared points rather than as two series so the chart cannot draw
+    them over different date ranges, which is the one way an equity comparison
+    lies without looking wrong.
     """
 
     date: datetime.date
@@ -224,22 +226,28 @@ class BacktestSimulationOut(BaseModel):
     buy_hold_max_drawdown: float
     open_entry_date: datetime.date | None
     open_entry_price: float | None
-    #: Fraction of judged days spent holding. A rule that is 80 % in cash can
-    #: only ever capture 20 % of a rally, however good its hit rate looks.
+    #: Fraction of judged days spent holding. A rule 80 % in cash can only ever
+    #: capture a fifth of a rally, however good its hit rate looks.
     exposure: float
     #: Null rather than 0 when nothing closed: "never won" and "never traded"
     #: are different answers and must not render the same.
     trade_win_rate: float | None
     average_holding_days: float | None
-    #: Daily mark-to-market of both curves. Empty in a batch summary, which
-    #: reports rates rather than drawing anything.
+    #: Daily mark-to-market of both curves. Carried only by the single-stock
+    #: response, which draws it; the batch reports rates and would ship a
+    #: megabyte of points to plot nothing.
     equity: list[BacktestEquityPoint] = []
 
 
 class BacktestResponse(BaseModel):
-    """Rule-based signal quality for one stock, replayed over cached bars.
+    """One stock's replay in full, served from `backtest_result`.
 
-    `cached` says whether this came out of `backtest_result` untouched or was
+    The batch sibling below answers the same question across a basket and
+    stops at the rates. This one carries the equity curve, the trade list and
+    the recent signals, because it backs a card someone is reading about one
+    company.
+
+    `cached` says whether this came out of the table untouched or was
     recomputed on the spot because the bars had moved past the stored row.
     Surfaced rather than hidden: a board that quietly serves last week's answer
     to "is this signal working" is worse than one that admits it is catching up.
@@ -261,7 +269,7 @@ class BacktestResponse(BaseModel):
     baseline: list[BacktestBaselineStats]
     edges: list[BacktestEdge]
     simulation: BacktestSimulationOut
-    signals: list[BacktestSignalOut]
+    signals: list[BacktestSignalOut]  # most recent first, capped
 
     computed_at: datetime.datetime
     computed_through: datetime.date
@@ -269,11 +277,12 @@ class BacktestResponse(BaseModel):
 
 
 class BacktestSummary(BaseModel):
-    """One stock inside a batch: the rates, without the per-signal list.
+    """One stock's scorecard: the rates, without the per-signal list.
 
     Everything is null and `note` explains why when the cache held too few
-    bars -- a stock the batch could not score must not silently vanish from a
-    pooled number that claims to cover it.
+    bars. A stock that could not be scored stays in `items` rather than
+    vanishing -- otherwise `pooled` reads as covering the whole basket when it
+    covered part of it.
     """
 
     sid: str
@@ -290,17 +299,20 @@ class BacktestSummary(BaseModel):
     edges: list[BacktestEdge]
     strategy_return: float | None
     buy_hold_return: float | None
+    #: Fraction of judged days spent holding. A rule 80 % in cash can only ever
+    #: capture a fifth of a rally, however good its hit rate looks.
     exposure: float | None
     trade_count: int
     note: str | None
 
 
 class BacktestPooledHorizon(BaseModel):
-    """The batch summed per horizon -- the readable number.
+    """The basket summed per horizon -- the only readable number here.
 
-    Per-stock rates over a year are a handful of samples each and swing twenty
-    points on one trade. `stocks` and the `*_samples` counts are part of the
-    answer, not decoration: a pooled rate over 30 signals is still noise.
+    A single stock's year fires a handful of signals, and a rate off a handful
+    swings twenty points on one trade. `stocks` and the `*_samples` counts are
+    part of the answer rather than decoration: a pooled rate over 30 signals is
+    still noise, and the caller needs to be able to see that.
     """
 
     horizon: int
@@ -322,10 +334,11 @@ class BacktestPooledHorizon(BaseModel):
 
 class BacktestBatchResponse(BaseModel):
     items: list[BacktestSummary]
-    #: Pooled over the stocks in `items` that had enough bars to score.
+    #: Pooled over the stocks in `items` that had enough bars to score. Empty
+    #: when none did.
     pooled: list[BacktestPooledHorizon]
-    #: Stocks that could not be scored at all (unknown code). Same contract as
-    #: the traditional batch: one bad sid does not drop the rest.
+    #: Codes that could not be resolved at all. Same contract as the
+    #: traditional batch: one bad sid does not drop the rest.
     errors: dict[str, str]
 
 

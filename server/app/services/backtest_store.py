@@ -195,12 +195,12 @@ def read(db: Session, sid: str, rule_set: str) -> BacktestResult | None:
     ).scalar_one_or_none()
 
 
-def simulation_of(row: BacktestResult, *, with_equity: bool = True) -> BacktestSimulationOut:
-    """The stored simulation. `with_equity=False` for batch callers.
+def _simulation_of(row: BacktestResult) -> BacktestSimulationOut:
+    """The stored simulation, curve included.
 
-    The curve is ~240 points per stock; a twenty-stock batch that carried them
-    all would ship a megabyte to draw nothing, because the batch reports rates
-    rather than plotting anything.
+    Only the single-stock response is built here; `/api/analysis/backtest`
+    scores its basket straight off the engine, so nothing needs a variant that
+    omits the ~240-point equity curve.
     """
     payload = row.payload or {}
     open_position = payload.get("open_position") or {}
@@ -220,23 +220,19 @@ def simulation_of(row: BacktestResult, *, with_equity: bool = True) -> BacktestS
         # traded" are different answers and must not render the same.
         trade_win_rate=(row.trade_wins / row.trades) if row.trades else None,
         average_holding_days=payload.get("average_holding_days"),
-        equity=(
-            [BacktestEquityPoint(**point) for point in payload.get("equity", [])]
-            if with_equity
-            else []
-        ),
+        equity=[BacktestEquityPoint(**point) for point in payload.get("equity", [])],
     )
 
 
-def horizons_of(row: BacktestResult, key: str) -> list[BacktestHorizonStats]:
+def _horizons_of(row: BacktestResult, key: str) -> list[BacktestHorizonStats]:
     return [BacktestHorizonStats(**h) for h in (row.payload or {}).get(key, [])]
 
 
-def baseline_of(row: BacktestResult) -> list[BacktestBaselineStats]:
+def _baseline_of(row: BacktestResult) -> list[BacktestBaselineStats]:
     return [BacktestBaselineStats(**b) for b in (row.payload or {}).get("baseline", [])]
 
 
-def edges_of(row: BacktestResult) -> list[BacktestEdge]:
+def _edges_of(row: BacktestResult) -> list[BacktestEdge]:
     return [BacktestEdge(**e) for e in (row.payload or {}).get("edges", [])]
 
 
@@ -253,11 +249,11 @@ def _to_response(row: BacktestResult, name: str, cached: bool) -> BacktestRespon
         bars=row.bars,
         judged_days=row.judged_days,
         signal_count=row.buy_signals + row.sell_signals,
-        buy_stats=horizons_of(row, "buy"),
-        sell_stats=horizons_of(row, "sell"),
-        baseline=baseline_of(row),
-        edges=edges_of(row),
-        simulation=simulation_of(row),
+        buy_stats=_horizons_of(row, "buy"),
+        sell_stats=_horizons_of(row, "sell"),
+        baseline=_baseline_of(row),
+        edges=_edges_of(row),
+        simulation=_simulation_of(row),
         signals=[
             BacktestSignalOut(**signal)
             for signal in payload.get("signals", [])[:MAX_SIGNALS_RETURNED]
@@ -307,100 +303,6 @@ def get_or_compute(
 
     return _to_response(compute(db, sid, rule_set), name, cached=False)
 
-
-def read_many(
-    db: Session, sids: list[str], rule_set: str
-) -> dict[str, BacktestResult]:
-    """Stored replays for many sids, one query. For the batch path."""
-    if not sids:
-        return {}
-    stmt = select(BacktestResult).where(
-        BacktestResult.sid.in_(sids), BacktestResult.rule_set == rule_set
-    )
-    return {row.sid: row for row in db.execute(stmt).scalars()}
-
-
-def _weighted(pairs: list[tuple[float | None, int]]) -> float | None:
-    """Mean of per-stock averages weighted by how many samples each rests on.
-
-    An unweighted mean would let a stock with three signals move the pooled
-    figure as much as one with eighty, which is precisely the distortion
-    pooling exists to remove.
-    """
-    usable = [(value, weight) for value, weight in pairs if value is not None and weight]
-    if not usable:
-        return None
-    total = sum(weight for _, weight in usable)
-    return sum(value * weight for value, weight in usable) / total if total else None
-
-
-def pool(rows: list[BacktestResult]) -> list[dict]:
-    """Sum the per-stock horizon stats into one readable set of rates.
-
-    Counts are summed and the rate recomputed from the totals -- not averaged
-    from per-stock rates, which would weight a three-signal stock like an
-    eighty-signal one. The sample counts travel with the rates because a pooled
-    figure over thirty signals is still noise, and the reader has to be able to
-    see that.
-    """
-    pooled = []
-    for horizon in backtest.HORIZONS:
-        buy = _pick(rows, "buy", horizon)
-        sell = _pick(rows, "sell", horizon)
-        base = _pick(rows, "baseline", horizon)
-
-        buy_samples = sum(s["samples"] for s in buy)
-        sell_samples = sum(s["samples"] for s in sell)
-        base_samples = sum(s["samples"] for s in base)
-
-        buy_rate = _rate(sum(s["wins"] for s in buy), buy_samples)
-        sell_rate = _rate(sum(s["wins"] for s in sell), sell_samples)
-        up_rate = _rate(sum(s.get("ups", 0) for s in base), base_samples)
-        down_rate = None if up_rate is None else 1.0 - up_rate
-
-        buy_avg = _weighted([(s["average_return"], s["samples"]) for s in buy])
-        sell_avg = _weighted([(s["average_return"], s["samples"]) for s in sell])
-        base_avg = _weighted([(s["average_return"], s["samples"]) for s in base])
-
-        pooled.append(
-            {
-                "horizon": horizon,
-                "stocks": len(rows),
-                "buy_samples": buy_samples,
-                "buy_win_rate": buy_rate,
-                "buy_average_return": buy_avg,
-                "sell_samples": sell_samples,
-                "sell_win_rate": sell_rate,
-                "sell_average_return": sell_avg,
-                "baseline_samples": base_samples,
-                "baseline_up_rate": up_rate,
-                "baseline_average_return": base_avg,
-                "buy_edge": _diff(buy_rate, up_rate),
-                "sell_edge": _diff(sell_rate, down_rate),
-                "buy_excess_return": _diff(buy_avg, base_avg),
-                # What getting out avoided, so the subtraction runs the other
-                # way -- the same trap `Edge` exists to keep callers out of.
-                "sell_excess_return": _diff(base_avg, sell_avg),
-            }
-        )
-    return pooled
-
-
-def _pick(rows: list[BacktestResult], key: str, horizon: int) -> list[dict]:
-    out = []
-    for row in rows:
-        for entry in (row.payload or {}).get(key, []):
-            if entry.get("horizon") == horizon:
-                out.append(entry)
-    return out
-
-
-def _rate(wins: int, samples: int) -> float | None:
-    return wins / samples if samples else None
-
-
-def _diff(left: float | None, right: float | None) -> float | None:
-    return None if left is None or right is None else left - right
 
 
 def backtestable_sids(db: Session) -> list[str]:

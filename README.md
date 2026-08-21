@@ -344,8 +344,8 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/stocks/{sid}/dividends?years=5` | 除權息. `years` 上限 10; 5 without a token, `force=true` is **ADMIN**, same reason |
 | GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點. Backfills like `/history`, so the same `months` cap applies |
 | GET | `/api/analysis/traditional?sids=2330,0050` | Batch 四大買賣點 from cached daily bars only (no TWSE fetch, max 20) |
-| GET | `/api/stocks/{sid}/analysis/backtest?rule_set=grs` | Signal backtest: how the four-point verdict actually performed over the trailing window. Cache-only, so no `months` and no fetch budget; 422 when too few bars are landed |
-| GET | `/api/analysis/backtest?sids=2330,0050` | The same for several stocks, **plus the pooled rates across them** (max 20) |
+| GET | `/api/stocks/{sid}/analysis/backtest?rule_set=grs` | One stock's replay, served from `backtest_result` and recomputed when its bars move. Carries the equity curve the card draws; fixed window, so no `months`. 422 when too few bars are landed |
+| GET | `/api/analysis/backtest?sids=2330,0050&months=12` | Replays 四大買賣點 over cached bars and scores it against the base rate of the same days — see [how good is the signal](#how-good-is-the-signal-actually). Cache-only, max 20 |
 | GET | `/api/realtime?sids=2330,0050` | 即時報價，最多 20 檔（**需登入**） |
 | GET | `/api/market/open?date=&sids=` | Opening intel for one trading day: gap and drift for the index plus up to 20 watchlist codes. Defaults to today in Taipei; cache-only apart from the index's own backfill |
 | GET | `/api/auth/registration-policy` | Whether signing up needs an ADMIN's approval. Public, read before the form renders |
@@ -448,50 +448,78 @@ twstock 版在兩萬組裡**沒有一次回傳 Don't touch**，而且與 grs 版
 
 ---
 
-## Signal backtest — was any of this worth following?
+## How good is the signal, actually?
 
-The board has always been able to say **Buy**. What it could not say is whether
-Buy has ever been worth acting on. Everything needed to answer that was already
-in `daily_price`, so the backtest adds no upstream traffic at all: it replays
-the rules day by day over bars we already hold.
+四大買賣點 reads three columns — volume, open, close — and compares the two most
+recent bars. There is no trend term, no position sizing, no institutional flow.
+That is a narrow view of a market by construction, so before the signal is used
+as a benchmark for anything else, it needs a number rather than a reputation.
 
-```bash
-curl 'http://localhost:8000/api/stocks/2330/analysis/backtest'
+`GET /api/analysis/backtest` produces one. It replays the exact function the
+stock page calls (`traditional.best_four_point`) over the bars already in
+`daily_price`, and reports what happened over the next 5 / 10 / 20 trading days.
+
+**The base rate is the point.** A hit rate on its own is unreadable: the reader
+has to supply a reference, and the one they supply is 50 %. It is almost never
+50 %. In a window where 58 % of all days closed higher 20 bars later, a Buy rule
+that is right 55 % of the time lost to owning the stock and ignoring the board.
+So every response carries `baseline` — the same horizons measured over *every*
+judged day, signal or not — beside the signal's own rates, and `edges` does the
+subtraction:
+
+```
+edges[].buy_edge   = buy win rate  - baseline up rate
+edges[].sell_edge  = sell win rate - baseline down rate   # not up rate
 ```
 
-The card sits under the Best Four Point verdict on both the stock page and the
-market board, and follows the rule-set switch on the card above it, so the
-corrected and the upstream rules can be graded side by side.
+The sell side is spelled out because it is the step that gets quietly wrong: a
+Sell is a get-out, so it competes with the days that *fell*, and its excess
+return is the drop it avoided (baseline minus signal, the other way round).
 
-### What it reports, and why each part is there
+**Pool before you conclude.** One stock's year fires a handful of signals, and a
+rate off a handful moves twenty points on a single trade. Passing several codes
+returns `pooled`, which sums wins and samples across the basket — sums, never an
+average of per-stock rates, so a stock with forty signals does not get the same
+vote as one with two. `pooled[].buy_edge` over a watchlist is the number that
+actually answers whether the rule beats doing nothing.
 
-**Signal hit rate.** For every historical Buy and Sell, what the price did over
-the next 5 / 10 / 20 trading days.
+Three things keep the replay honest, each pinned by a test in
+`server/tests/test_backtest.py` because a wrong backtest still returns tidy
+percentages and nothing downstream can tell:
 
-**A baseline, always next to it.** The same horizons measured over *every*
-judged day, signal or not. This is the part that makes the rest readable. A Buy
-that was right 25 % of the time sounds bad and a Sell right 55 % sounds fine —
-but in a window where 63 % of all days closed higher, the first is catastrophic
-and the second is worse than a coin. A published win rate without its base rate
-makes the reader supply an assumption they cannot check, and the assumption
-they supply is 50 %, which is almost never what the window did. The `edge`
-column does the subtraction for them.
-
-**A trade simulation.** Long-only: in on a Buy, out on a Sell, one position at
-a time, compared against having bought on the first day and done nothing.
-
-Three things keep it from flattering itself:
-
-- **No look-ahead.** A verdict comes off bar *i*'s close, so it cannot be
-  traded until bar *i+1* opens. Filling at the close that produced the signal
-  is the classic way to backtest a fantasy, and it is invisible in the output.
+- **No look-ahead.** A verdict is computed from bar `i`'s close, so it cannot be
+  traded until bar `i+1` opens. Every simulated order fills at the next open.
 - **Unfinished business stays unfinished.** A Buy four days before the window
-  ends has no 20-day outcome; it is counted as `pending` and left out of the
-  rate rather than scored on a partial result. A position still open at the end
-  is marked to market but is never a completed trade.
-- **The same engine.** Signals come from `traditional.best_four_point`, the
-  exact function the card above calls. A backtest of a reimplementation
-  measures the reimplementation.
+  ends has no 20-day outcome; it is counted as `pending` and kept out of the
+  rate rather than scored as though the horizon had elapsed. A position still
+  open at the end is reported separately from completed trades.
+- **The same engine.** Signals come from the function the card on the page
+  calls. A backtest of a reimplementation measures the reimplementation.
+
+A stock with too little history is listed with a `note` instead of being
+dropped, and contributes nothing to `pooled` — otherwise a pooled rate drawn
+from eleven stocks would present itself as covering the twenty that were asked
+for.
+
+The route is cache-only, like the traditional batch: twenty cold codes would
+otherwise queue tens of month-fetches on the limiter the realtime poll shares.
+Open a stock's page first to fill its bars.
+
+## The scorecard on the board
+
+[The section above](#how-good-is-the-signal-actually) is the engine and the API.
+This is what a reader sees, and where the numbers live between page loads.
+
+A **signal backtest card** sits under the Best Four Point verdict on the stock
+page and the market board, and follows the rule-set switch on the card above
+it, so the corrected and the upstream rules can be graded side by side. It adds
+two things to what the batch route reports:
+
+- an **equity curve** — following the signal against buying and holding, both
+  indexed to the first judged bar and drawn on shared points, so the two can
+  never be plotted over different ranges;
+- a **trade simulation** — completed round trips, win rate, average holding
+  period, and max drawdown for each curve.
 
 ### What it actually says
 
@@ -506,29 +534,26 @@ Uncomfortable things, mostly, which is the point of having built it:
 
 Three of four trades made money and the strategy still returned almost nothing,
 because it was in cash seven days out of eight. That is why exposure is a
-headline figure rather than a footnote: it is the number that reconciles a good
-hit rate with a bad result, and without it the two look contradictory.
+headline figure on the card rather than a footnote: it is the number that
+reconciles a good hit rate with a bad result, and without it the two look
+contradictory.
 
-The hit rates are worse news than the returns. Over the same window every buy
-horizon lands 37–43 percentage points *below* the baseline — the rule picked
-entries that did worse than picking days at random in a market that mostly
-went up.
+The hit rates are the worse news. Over the same window every buy horizon lands
+37–43 percentage points *below* the baseline — in a market that mostly went up,
+the rule picked entries that did worse than picking days at random.
 
-One stock over one year is a handful of signals per horizon, though, and a rate
-off four samples swings twenty points on a single trade. That is what
-`/api/analysis/backtest?sids=...` is for: it sums the counts across stocks
-before computing the rate, so the answer describes the *rule* rather than one
-company's year. The sample counts travel with every figure, because a pooled
-rate over thirty signals is still noise and the reader has to be able to see
-that.
+### Why this one is cached and the batch is not
 
-### Where the numbers live
-
-`backtest_result` holds one row per (stock, rule set) — headline figures as
+`backtest_result` holds one row per (stock, rule set): headline figures as
 columns so "where does this signal work" is an `ORDER BY`, the equity curve and
 signal list as JSONB because nothing queries into them.
 
-Every row is derived and can be rebuilt from `daily_price`, which is what makes
+The split follows from the window. The batch route takes a caller-chosen
+`months`, which cannot be cached and does not need to be — pooling is its
+point. The card is pinned to `BACKTEST_WINDOW_MONTHS` and backs a page anyone
+can load, so it has to be a lookup rather than a 240-day replay per view.
+
+Every row is derived and rebuildable from `daily_price`, which is what makes
 the arrangement safe:
 
 - the nightly **訊號回測預算** job is only a *warmer*, walking the stocks that
@@ -541,17 +566,20 @@ matters because the job can only ever know about stocks somebody has already
 looked at.
 
 Staleness is measured against the newest bar in `daily_price`, not against a
-clock: a stock that has not traded since the last run does not need
-recomputing however long ago that was, and one that has does, however recently
-the job happened to fire.
+clock: a stock that has not traded since the last run does not need recomputing
+however long ago that was, and one that has does, however recently the job
+happened to fire.
 
 ### The window is fixed, on purpose
 
-Twelve months (`BACKTEST_WINDOW_MONTHS`), not a range the caller picks. A
+Twelve months (`BACKTEST_WINDOW_MONTHS`), not a range the card offers. A
 one-month backtest produces two or three signals, and a win rate over three
 samples renders exactly as authoritatively as one over eighty. Offering the
 short window would mostly be offering a way to generate noise that looks like
 evidence.
+
+---
+
 
 ---
 
@@ -713,7 +741,7 @@ are all driven off that list.
 |---|---|---|
 | `stock_code_sync` | every 24 h (`STOCK_CODE_SYNC_INTERVAL_HOURS`), plus once at startup | reconciles `stock_code` with the exchanges' registry -- see above |
 | `refresh_token_cleanup` | daily at 04:10 | deletes expired refresh tokens, and revoked ones past their retention window |
-| `backtest_refresh` | daily at 05:20 | replays the four-point [signal backtest](#signal-backtest--was-any-of-this-worth-following) for every stock whose bars have moved. Reads only local rows -- it is a cache warmer, and the endpoint recomputes anything it missed |
+| `backtest_refresh` | daily at 05:20 | replays the four-point [signal backtest](#the-scorecard-on-the-board) for every stock whose bars have moved. Reads only local rows -- it is a cache warmer, and the endpoint recomputes anything it missed |
 
 Each attempt lands in `job_run`, whose `stats` column is JSONB rather than a set
 of columns: every job counts different things, and the admin table renders

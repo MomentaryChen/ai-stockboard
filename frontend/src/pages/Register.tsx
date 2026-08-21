@@ -5,6 +5,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
+import { errorMessage } from '../utils/errors'
 import {
   MIN_PASSWORD_LENGTH,
   passwordProblem,
@@ -172,7 +173,7 @@ export default function Register() {
 
           {submit.isError && (
             <div className="banner banner-error">
-              {t('register.failed', { message: (submit.error as Error).message })}
+              {t('register.failed', { message: errorMessage(submit.error, t) })}
             </div>
           )}
 
