@@ -81,6 +81,50 @@ def _int_list(values) -> list[int]:
     return [v for v in (_to_int(x) for x in values) if v is not None]
 
 
+# Last actual print (MIS `z` / `pz`) seen this session. The book is not stored
+# here -- that is a live quote, not a trade. Keyed by (code, YYYYMMDD) so a
+# Monday poll does not resurrect Friday's last tick as if it just printed.
+_last_prints: dict[tuple[str, str], float] = {}
+
+
+def _session_price(code: str, day: str, rt: dict, entry: dict) -> float | None:
+    """現價 for a MIS snapshot.
+
+    `z` is the print *in this 5-second snapshot*, not the last trade of the
+    session. Continuous matching (since 2020) means most snapshots have no
+    print, so `z` comes back as '-' and a naive float() is None -- which is
+    why the board showed '--' all morning while the book, open, high and
+    low were live.
+
+    Order of preference:
+      1. this snapshot's print (`z`)
+      2. the feed's previous print (`pz`)
+      3. the last print we ourselves observed today (the 10s poll catches
+         most of them even when this call's window is empty)
+      4. best bid, then best ask -- what TWSE's own 五檔 page falls back to
+         when you just need a number on the board
+    """
+    printed = _to_float(rt["latest_trade_price"]) or _to_float(entry.get("pz"))
+    if printed is not None:
+        stale = [key for key in _last_prints if key[1] != day]
+        for key in stale:
+            del _last_prints[key]
+        _last_prints[(code, day)] = printed
+        return printed
+
+    cached = _last_prints.get((code, day))
+    if cached is not None:
+        return cached
+
+    bids = _float_list(rt["best_bid_price"])
+    if bids:
+        return bids[0]
+    asks = _float_list(rt["best_ask_price"])
+    if asks:
+        return asks[0]
+    return None
+
+
 def _build_quote(entry: dict) -> RealtimeQuote:
     # Index payloads omit "nf" (full name) entirely and twstock's formatter
     # subscripts it directly, so fill the gap before handing the entry over.
@@ -88,7 +132,7 @@ def _build_quote(entry: dict) -> RealtimeQuote:
     info = formatted["info"]
     rt = formatted["realtime"]
 
-    last = _to_float(rt["latest_trade_price"])
+    last = _session_price(info["code"], str(entry.get("d") or ""), rt, entry)
     yesterday = _to_float(entry.get("y"))
 
     change = change_pct = None

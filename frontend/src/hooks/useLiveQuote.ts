@@ -21,6 +21,7 @@ import { api } from '../api/client'
 import type { RealtimeQuote } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { isMarketOpen } from '../utils/market'
+import { lastPrice } from '../utils/openIntel'
 
 export const POLL_MS = 10_000
 
@@ -87,15 +88,28 @@ export function useLiveQuote(sid: string, lastClose: ClosingBar | undefined): Li
 
   // Show the live number while the session runs, and also in the gap after
   // 13:30 before TWSE publishes the day's report -- until then `lastClose` is
-  // still yesterday.
+  // still yesterday. `lastPrice` is the snapshot print or the book: a raw
+  // `latest_trade_price != null` test would treat most live quotes as a close.
+  const last = quote ? lastPrice(quote) : null
   const quoteDay = quote?.time?.slice(0, 10) ?? null
   const intraday =
-    quote?.latest_trade_price != null &&
+    last != null &&
     (marketOpen || (quoteDay !== null && quoteDay > (lastClose?.date ?? '')))
 
+  const liveChange =
+    quote?.change ??
+    (last != null && quote?.yesterday_close
+      ? last - quote.yesterday_close
+      : null)
+  const liveChangePct =
+    quote?.change_percent ??
+    (liveChange != null && quote?.yesterday_close
+      ? (liveChange / quote.yesterday_close) * 100
+      : null)
+
   const changePct =
-    intraday && quote!.change_percent != null
-      ? quote!.change_percent
+    intraday && liveChangePct != null
+      ? liveChangePct
       : lastClose && lastClose.change !== null && lastClose.close - lastClose.change !== 0
         ? (lastClose.change / (lastClose.close - lastClose.change)) * 100
         : null
@@ -106,8 +120,8 @@ export function useLiveQuote(sid: string, lastClose: ClosingBar | undefined): Li
     locked,
     session: intraday ? 'open' : 'closed',
     intraday,
-    price: intraday ? quote!.latest_trade_price : (lastClose?.close ?? null),
-    change: intraday ? quote!.change : (lastClose?.change ?? null),
+    price: intraday ? last : (lastClose?.close ?? null),
+    change: intraday ? liveChange : (lastClose?.change ?? null),
     changePct,
     open: intraday ? quote!.open : (lastClose?.open ?? null),
     high: intraday ? quote!.high : (lastClose?.high ?? null),

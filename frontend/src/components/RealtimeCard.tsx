@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import type { BestFourPointResult, RealtimeQuote } from '../api/types'
 import { translateBfpLabel, translateBfpReason, useI18n } from '../i18n'
 import { direction, fmtInt, fmtPrice, fmtSigned } from '../utils/format'
+import { lastPrice } from '../utils/openIntel'
 
 interface Props {
   quote: RealtimeQuote
@@ -75,6 +76,7 @@ export function BfpChip({
 
 export default function RealtimeCard({ quote, onRemove, bfp, bfpLoading }: Props) {
   const { t } = useI18n()
+  const last = lastPrice(quote)
   const dir = direction(quote.change)
 
   return (
@@ -100,7 +102,7 @@ export default function RealtimeCard({ quote, onRemove, bfp, bfpLoading }: Props
       </div>
 
       <div className="row wrap" style={{ gap: 12, marginTop: 8 }}>
-        <span className={`price-now ${dir}`}>{fmtPrice(quote.latest_trade_price)}</span>
+        <span className={`price-now ${dir}`}>{fmtPrice(last)}</span>
         <span className={`price-change ${dir}`}>
           {fmtSigned(quote.change)}
           {quote.change_percent !== null ? ` (${fmtSigned(quote.change_percent)}%)` : ''}
