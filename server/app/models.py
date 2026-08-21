@@ -833,9 +833,10 @@ class AiHoldAnalysis(Base):
     responsible for knowing which half of the row applies to it.
 
     The key is the same shape for the same reason -- (sid, trading day, model,
-    prompt version, locale) identifies a verdict completely, so the second
-    reader of one pays nothing -- and `prompt_version` carries its own `hold-`
-    prefix so the two lanes can never collide in an evaluation that reads both.
+    prompt version, locale, depth) identifies a verdict completely, so the
+    second reader of one pays nothing -- and `prompt_version` carries its own
+    `hold-` prefix so the two lanes can never collide in an evaluation that
+    reads both.
 
     `rule_score` / `rule_suitability` record what the deterministic checklist
     said about the same snapshot. Storing them is what makes "does the model
@@ -853,6 +854,14 @@ class AiHoldAnalysis(Base):
     model: Mapped[str] = mapped_column(String(64))
     prompt_version: Mapped[str] = mapped_column(String(16))
     locale: Mapped[str] = mapped_column(String(8))
+
+    # How much the model was shown, same discriminator as `ai_analysis` and for
+    # the same reason. `quick` is the checklist's own snapshot -- payout record,
+    # annual aggregates, where the price sits in its range. `deep` adds the
+    # per-year earnings and payout series, the institutional flow, and where
+    # today's PE and yield sit against this stock's own stored history. Two
+    # answers about one company on one day, and the key has to keep both.
+    depth: Mapped[str] = mapped_column(String(8), default="quick", server_default="quick")
 
     suitability: Mapped[str] = mapped_column(String(8))  # strong / ok / weak / avoid
     confidence: Mapped[str] = mapped_column(String(8))  # high / medium / low
@@ -885,10 +894,14 @@ class AiHoldAnalysis(Base):
             "model",
             "prompt_version",
             "locale",
+            "depth",
             unique=True,
         ),
         # The shared daily quota counts this account's rows in both AI tables.
         Index("ix_ai_hold_analysis_requested_by_created", "requested_by", "created_at"),
+        CheckConstraint(
+            "depth in ('quick', 'deep')", name="ck_ai_hold_analysis_depth"
+        ),
         CheckConstraint(
             "suitability in ('strong', 'ok', 'weak', 'avoid')",
             name="ck_ai_hold_analysis_suitability",

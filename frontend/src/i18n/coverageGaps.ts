@@ -29,8 +29,14 @@ export const GAP_KEY: Record<string, MessageKey> = {
   no_dividend_history: 'gap.noDividends',
   no_daily_bars: 'gap.noBars',
 
-  // Institutional flow and margin. Deep AI lane only.
+  // Institutional flow and margin. Deep AI lanes only.
   no_chip_data: 'gap.noChipData',
   partial_chip_coverage: 'gap.partialChipCoverage',
   no_margin_data: 'gap.noMarginData',
+
+  // The stock's own valuation band. Deep 存股 lane only -- `valuation_day`
+  // starts filling on the day the deployment first ran the job, so a young
+  // install has a band measured in weeks and has to say so.
+  no_valuation_history: 'gap.noValuationHistory',
+  short_valuation_history: 'gap.shortValuationHistory',
 }

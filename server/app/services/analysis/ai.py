@@ -354,6 +354,7 @@ def get_cached(
     name: str,
     rows: list[DailyPrice],
     locale: str = DEFAULT_LOCALE,
+    depth: AiDepth | None = None,
 ) -> AiAnalysisResponse | None:
     """The stored verdict for these bars, or None. Never generates, never charges.
 
@@ -362,6 +363,14 @@ def get_cached(
     for: before this existed the only way to discover a cached row was to POST,
     so every reader was offered a button and a board that had already been
     judged looked unjudged until somebody clicked.
+
+    `depth` is the difference between "show me whatever has been paid for" and
+    "show me *this* answer". Omitted, the better-informed row wins (`_best`),
+    which is what a board wants. Named, the lookup is pinned to that depth and
+    a miss is a miss -- a reader who asked for the quick call must never be
+    handed the deep one wearing the quick one's label, because the two disagree
+    about what the model was allowed to see and a panel comparing them would be
+    comparing one answer with itself.
 
     Returns None for every kind of absence -- too few bars, no row for this
     trading day, a model or prompt the row predates. The caller cannot act on
@@ -375,20 +384,24 @@ def get_cached(
     if extracted is None:
         return None
 
-    # Both depths, best first -- see `_best`. Not `_find`, which pins a depth
-    # because it backs the metered path where one was explicitly asked for.
-    stored = list(
-        db.execute(
-            select(AiAnalysis).where(
-                AiAnalysis.sid == sid,
-                AiAnalysis.as_of == extracted.as_of,
-                AiAnalysis.model == model_settings.active_model(db),
-                AiAnalysis.prompt_version.in_(_live_prompt_versions()),
-                AiAnalysis.locale == locale,
-            )
-        ).scalars()
-    )
-    row = _best(stored)
+    model = model_settings.active_model(db)
+
+    if depth is not None:
+        row = _find(db, sid, extracted.as_of, locale, model, depth)
+    else:
+        # Both depths, best first -- see `_best`.
+        stored = list(
+            db.execute(
+                select(AiAnalysis).where(
+                    AiAnalysis.sid == sid,
+                    AiAnalysis.as_of == extracted.as_of,
+                    AiAnalysis.model == model,
+                    AiAnalysis.prompt_version.in_(_live_prompt_versions()),
+                    AiAnalysis.locale == locale,
+                )
+            ).scalars()
+        )
+        row = _best(stored)
     if row is None:
         return None
 

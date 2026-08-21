@@ -457,6 +457,60 @@ export interface AiHoldVerdict {
   agrees_with_rules: boolean | null
 }
 
+/** One calendar year of the record a deep 存股 verdict reads.
+ *
+ *  `cash_dividend` is keyed on the ex-date's year -- what a holder received and
+ *  when -- while `eps` and `roe_pct` are the fiscal year's. `payout_ratio_pct`
+ *  is the one place the two are put together, and is against the *previous*
+ *  year's earnings: Taiwan distributes a year's profit in the year after. */
+export interface HoldDeepYear {
+  year: number
+  eps: number | null
+  roe_pct: number | null
+  cash_dividend: number | null
+  payout_ratio_pct: number | null
+}
+
+export interface HoldDeepFundamentals {
+  /** Newest first. Years with neither earnings nor a payout are absent. */
+  years: HoldDeepYear[]
+  eps_down_years: number | null
+  eps_cagr_pct: number | null
+  avg_payout_ratio_pct: number | null
+  years_with_eps: number
+  years_with_dividend: number
+}
+
+/** Where today's figures sit against this stock's own stored sessions.
+ *
+ *  `days_covered` is read first: `valuation_day` fills one session a day from
+ *  the day the deployment started running the job, so a young install's "band"
+ *  is weeks. A short one is reported as a coverage gap rather than as a
+ *  percentile anybody should act on. */
+export interface HoldDeepValuation {
+  days_covered: number
+  first_date: string | null
+  last_date: string | null
+  pe_ratio: number | null
+  /** Share of stored sessions below today's figure, 0-100. Low is cheap for PE
+   *  and PB; for yield it is the other way round. */
+  pe_percentile: number | null
+  pb_ratio: number | null
+  pb_percentile: number | null
+  dividend_yield_pct: number | null
+  dividend_yield_percentile: number | null
+}
+
+/** What a deep 存股 verdict was shown beyond the checklist. Null on a quick one. */
+export interface HoldDeepInputs {
+  fundamentals: HoldDeepFundamentals
+  valuation: HoldDeepValuation
+  /** The same structure the technical deep lane sends, from one extractor. */
+  chip: DeepChipFeatures
+  /** Slugs, rendered from `GAP_KEY` -- shared with every other panel. */
+  coverage_gaps: string[]
+}
+
 export interface AiHoldAnalysisResponse {
   sid: string
   name: string
@@ -470,6 +524,9 @@ export interface AiHoldAnalysisResponse {
   verdict: AiHoldVerdict
   features: HoldFeatures
   rules: ChenRuleResult
+  depth: AiDepth
+  /** Present exactly when `depth` is "deep". */
+  deep: HoldDeepInputs | null
 }
 
 /** Live Gemini model and the env allowlist the admin picker may choose from. */

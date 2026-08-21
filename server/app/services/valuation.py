@@ -276,6 +276,25 @@ def refresh(db: Session, *, force: bool = False) -> dict[str, int]:
     return stats
 
 
+def read_recent(db: Session, sid: str, days: int) -> list[ValuationDay]:
+    """The newest `days` stored sessions for one stock, newest first. Never fetches.
+
+    The band half of Chen's 買得便宜: a PE means little on its own and a lot
+    against what this same company has traded at. Cache-only for the reason
+    `latest` is -- the daily job fills the whole market from one board-wide
+    report, so a thin history here means the job is young, not that this stock
+    is unusual, and the caller reports that as a coverage gap either way.
+    """
+    return list(
+        db.scalars(
+            select(ValuationDay)
+            .where(ValuationDay.sid == sid)
+            .order_by(ValuationDay.date.desc())
+            .limit(days)
+        )
+    )
+
+
 def latest(db: Session, sid: str) -> ValuationDay | None:
     """The newest stored session for one stock. Never fetches.
 

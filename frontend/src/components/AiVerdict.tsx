@@ -41,13 +41,21 @@
  * is what renders, rather than prose in the language the rest of the page has
  * just stopped speaking.
  *
- * Depth is deliberately *not* in that key, even though the server caches the
- * two depths as separate rows. The key holds "the verdict on display", and the
- * free read already answers with the better-informed of whatever has been paid
- * for -- so a page that lands on a stock somebody analysed deeply shows the
- * deep verdict without asking for it. Pressing a button then shows that
- * button's answer, which is the only behaviour a button may have; the resting
- * state after a reload is the best one again.
+ * Depth is in that key too, and it took a bug to get there. The server has
+ * always stored the quick and deep verdicts as separate rows; this panel kept
+ * both in one client slot and the metered route probed its cache without
+ * naming a depth, so whichever answer existed was handed to whichever button
+ * was pressed. Two controls, one answer, and no way to see the other -- which
+ * is the opposite of what a second lane is for.
+ *
+ * So there are three slots (see `aiVerdictKey`): the bare key for "whatever has
+ * been paid for", which is what a board reads and what a batching parent seeds,
+ * and one per depth for "this named answer". A page that lands on a stock
+ * somebody analysed deeply still shows the deep verdict without asking, because
+ * the bare read is what runs on mount. Choosing a lane pins it from then on,
+ * and costs nothing: the pinned read is the same cache-only endpoint with
+ * `depth` named, so an unpaid lane can say so instead of borrowing the other
+ * one's verdict.
  *
  * `batched` is for parents that fetch the whole basket themselves -- the card
  * board mounts a panel per row, and twenty single reads is the thing
@@ -57,6 +65,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 
 import { ApiError, api } from '../api/client'
 import type { AiAnalysisResponse, AiDepth, AiVerdict as Verdict } from '../api/types'
@@ -138,9 +147,17 @@ const WRAPPER_CLASS: Record<Layout, string> = {
 const VERDICT_STALE_MS = 60 * 60 * 1000
 
 /** The key both this panel and any batching parent write. Exported so a parent
- *  seeding the basket cannot drift from the panel reading it. */
-export function aiVerdictKey(sid: string, locale: string) {
-  return ['ai-verdict', sid, locale]
+ *  seeding the basket cannot drift from the panel reading it.
+ *
+ *  `depth` splits it into three slots, and the split is the point. The bare
+ *  key holds "whatever has been paid for, better answer first" -- what a board
+ *  read returns and what a batching parent seeds. The two depth keys hold one
+ *  named answer each, which is what a panel showing 價量 has to keep showing
+ *  even after somebody generates a 深度 verdict for the same day. One shared
+ *  slot is exactly the bug this split fixes: the deep answer landed in it and
+ *  the quick lane rendered it as its own. */
+export function aiVerdictKey(sid: string, locale: string, depth?: AiDepth) {
+  return depth ? ['ai-verdict', sid, locale, depth] : ['ai-verdict', sid, locale]
 }
 
 interface Props {
@@ -167,22 +184,48 @@ export default function AiVerdictSection({
 
   const cacheKey = aiVerdictKey(sid, locale)
 
+  // Which lane the reader is looking at, or null for "whichever was paid for".
+  // Null is the resting state rather than 'quick', because a page landing on a
+  // stock somebody analysed deeply should show that verdict without being
+  // asked -- the deep answer is strictly better informed and nobody is charged
+  // for reading it. Pressing either control pins the lane from then on.
+  const [lane, setLane] = useState<AiDepth | null>(null)
+
   // Free, and therefore allowed to run on mount -- see the top of the file.
   // `null` is a real answer here ("nobody has generated one"), so it is cached
   // like any other rather than retried as a miss.
   const stored = useQuery({
     queryKey: cacheKey,
     queryFn: () => api.getAiAnalysis(sid, locale),
-    enabled: status === 'authenticated' && !batched,
+    enabled: status === 'authenticated' && !batched && lane === null,
     staleTime: VERDICT_STALE_MS,
   })
 
-  const result = stored.data ?? null
+  // The pinned read. Also free -- it is the same cache-only endpoint with the
+  // depth named -- which is what makes moving between the two answers cost
+  // nothing and what lets an unpaid lane report itself as unpaid instead of
+  // borrowing the other one's verdict.
+  const picked = useQuery({
+    queryKey: aiVerdictKey(sid, locale, lane ?? 'quick'),
+    queryFn: () => api.getAiAnalysis(sid, locale, lane ?? 'quick'),
+    enabled: status === 'authenticated' && lane !== null,
+    staleTime: VERDICT_STALE_MS,
+  })
+
+  const active = lane === null ? stored : picked
+  const result = active.data ?? null
 
   // `isLoading`, not `isPending`: a disabled query stays pending forever, and a
   // batched panel would show a spinner that never resolves. Whether the basket
-  // is still coming is the parent's fact, so the parent states it.
-  const reading = batched ? Boolean(batchLoading) : stored.isLoading
+  // is still coming is the parent's fact, so the parent states it -- but only
+  // for the unpinned read it seeded; a pinned one is this panel's own request.
+  const reading =
+    lane === null ? (batched ? Boolean(batchLoading) : stored.isLoading) : picked.isLoading
+
+  // Which lane the controls describe. Before anything has loaded there is
+  // nothing better to claim than the cheap one; once a verdict is on screen the
+  // selector has to agree with the meta line under it.
+  const shownDepth: AiDepth = lane ?? result?.depth ?? 'quick'
 
   // One shared request for the whole page: react-query dedupes on the key, so
   // the number on screen is right whichever row is open.
@@ -197,17 +240,17 @@ export default function AiVerdictSection({
     mutationFn: (depth: AiDepth) => api.generateAiAnalysis(sid, locale, depth),
     onSuccess: (data) => {
       // The cache is the only copy, so this is the whole of "show the result".
-      queryClient.setQueryData(cacheKey, data)
+      setLane(data.depth)
+      queryClient.setQueryData(aiVerdictKey(sid, locale, data.depth), data)
+      // The unpinned slot means "the best answer available", so a deep verdict
+      // belongs in it and a quick one does not: writing a quick verdict there
+      // would make the next mount show the shallower of two paid-for answers.
+      if (data.depth === 'deep') queryClient.setQueryData(cacheKey, data)
       // Only a miss moves the counter, and the response is the only thing that
       // knows which it was -- so re-read rather than decrementing here.
       if (!data.cached) queryClient.invalidateQueries({ queryKey: ['ai-quota'] })
     },
   })
-
-  // Which button is spinning. `variables` is the depth the in-flight call was
-  // started with; it is undefined between runs, which is why the check is
-  // against isPending rather than against the value alone.
-  const pendingDepth = run.isPending ? run.variables : undefined
 
   const title = (
     <h2 className="card-title" style={{ margin: 0 }}>
@@ -263,11 +306,29 @@ export default function AiVerdictSection({
             <span className="dim ai-quota">{t('ai.quotaLeft', { left: String(left) })}</span>
           )}
           {(run.isPending || reading) && <span className="spinner" />}
-          {/* Two buttons rather than a depth toggle beside one. A toggle makes
-              the expensive call reachable by a control that looks like a view
-              setting, and on a watchlist row there is no space to explain the
-              difference before it is pressed. Two labelled buttons say what
-              each will do and cost. */}
+          {/* A selector, and then one button that acts on what is selected.
+              The previous shape was two buttons, on the reasoning that a toggle
+              makes an expensive call reachable by a control that looks like a
+              view setting. That reasoning survives; this control is not that
+              toggle. Switching lanes here spends nothing -- it re-reads a
+              cache-only endpoint -- and the metered click stays a labelled
+              button that names the lane it is about to pay for. What the two
+              buttons could not express is the thing that was actually wrong:
+              that these are two answers, only one of which is on screen. */}
+          <div className="segmented" role="group" aria-label={t('ai.depthSelect')}>
+            {(['quick', 'deep'] as const).map((depth) => (
+              <button
+                key={depth}
+                type="button"
+                className={`btn btn-sm ${shownDepth === depth ? 'active' : ''}`}
+                aria-pressed={shownDepth === depth}
+                disabled={run.isPending}
+                onClick={() => setLane(depth)}
+              >
+                {t(depth === 'deep' ? 'ai.depthDeep' : 'ai.depthQuick')}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             className={`btn btn-sm${result || exhausted ? '' : ' btn-primary'}`}
@@ -276,25 +337,13 @@ export default function AiVerdictSection({
             // "開始評估" over a verdict that is about to appear invites paying
             // for one that was already there.
             disabled={run.isPending || reading || (exhausted && !result)}
-            onClick={() => run.mutate('quick')}
+            onClick={() => run.mutate(shownDepth)}
           >
-            {pendingDepth === 'quick'
-              ? t('ai.running')
-              : result?.depth === 'quick'
-                ? t('ai.rerun')
-                : t('ai.run')}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm"
-            disabled={run.isPending || reading || (exhausted && !result)}
-            onClick={() => run.mutate('deep')}
-          >
-            {pendingDepth === 'deep'
-              ? t('ai.runningDeep')
-              : result?.depth === 'deep'
-                ? t('ai.rerunDeep')
-                : t('ai.runDeep')}
+            {run.isPending
+              ? t(shownDepth === 'deep' ? 'ai.runningDeep' : 'ai.running')
+              : result
+                ? t(shownDepth === 'deep' ? 'ai.rerunDeep' : 'ai.rerun')
+                : t(shownDepth === 'deep' ? 'ai.runDeep' : 'ai.run')}
           </button>
         </div>
       </div>
@@ -316,7 +365,7 @@ export default function AiVerdictSection({
       {!result && !run.isPending && !reading && !error && (
         <>
           <p className="dim ai-lead" style={{ marginBottom: 4 }}>
-            {t('ai.empty')}
+            {t(shownDepth === 'deep' ? 'ai.emptyDeep' : 'ai.empty')}
           </p>
           {/* Said before the button is pressed, not after: what the deep call
               reads is the thing worth knowing while choosing between them. */}
