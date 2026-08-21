@@ -85,6 +85,12 @@ def _get_dummy_hash() -> str:
     Without it, "no such user" returns far faster than "wrong password" and the
     login endpoint becomes an oracle for which accounts exist. Built lazily so
     the ~250ms bcrypt cost is not paid on every import.
+
+    Worth what it costs only because the number of guesses is bounded
+    elsewhere: `services/auth.attempt_login` locks an account after enough
+    consecutive failures, and `services/login_guard` limits attempts per source
+    address. Closing a timing side channel while allowing unlimited guessing
+    would be locking a window next to an open door.
     """
     global _dummy_hash
     if _dummy_hash is None:

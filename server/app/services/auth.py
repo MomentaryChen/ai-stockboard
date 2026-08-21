@@ -8,8 +8,16 @@ Refresh tokens are the opposite: opaque random strings whose SHA-256 digest is
 the only thing stored, rotated on every use, and revocable. Presenting a token
 that has already been rotated away is treated as a leak and drops every session
 the user has.
+
+Two things here guard the front door rather than the session behind it:
+`create_user` can land an account dormant for an ADMIN to approve, and
+`attempt_login` counts consecutive failures and locks the account for a while
+once there have been too many. The per-source-address half of that second
+defence is not here -- see services/login_guard.py, which explains why the two
+halves are stored differently.
 """
 
+import dataclasses
 import datetime
 import logging
 
@@ -75,6 +83,8 @@ def to_user_out(user: AppUser) -> UserOut:
         role=user.role,
         is_active=user.is_active,
         must_change_password=user.must_change_password,
+        pending_approval=user.pending_approval,
+        locked_until=user.locked_until,
         created_at=user.created_at,
     )
 
@@ -124,7 +134,16 @@ def create_user(
     password: str,
     phone: str | None = None,
     role: str = ROLE_USER,
+    pending_approval: bool = False,
 ) -> AppUser:
+    """Insert an account.
+
+    `pending_approval` is what self-service registration passes; it lands the
+    row dormant, to be activated by an ADMIN. Callers that already are an
+    admin -- the env seed, and anything added later that creates accounts on
+    an operator's behalf -- leave it false, because a review the operator would
+    be performing on themselves is theatre.
+    """
     username = username.strip()
     email = email.strip()
 
@@ -149,7 +168,11 @@ def create_user(
         phone=(phone or "").strip() or None,
         password_hash=security.hash_password(password),
         role=role,
-        is_active=True,
+        # A pending account is inactive as well as flagged, so every existing
+        # `is_active` check keeps it out without knowing this feature exists.
+        # The flag says *why* it is inactive; `is_active` is what enforces it.
+        is_active=not pending_approval,
+        pending_approval=pending_approval,
     )
     db.add(user)
     try:
@@ -171,6 +194,101 @@ def authenticate(db: Session, identifier: str, password: str) -> AppUser | None:
     stored = user.password_hash if user is not None else None
     if not security.verify_password(password, stored):
         return None
+    return user
+
+
+@dataclasses.dataclass(frozen=True)
+class LoginAttempt:
+    """What one sign-in attempt established. The router turns it into a status.
+
+    `user` is filled in even when the password was wrong, so the caller can see
+    which account was targeted -- but it must not leak that into the response:
+    "no such account" and "wrong password" have to stay indistinguishable.
+    """
+
+    user: AppUser | None
+    ok: bool
+    # Seconds until a locked account will answer again; 0 when it is not locked.
+    locked_for: int = 0
+
+
+def _lock_seconds_remaining(user: AppUser) -> int:
+    if user.locked_until is None:
+        return 0
+    remaining = (_as_utc(user.locked_until) - _now()).total_seconds()
+    return max(0, int(remaining) + 1) if remaining > 0 else 0
+
+
+def attempt_login(db: Session, identifier: str, password: str) -> LoginAttempt:
+    """Verify credentials and keep the per-account failure count up to date.
+
+    The lock is checked *before* the password, which does mean a locked account
+    answers faster than an unknown one. That leaks nothing: reaching the lock
+    takes `LOGIN_MAX_FAILURES` failed attempts against that exact account, so
+    whoever sees the 429 already knew the account was there. Verifying first
+    would be worse than useless -- it would let somebody who has since guessed
+    the password in, which is the one thing the lock exists to prevent.
+
+    A correct password clears the counter even when the account turns out to be
+    dormant. The counter is about credentials being guessed; whether the
+    account may then be used is a separate question the caller asks next.
+    """
+    user = find_by_identifier(db, identifier)
+
+    if user is not None:
+        locked_for = _lock_seconds_remaining(user)
+        if locked_for > 0:
+            return LoginAttempt(user=user, ok=False, locked_for=locked_for)
+
+    stored = user.password_hash if user is not None else None
+    if not security.verify_password(password, stored):
+        if user is not None:
+            _record_failed_login(db, user)
+        return LoginAttempt(user=user, ok=False)
+
+    assert user is not None  # a hash only verifies when a row supplied it
+    _clear_failed_logins(db, user)
+    return LoginAttempt(user=user, ok=True)
+
+
+def _record_failed_login(db: Session, user: AppUser) -> None:
+    """Count one miss, and lock the account once there have been enough.
+
+    This is a denial-of-service surface by construction: anybody who knows a
+    username can spend five wrong passwords to keep its owner out for the
+    lockout window. That trade is made knowingly -- the window is minutes
+    rather than permanent, an admin can lift it from /admin/users, and the
+    alternative (no account limit at all) means an unlimited password guessing
+    budget, which is the worse of the two.
+    """
+    user.failed_login_count = (user.failed_login_count or 0) + 1
+    if user.failed_login_count >= settings.login_max_failures:
+        user.locked_until = _now() + datetime.timedelta(
+            minutes=settings.login_lockout_minutes
+        )
+        # Counted from zero again, so the next lock needs another full run of
+        # failures rather than tripping on the first one after the window.
+        user.failed_login_count = 0
+        logger.warning(
+            "Locked user_id=%s for %s minutes after %s failed sign-ins",
+            user.id,
+            settings.login_lockout_minutes,
+            settings.login_max_failures,
+        )
+    db.commit()
+
+
+def _clear_failed_logins(db: Session, user: AppUser) -> None:
+    if user.failed_login_count == 0 and user.locked_until is None:
+        return  # the common case: no write on an ordinary sign-in
+    user.failed_login_count = 0
+    user.locked_until = None
+    db.commit()
+
+
+def unlock(db: Session, user: AppUser) -> AppUser:
+    """Lift a lockout by hand. Idempotent on an account that is not locked."""
+    _clear_failed_logins(db, user)
     return user
 
 
@@ -209,9 +327,15 @@ def update_profile(
 
 
 def list_users(
-    db: Session, q: str | None = None, limit: int = 50, offset: int = 0
+    db: Session,
+    q: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    pending_only: bool = False,
 ) -> tuple[int, list[AppUser]]:
     stmt = select(AppUser)
+    if pending_only:
+        stmt = stmt.where(AppUser.pending_approval.is_(True))
     if q:
         pattern = f"%{q.strip().lower()}%"
         stmt = stmt.where(
@@ -225,9 +349,24 @@ def list_users(
         select(func.count()).select_from(stmt.subquery())
     ).scalar_one()
     rows = db.execute(
-        stmt.order_by(AppUser.id).limit(limit).offset(offset)
+        # Accounts waiting for review come first, because they are the only
+        # rows on this page that need somebody to do something. Everything
+        # else keeps the stable id order it had.
+        stmt.order_by(AppUser.pending_approval.desc(), AppUser.id)
+        .limit(limit)
+        .offset(offset)
     ).scalars()
     return total, list(rows)
+
+
+def count_pending_approvals(db: Session) -> int:
+    """How many accounts are waiting for an ADMIN. Drives the dashboard tile."""
+    stmt = (
+        select(func.count())
+        .select_from(AppUser)
+        .where(AppUser.pending_approval.is_(True))
+    )
+    return db.execute(stmt).scalar_one()
 
 
 def _would_strand_the_system(db: Session, user: AppUser) -> bool:
@@ -253,6 +392,17 @@ def update_user(
         user.role = role
     if is_active is not None:
         user.is_active = is_active
+        # Activating *is* the approval -- there is no separate button, so the
+        # flag has to come down here or the account would stay in the review
+        # queue forever while being perfectly able to sign in.
+        if is_active:
+            user.pending_approval = False
+            # An account that has never signed in cannot have a lockout worth
+            # keeping, and an admin reaching for the activate button after a
+            # suspension means to hand the account back, not to hand it back
+            # with a timer still running on it.
+            user.failed_login_count = 0
+            user.locked_until = None
     db.commit()
 
     # A demoted or suspended account must not keep renewing its session.

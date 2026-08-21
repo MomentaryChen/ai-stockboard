@@ -409,6 +409,14 @@ class UserOut(BaseModel):
     # password. While set, the API allows only /api/auth/me and
     # /api/auth/me/password, and the UI keeps them on the change-password page.
     must_change_password: bool
+    # True between self-service registration and an ADMIN activating the
+    # account. Distinguishes "waiting to be let in" from "was let in and then
+    # suspended" -- both of which are is_active=False.
+    pending_approval: bool
+    # Set while the account is locked out after repeated failed sign-ins.
+    # Exposed so an admin can see why somebody cannot get in without reading
+    # the server log, and so the UI can offer to lift it.
+    locked_until: datetime.datetime | None
     created_at: datetime.datetime
 
 
@@ -417,6 +425,18 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     phone: str | None = None
+
+
+class RegistrationPolicy(BaseModel):
+    """What self-service registration currently does. Public.
+
+    The Register page has to know before it renders: under review, submitting
+    the form does not sign you in, and telling the user that only after they
+    have typed everything in is how you get a bug report about a broken signup.
+    """
+
+    open: bool  # False once the deployment stops accepting new accounts at all
+    requires_approval: bool
 
 
 class LoginRequest(BaseModel):
@@ -437,6 +457,20 @@ class TokenResponse(BaseModel):
     user: UserOut
 
 
+class RegisterResponse(BaseModel):
+    """The outcome of POST /api/auth/register, in one of two shapes.
+
+    `tokens` is present exactly when `pending` is false. Under review there is
+    deliberately nothing to hand back: the account exists but may not be used,
+    and issuing a token that every other route answers 403 to would only make
+    the client look signed in while nothing worked.
+    """
+
+    pending: bool
+    user: UserOut
+    tokens: TokenResponse | None = None
+
+
 class ProfileUpdateRequest(BaseModel):
     email: EmailStr | None = None
     phone: str | None = None
@@ -449,6 +483,9 @@ class PasswordChangeRequest(BaseModel):
 
 class UserListResponse(BaseModel):
     total: int
+    # How many accounts are waiting for approval *in total*, not in this page
+    # and not after the filter -- it is the badge the admin console shows.
+    pending_total: int = 0
     users: list[UserOut]
 
 

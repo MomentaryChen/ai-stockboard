@@ -5,13 +5,31 @@ pull in python-multipart and force a username/password form encoding, which
 fits neither the "帳號或 Email" field nor the JSON contract every other endpoint
 in this service uses. /docs still gets an Authorize button, from the HTTPBearer
 scheme declared in app/deps.py.
+
+Two gates sit on the unauthenticated routes here, and both exist because
+/api/realtime is signed-in only so that the upstream quota it spends has a name
+against it:
+
+  * registration is reviewed. A new account lands dormant and an ADMIN
+    activates it from /admin/users. Without that, "you must sign in" costs an
+    attacker ten seconds and the attribution is worth nothing.
+  * sign-in is throttled on two dimensions -- per account in the database, per
+    source address in memory. See services/login_guard.py for why the two
+    halves are stored differently and what each one does not cover.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db
-from app.deps import get_authenticated_user, get_current_user
+from app.deps import (
+    ACCOUNT_LOCKED,
+    ACCOUNT_PENDING_APPROVAL,
+    TOO_MANY_ATTEMPTS,
+    get_authenticated_user,
+    get_current_user,
+)
 from app.models import AppUser
 from app.schemas import (
     LoginRequest,
@@ -19,13 +37,30 @@ from app.schemas import (
     ProfileUpdateRequest,
     RefreshRequest,
     RegisterRequest,
+    RegisterResponse,
+    RegistrationPolicy,
     TokenResponse,
     UserOut,
 )
 from app.services import auth as auth_service
+from app.services import login_guard
 from app.services import watchlist as watchlist_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+settings = get_settings()
+
+
+def _too_many(detail: str, retry_after: int) -> HTTPException:
+    """429 with the wait attached.
+
+    Retry-After is the part the UI actually renders -- it is the difference
+    between "try again later" and "try again in 12 minutes", and the latter is
+    what stops a locked-out user from hammering the endpoint for the whole
+    window.
+    """
+    return HTTPException(
+        status_code=429, detail=detail, headers={"Retry-After": str(retry_after)}
+    )
 
 
 def _token_response(
@@ -39,8 +74,34 @@ def _token_response(
     )
 
 
-@router.post("/register", response_model=TokenResponse, status_code=201)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> TokenResponse:
+@router.get("/registration-policy", response_model=RegistrationPolicy)
+def registration_policy() -> RegistrationPolicy:
+    """What signing up will do. Unauthenticated by necessity -- the people who
+    need the answer are exactly the ones without an account."""
+    return RegistrationPolicy(
+        open=True, requires_approval=settings.registration_requires_approval
+    )
+
+
+@router.post("/register", response_model=RegisterResponse, status_code=201)
+def register(
+    payload: RegisterRequest, request: Request, db: Session = Depends(get_db)
+) -> RegisterResponse:
+    """Create an account, and sign in with it unless it needs reviewing.
+
+    201 either way: the row is created in both cases, and `pending` in the body
+    is what says whether it may be used yet. A 202 for the review path would
+    read better in isolation but would make the client branch on the status
+    code *and* the body, for one bit of information.
+    """
+    source = login_guard.client_ip(request)
+    retry_after = login_guard.registrations.retry_after(source)
+    if retry_after:
+        # Rate limited even though nothing has gone wrong yet: a script that
+        # can open accounts faster than an admin can review them turns the
+        # review queue itself into the denial of service.
+        raise _too_many("Too many accounts created from this address", retry_after)
+
     try:
         user = auth_service.create_user(
             db,
@@ -48,28 +109,70 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> TokenRe
             email=str(payload.email),
             password=payload.password,
             phone=payload.phone,
+            pending_approval=settings.registration_requires_approval,
         )
     except auth_service.DuplicateUserError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except auth_service.InvalidInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Counted after the insert, so a rejected duplicate or a too-short password
+    # does not spend somebody's budget on an account that was never created.
+    login_guard.registrations.record(source)
+
     # Same starting board an anonymous visitor gets, so signing up never lands
-    # on an empty watchlist.
+    # on an empty watchlist. Seeded even for an account awaiting review: it
+    # costs one insert and it is what the account will want on the day it is
+    # let in, whereas deferring it means finding somewhere to run it later.
     watchlist_service.seed_default(db, user.id)
+
+    if user.pending_approval:
+        # No tokens on purpose. The account exists and cannot be used, and a
+        # token whose every request answers 403 would leave the client looking
+        # signed in while nothing on the page worked.
+        return RegisterResponse(pending=True, user=auth_service.to_user_out(user))
 
     # Registering signs you in, so the client can merge a locally stored
     # watchlist straight away instead of making a second round trip.
     access_token, refresh_token, expires_in = auth_service.login(db, user)
-    return _token_response(user, access_token, refresh_token, expires_in)
+    return RegisterResponse(
+        pending=False,
+        user=auth_service.to_user_out(user),
+        tokens=_token_response(user, access_token, refresh_token, expires_in),
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
-    user = auth_service.authenticate(db, payload.identifier, payload.password)
-    if user is None:
+def login(
+    payload: LoginRequest, request: Request, db: Session = Depends(get_db)
+) -> TokenResponse:
+    source = login_guard.client_ip(request)
+    retry_after = login_guard.login_failures.retry_after(source)
+    if retry_after:
+        raise _too_many(TOO_MANY_ATTEMPTS, retry_after)
+
+    attempt = auth_service.attempt_login(db, payload.identifier, payload.password)
+
+    if not attempt.ok:
+        if attempt.locked_for:
+            # Not counted against the address budget: the account is already
+            # refusing to answer, so there is nothing left to protect here, and
+            # counting it would punish the account's real owner for retrying.
+            raise _too_many(ACCOUNT_LOCKED, attempt.locked_for)
+        login_guard.login_failures.record(source)
         # Deliberately identical for "no such account" and "wrong password".
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    login_guard.login_failures.clear(source)
+
+    user = attempt.user
+    assert user is not None  # ok is only true with a user behind it
+
+    # Checked after the password, not before: answering "that account is
+    # awaiting approval" to whoever asks would turn the endpoint into a list of
+    # who has signed up. You have to prove the account is yours first.
+    if user.pending_approval:
+        raise HTTPException(status_code=403, detail=ACCOUNT_PENDING_APPROVAL)
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled")
 
