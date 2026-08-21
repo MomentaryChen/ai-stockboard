@@ -93,6 +93,12 @@ export function fromSnapshot(snapshot: OpenSnapshot): OpenView {
   }
 }
 
+/** 現價: the snapshot print, or the inside of the book when this 5-second
+ *  window had no trade -- see `realtime._session_price` for why. */
+export function lastPrice(quote: RealtimeQuote): number | null {
+  return quote.latest_trade_price ?? quote.best_bid_price[0] ?? quote.best_ask_price[0] ?? null
+}
+
 /**
  * Today, live.
  *
@@ -106,8 +112,9 @@ export function fromSnapshot(snapshot: OpenSnapshot): OpenView {
  * intraday until the daily bar takes over.
  */
 export function fromQuote(quote: RealtimeQuote, date: string): OpenView {
+  const last = lastPrice(quote)
   const gap = delta(quote.open, quote.yesterday_close)
-  const fromOpen = delta(quote.latest_trade_price, quote.open)
+  const fromOpen = delta(last, quote.open)
   const gapPct = pct(gap, quote.yesterday_close)
   const fromOpenPct = pct(fromOpen, quote.open)
 
@@ -123,7 +130,7 @@ export function fromQuote(quote: RealtimeQuote, date: string): OpenView {
     gapDirection: direction(gapPct),
     high: quote.high,
     low: quote.low,
-    last: quote.latest_trade_price,
+    last,
     change: quote.change,
     changePct: quote.change_percent,
     fromOpen,
