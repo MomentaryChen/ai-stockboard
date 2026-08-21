@@ -12,6 +12,7 @@ import { Link } from 'react-router-dom'
 
 import type { BestFourPointResult, RealtimeQuote, WatchlistGroup } from '../api/types'
 import { usePriceFlash } from '../hooks/usePriceFlash'
+import { useWatchlistDrag } from '../hooks/watchlistDrag'
 import { useI18n } from '../i18n'
 import { direction, fmtInt, fmtPrice, fmtSigned } from '../utils/format'
 import { lastPrice } from '../utils/openIntel'
@@ -48,9 +49,6 @@ interface Props {
   groups?: WatchlistGroup[]
   groupId?: number | null
   onAssign?: (code: string, groupId: number | null) => void
-  /** Set while this row is the one being dragged, so it can grey itself out. */
-  dragging?: boolean
-  onDragStateChange?: (code: string | null) => void
   bfpLoading?: boolean
   /** Quotes are still on their way in, so "no quote" is premature. */
   fetching?: boolean
@@ -64,12 +62,11 @@ export default function QuoteRow({
   groups,
   groupId,
   onAssign,
-  dragging,
-  onDragStateChange,
   bfpLoading,
   fetching,
 }: Props) {
   const { t } = useI18n()
+  const drag = useWatchlistDrag()
   const { quote } = entry
   const last = quote ? lastPrice(quote) : null
   const dir = direction(quote?.change)
@@ -83,26 +80,38 @@ export default function QuoteRow({
   // a keyboard or a touch screen gets), but the common case -- "this one belongs
   // over there" -- should not cost an expand plus a dropdown.
   const draggable = Boolean(onAssign)
+  const dragging = drag.code === entry.code
 
   return (
     <>
-      <tr
-        className={`quote-row${expanded ? ' expanded' : ''}${draggable ? ' draggable' : ''}${
-          dragging ? ' dragging' : ''
-        }`}
-        draggable={draggable}
-        title={draggable ? t('board.groupDragHint') : undefined}
-        onDragStart={
-          draggable
-            ? (event) => {
-                startSidDrag(event, entry.code)
-                onDragStateChange?.(entry.code)
-              }
-            : undefined
-        }
-        onDragEnd={draggable ? () => onDragStateChange?.(null) : undefined}
-      >
+      <tr className={`quote-row${expanded ? ' expanded' : ''}${dragging ? ' dragging' : ''}`}>
         <td className="col-toggle">
+          {/* The handle carries `draggable`, not the row.
+              A draggable row means every cell starts a drag, so a code cannot
+              be selected to copy and the grab cursor has to lie about where to
+              take hold. One narrow grip tells the truth and leaves the rest of
+              the row behaving like text. */}
+          {draggable && (
+            <span
+              className="drag-grip"
+              draggable
+              role="button"
+              tabIndex={-1}
+              aria-label={t('board.groupDragHint')}
+              title={t('board.groupDragHint')}
+              onDragStart={(event) => {
+                startSidDrag(
+                  event,
+                  entry.code,
+                  entry.name ? `${entry.code} ${entry.name}` : entry.code,
+                )
+                drag.begin(entry.code, groupId ?? null)
+              }}
+              onDragEnd={() => drag.end()}
+            >
+              ⠿
+            </span>
+          )}
           <button
             type="button"
             className="btn-icon toggle"

@@ -62,10 +62,37 @@ export function groupSections<T extends { code: string }>(
  */
 export const SID_DRAG_TYPE = 'application/x-ai-stockboard-sid'
 
-export function startSidDrag(event: DragEvent, code: string) {
+export function startSidDrag(event: DragEvent, code: string, label?: string) {
   event.dataTransfer.setData(SID_DRAG_TYPE, code)
   event.dataTransfer.setData('text/plain', code)
   event.dataTransfer.effectAllowed = 'move'
+  if (label !== undefined) setSidDragImage(event, label)
+}
+
+/**
+ * Drag a small card that names the stock, not a snapshot of the source.
+ *
+ * The browser's default ghost is a picture of the element being dragged, which
+ * for a board row is a full-width slab of table that covers the very chips the
+ * drop is aimed at. A chip-sized ghost keeps the targets visible, and naming
+ * the stock is what makes a drag that crossed half the screen still legible.
+ */
+function setSidDragImage(event: DragEvent, label: string) {
+  // The PiP window is a second document; its nodes cannot be parented here.
+  const doc = event.currentTarget.ownerDocument
+  const ghost = doc.createElement('div')
+  ghost.className = 'sid-drag-ghost'
+  ghost.textContent = label
+  // Offscreen rather than hidden: `setDragImage` will not rasterise a node
+  // that is not laid out, and `display: none` is not laid out.
+  ghost.style.position = 'fixed'
+  ghost.style.top = '-1000px'
+  ghost.style.left = '-1000px'
+  doc.body.appendChild(ghost)
+  event.dataTransfer.setDragImage(ghost, 12, 12)
+  // The browser has taken its snapshot by the time the frame ends; keeping the
+  // node any longer would leak one per drag.
+  requestAnimationFrame(() => ghost.remove())
 }
 
 /** `dragover` cannot read the payload -- the browser withholds it until the

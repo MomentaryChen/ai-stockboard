@@ -691,7 +691,11 @@ table.data tbody tr:hover { background: var(--bg-input); }
    draws a line down each column border instead. */
 .quote-row.expanded > td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
 
-.col-toggle { width: 26px; padding-left: 6px !important; }
+/* Wide enough for the grip and the expand caret side by side. The grip is
+   invisible until the row is hovered, but its box is always reserved -- a
+   column that widens on hover shifts every price on the board. */
+.col-toggle { width: 42px; padding-left: 6px !important; }
+.col-toggle > * { vertical-align: middle; }
 .col-toggle .toggle { color: var(--text-dim); font-size: 11px; }
 .col-toggle .toggle:hover { color: var(--text); background: none; }
 
@@ -854,23 +858,68 @@ table.data tbody tr:hover { background: var(--bg-input); }
 .watch-board.compact .quote-row > td { height: 28px; padding: 0 6px; }
 .watch-board.compact .quote-table thead th { padding: 5px 6px; background: var(--bg); }
 .watch-board.compact .col-price { font-size: 14px; }
+/* The compact variants pass no `onAssign`, so they draw no grip and the wider
+   toggle column would be 16px of nothing in a window sized for six. */
+.watch-board.compact .col-toggle { width: 26px; }
 /* No hover on a window you are not pointing at, so the remove button would be
    unreachable there. */
 .watch-board.compact .col-actions .remove { opacity: 0.5; }
 
 /* ---------- watchlist groups ---------- */
 
-.group-chips {
+/* Three zones, not one wrapping run: the two fixed buckets hold the left edge,
+   the user's own groups scroll rather than wrap (ten groups used to push the
+   board down by three rows), and the add button keeps the right edge so it
+   does not walk sideways as groups are created. */
+.group-bar {
   display: flex;
-  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 10px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  /* The bar grows when drop mode adds a line of hint text under each name.
+     Animating it stops the board below from jumping at the moment the user is
+     trying to aim at something. */
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.group-bar-fixed,
+.group-bar-tail {
+  display: flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
+}
+.group-bar-fixed { padding-right: 10px; border-right: 1px solid var(--border); }
+.group-bar-tail { padding-left: 10px; border-left: 1px solid var(--border); }
+
+.group-bar-scroll {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  /* A horizontal scrollbar under a 28px chip row is thicker than the row. The
+     groups are reachable by wheel and by drag-scroll without it. */
+  scrollbar-width: none;
+}
+.group-bar-scroll::-webkit-scrollbar { display: none; }
+
+.group-bar-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 0 2px;
+  white-space: nowrap;
 }
 
 .group-chip-wrap {
   display: inline-flex;
   align-items: center;
   gap: 0;
+  flex: 0 0 auto;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   background: var(--bg-input);
@@ -892,7 +941,8 @@ table.data tbody tr:hover { background: var(--bg-input); }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 9px;
+  flex: 0 0 auto;
+  padding: 4px 10px;
   background: var(--bg-input);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -900,12 +950,15 @@ table.data tbody tr:hover { background: var(--bg-input); }
   font: inherit;
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
 }
 .group-chip:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
 .group-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .group-chip:disabled { opacity: 0.45; cursor: not-allowed; }
 .group-chip-add { border-style: dashed; }
+.group-chip-name { white-space: nowrap; }
 
 .group-count {
   font-variant-numeric: tabular-nums;
@@ -915,44 +968,148 @@ table.data tbody tr:hover { background: var(--bg-input); }
 
 .group-chip-input {
   width: 140px;
-  padding: 3px 9px;
+  padding: 4px 10px;
   font-size: 12px;
+  flex: 0 0 auto;
 }
+
+/* The mini and floating windows have no room for the zone dividers, and no
+   create/rename to divide off. */
+.group-bar.compact {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  gap: 6px;
+}
+.group-bar.compact .group-bar-fixed { padding-right: 6px; border-right: 0; }
 
 /* ---------- drag a stock into a group ---------- */
 
-/* The grab cursor is the only affordance a table row has -- there is no handle
-   to draw one on without stealing a column. */
-.quote-row.draggable > td:first-child { cursor: grab; }
-.quote-row.draggable:active > td:first-child { cursor: grabbing; }
-.quote-card.draggable { cursor: grab; }
-.quote-card.draggable:active { cursor: grabbing; }
-/* The row stays in place while it is in flight; fading it is what says "this
-   is the one you picked up" once the drag image detaches from the cursor. */
+/* A grip, rather than a draggable row.
+   The row itself stays selectable text -- a code is something people copy --
+   and the cursor now sits over the one thing that actually starts a drag. */
+.drag-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+  /* Invisible until the row is hovered: twenty always-on grips read as noise
+     on a board whose job is to show twenty prices. */
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.drag-grip:active { cursor: grabbing; }
+.quote-row:hover .drag-grip,
+.quote-card:hover .drag-grip,
+.drag-grip:focus-visible { opacity: 1; }
+.drag-grip:hover { color: var(--accent); }
+
+/* The drag ghost: a chip naming the stock, not a picture of the source. A
+   full-width slab of table row covers the very chips the drop is aimed at. */
+.sid-drag-ghost {
+  padding: 6px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow);
+}
+
+/* The source stays in place while it is in flight; fading it is what says
+   "this is the one you picked up" once the ghost detaches from the cursor. */
 .quote-row.dragging > td,
 .quote-card.dragging { opacity: 0.4; }
 
-/* One outline rule for every drop target -- chip, board section and card
-   section -- so hovering any of them reads the same. */
-.group-chip-wrap.drop-over,
+/* Drop mode. Everything below only applies while a drag is running, which is
+   the whole point: at rest the bar is a filter, and a filter that advertises
+   drop targets is lying about what a click does. */
+.group-bar.dragging {
+  border-color: var(--border-strong);
+  background: var(--bg-input);
+}
+
+/* "You may drop here" -- drawn on every eligible bucket the moment the drag
+   starts, so the answer to "where can this go?" is on screen before the cursor
+   has moved. This is the state the old build had no way to express. */
+.group-chip.drop-target,
+.group-chip-wrap.drop-target {
+  border: 1px dashed var(--accent);
+  color: var(--text);
+}
+.card-group.drop-target,
+.group-section.drop-target .group-section-row > td {
+  outline: 1px dashed var(--border-strong);
+  outline-offset: -1px;
+}
+
+/* "This is the one under the cursor" -- solid, filled, and lifted, so it is
+   distinguishable from its dashed neighbours at a glance rather than by
+   comparison. */
 .group-chip.drop-over,
+.group-chip-wrap.drop-over {
+  border-style: solid;
+  border-color: var(--accent);
+  background: rgba(76, 141, 255, 0.18);
+  color: var(--text);
+  transform: translateY(-1px);
+}
 .card-group.drop-over,
 .group-section.drop-over .group-section-row > td {
-  outline: 2px dashed var(--accent);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
-  border-radius: 8px;
 }
-/* The outline alone is easy to miss on a dense board, and a whole tinted
-   section is what tells you where the row will land. */
 .group-section.drop-over,
 .card-group.drop-over { background: rgba(76, 141, 255, 0.07); }
 
-/* Children of a hovered target would otherwise fire dragleave on the parent
-   and flicker the outline off. */
-.group-chip.drop-over *,
-.group-chip-wrap.drop-over *,
-.card-group.drop-over *,
-.group-section.drop-over * { pointer-events: none; }
+/* "It already lives here." A silent no-op drop was the single most confusing
+   thing about the old build: the current group looked exactly as droppable as
+   any other, accepted the drop, and did nothing. */
+.group-chip.drop-current,
+.group-chip-wrap.drop-current {
+  border-style: solid;
+  border-color: var(--border);
+  opacity: 0.55;
+  cursor: default;
+}
+.group-section.drop-current .group-section-row > td { opacity: 0.6; }
+
+/* 全部 is a view, not a folder, so during a drag it steps out of the way
+   rather than pretending to be a twelfth bucket. */
+.group-chip.drop-inert {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* The hint text under a bucket's name. It exists only in drop mode, which is
+   why the chip is column-flex: at rest there is one line and the chip keeps
+   its original height. */
+.group-chip { flex-direction: row; }
+.group-bar.dragging .group-chip {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 5px 10px;
+}
+.group-bar.dragging .group-chip-name { display: inline-flex; gap: 6px; }
+.group-chip-hint,
+.group-section-hint {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.group-chip-hint.muted,
+.group-section-hint.muted { color: var(--text-dim); font-weight: 500; }
+.group-section-hint { margin-left: 8px; }
 
 /* ---------- group sections ---------- */
 

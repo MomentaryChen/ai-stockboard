@@ -12,6 +12,7 @@ import { Link } from 'react-router-dom'
 
 import type { BestFourPointResult, RealtimeQuote, WatchlistGroup } from '../api/types'
 import { usePriceFlash } from '../hooks/usePriceFlash'
+import { useWatchlistDrag } from '../hooks/watchlistDrag'
 import { useI18n } from '../i18n'
 import { direction, fmtPrice, fmtSigned } from '../utils/format'
 import { lastPrice } from '../utils/openIntel'
@@ -26,9 +27,6 @@ interface Props {
   groups?: WatchlistGroup[]
   groupId?: number | null
   onAssign?: (code: string, groupId: number | null) => void
-  /** Set while this card is the one being dragged, so it can grey itself out. */
-  dragging?: boolean
-  onDragStateChange?: (code: string | null) => void
   bfp?: BestFourPointResult
   bfpLoading?: boolean
   /** The board read every card's verdict in one request -- see RealtimeBoard.
@@ -43,14 +41,13 @@ export default function RealtimeCard({
   groups,
   groupId,
   onAssign,
-  dragging,
-  onDragStateChange,
   bfp,
   bfpLoading,
   aiBatched,
   aiLoading,
 }: Props) {
   const { t } = useI18n()
+  const drag = useWatchlistDrag()
   const last = lastPrice(quote)
   const dir = direction(quote.change)
   const flash = usePriceFlash(last)
@@ -58,21 +55,10 @@ export default function RealtimeCard({
   // Same bargain as the board row: the select at the foot of the card still
   // works, but re-filing should not require finding it.
   const draggable = Boolean(onAssign)
+  const dragging = drag.code === quote.code
 
   return (
-    <article
-      className={`card quote-card${draggable ? ' draggable' : ''}${dragging ? ' dragging' : ''}`}
-      draggable={draggable}
-      onDragStart={
-        draggable
-          ? (event) => {
-              startSidDrag(event, quote.code)
-              onDragStateChange?.(quote.code)
-            }
-          : undefined
-      }
-      onDragEnd={draggable ? () => onDragStateChange?.(null) : undefined}
-    >
+    <article className={`card quote-card${dragging ? ' dragging' : ''}`}>
       {onRemove && (
         <button
           type="button"
@@ -85,6 +71,26 @@ export default function RealtimeCard({
       )}
 
       <div className="row" style={{ gap: 10 }}>
+        {/* The grip carries `draggable`, not the card: a draggable card cannot
+            have its numbers selected, and every press inside it starts fighting
+            the browser's drag threshold. */}
+        {draggable && (
+          <span
+            className="drag-grip"
+            draggable
+            role="button"
+            tabIndex={-1}
+            aria-label={t('board.groupDragHint')}
+            title={t('board.groupDragHint')}
+            onDragStart={(event) => {
+              startSidDrag(event, quote.code, `${quote.code} ${quote.name}`)
+              drag.begin(quote.code, groupId ?? null)
+            }}
+            onDragEnd={() => drag.end()}
+          >
+            ⠿
+          </span>
+        )}
         {/* A link is draggable by default and would hand the drop target a URL
             instead of the code. */}
         <Link

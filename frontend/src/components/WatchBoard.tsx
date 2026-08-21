@@ -165,8 +165,6 @@ export default function WatchBoard({
         groups={compact ? undefined : groups}
         groupId={groupBySid?.[entry.code] ?? null}
         onAssign={compact ? undefined : onAssign}
-        dragging={drop.dragging === entry.code}
-        onDragStateChange={drop.setDragging}
         bfpLoading={bfpLoading}
         fetching={fetching}
       />
@@ -215,6 +213,19 @@ export default function WatchBoard({
                     <td colSpan={COLUMN_COUNT}>
                       <span className="group-section-name">{section.name}</span>
                       <span className="group-count">{section.items.length}</span>
+                      {/* Only while a drag is running, so a heading that is
+                          just a heading stays one line. */}
+                      {target.current && (
+                        <span className="group-section-hint">{t('board.groupHere')}</span>
+                      )}
+                      {target.over && (
+                        <span className="group-section-hint">{t('board.groupDropHere')}</span>
+                      )}
+                      {target.droppable && !target.over && (
+                        <span className="group-section-hint muted">
+                          {t('board.groupDroppable')}
+                        </span>
+                      )}
                     </td>
                   </tr>
                   {section.items.map(row)}
