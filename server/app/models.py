@@ -343,6 +343,40 @@ class AppUser(Base):
         Boolean, default=False, server_default=text("false")
     )
 
+    # Raised by self-service registration while REGISTRATION_REQUIRES_APPROVAL
+    # is on, and cleared by the ADMIN who activates the account.
+    #
+    # It exists to tell two dormant accounts apart, because `is_active = false`
+    # alone cannot: an account waiting for its first review and an account an
+    # admin suspended look identical, and they need different words in the UI
+    # and different actions from the operator. It also keeps the distinction
+    # honest across restarts -- deriving "never reviewed" from the absence of
+    # refresh tokens or from created_at would guess wrong the moment either of
+    # those is cleaned up.
+    #
+    # The default is false, which is what makes this safe to add to a table
+    # that already holds rows: every existing account is one an admin already
+    # lives with, not one waiting in a queue nobody knew existed.
+    pending_approval: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+
+    # Consecutive failed sign-ins, and the instant this account starts
+    # answering again. Both are reset by any successful sign-in.
+    #
+    # In the database rather than in process memory on purpose: a lockout that
+    # a container restart clears is a lockout an attacker can clear, and
+    # `docker compose restart` is not a privileged operation for whoever is
+    # already grinding the login endpoint. The per-IP half of the same defence
+    # is in-process precisely because it does not have that property -- see
+    # services/login_guard.py.
+    failed_login_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
+    )
+    locked_until: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

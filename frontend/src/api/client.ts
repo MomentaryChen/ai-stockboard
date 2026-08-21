@@ -6,6 +6,8 @@ import type {
   JobScheduleUpdate,
   JobTriggerResponse,
   PasswordResetResponse,
+  RegisterResponse,
+  RegistrationPolicy,
   Role,
   RuleSet,
   TokenResponse,
@@ -31,11 +33,19 @@ import type {
  */
 export class ApiError extends Error {
   readonly status: number
+  /** Seconds from the `Retry-After` header, when the server sent one.
+   *
+   *  Only the 429s carry it, and it is the difference between telling a
+   *  locked-out user "try again later" and "try again in 12 minutes" -- the
+   *  second answer is the one that stops them retrying for the whole window.
+   */
+  readonly retryAfter: number | null
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, retryAfter: number | null = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.retryAfter = retryAfter
   }
 }
 
@@ -52,6 +62,28 @@ export function isPasswordResetRequired(error: unknown): boolean {
     error instanceof ApiError &&
     error.status === 403 &&
     error.message === PASSWORD_RESET_REQUIRED
+  )
+}
+
+/** The 403 detail for an account that has registered but not been approved.
+ *
+ *  Matches deps.ACCOUNT_PENDING_APPROVAL on the server. Narrowed on rather
+ *  than displayed, because the server's copy is English and this one has a
+ *  translation -- and because "awaiting approval" needs to read as progress,
+ *  not as the rejection that the same 403 status otherwise implies.
+ */
+export const ACCOUNT_PENDING_APPROVAL = 'Account is awaiting approval'
+
+/** The two 429 details, both of which arrive with a Retry-After.
+ *  Match deps.ACCOUNT_LOCKED / deps.TOO_MANY_ATTEMPTS. */
+export const ACCOUNT_LOCKED = 'Account temporarily locked'
+export const TOO_MANY_ATTEMPTS = 'Too many sign-in attempts'
+
+export function isPendingApproval(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    error.message === ACCOUNT_PENDING_APPROVAL
   )
 }
 
@@ -288,7 +320,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     } catch {
       /* response was not JSON -- keep the status text */
     }
-    throw new ApiError(detail, res.status)
+    // Only ever the delta-seconds form here; the HTTP-date form the RFC also
+    // allows is never sent by this API, so Number() is enough.
+    const retryAfter = Number(res.headers.get('Retry-After'))
+    throw new ApiError(
+      detail,
+      res.status,
+      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
+    )
   }
 
   if (res.status === 204) return undefined as T
@@ -358,12 +397,20 @@ export const api = {
 
   // --- accounts ---
 
+  /** What signing up will do. Public, and read before the form renders --
+   *  under review, submitting does not sign you in, and finding that out
+   *  afterwards reads as a broken signup. */
+  getRegistrationPolicy: () =>
+    request<RegistrationPolicy>('/api/auth/registration-policy'),
+
+  /** Create an account. Check `pending` before touching `tokens`: an account
+   *  awaiting approval comes back without a session, on purpose. */
   register: (body: {
     username: string
     email: string
     password: string
     phone?: string
-  }) => request<TokenResponse>('/api/auth/register', { method: 'POST', body }),
+  }) => request<RegisterResponse>('/api/auth/register', { method: 'POST', body }),
 
   login: (identifier: string, password: string) =>
     request<TokenResponse>('/api/auth/login', {
@@ -395,11 +442,15 @@ export const api = {
 
   // --- user administration (ADMIN only) ---
 
-  listUsers: (q = '') =>
-    request<UserListResponse>(
-      `/api/users${q ? `?q=${encodeURIComponent(q)}` : ''}`,
-      { auth: true },
-    ),
+  listUsers: (q = '', pendingOnly = false) => {
+    const params = new URLSearchParams()
+    if (q) params.set('q', q)
+    if (pendingOnly) params.set('pending', 'true')
+    const query = params.toString()
+    return request<UserListResponse>(`/api/users${query ? `?${query}` : ''}`, {
+      auth: true,
+    })
+  },
 
   updateUser: (userId: number, body: { role?: Role; is_active?: boolean }) =>
     request<User>(`/api/users/${userId}`, { method: 'PATCH', body, auth: true }),
@@ -415,6 +466,12 @@ export const api = {
       method: 'POST',
       auth: true,
     }),
+
+  /** Lift a lockout without waiting out its timer, and without touching the
+   *  user's password -- they may have been typing it correctly all along.
+   *  Idempotent on an account that is not locked. */
+  unlockUser: (userId: number) =>
+    request<User>(`/api/users/${userId}/unlock`, { method: 'POST', auth: true }),
 
   deleteUser: (userId: number) =>
     request<void>(`/api/users/${userId}`, { method: 'DELETE', auth: true }),

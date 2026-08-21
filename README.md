@@ -343,15 +343,17 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 | GET | `/api/analysis/traditional?sids=2330,0050` | Batch 四大買賣點 from cached daily bars only (no TWSE fetch, max 20) |
 | GET | `/api/realtime?sids=2330,0050` | 即時報價，最多 20 檔（**需登入**） |
 | GET | `/api/market/open?date=&sids=` | Opening intel for one trading day: gap and drift for the index plus up to 20 watchlist codes. Defaults to today in Taipei; cache-only apart from the index's own backfill |
-| POST | `/api/auth/register` | 註冊，直接回一組 token |
-| POST | `/api/auth/login` | 登入，帳號或 Email 皆可 |
+| GET | `/api/auth/registration-policy` | Whether signing up needs an ADMIN's approval. Public, read before the form renders |
+| POST | `/api/auth/register` | 註冊。Under review it creates the account and returns `pending: true` **without tokens** — see [getting an account](#getting-an-account-and-how-often-you-may-guess) |
+| POST | `/api/auth/login` | 登入，帳號或 Email 皆可. Throttled per account and per source IP; both answer 429 with `Retry-After` |
 | POST | `/api/auth/refresh` | 換發 token（會輪替 refresh token） |
 | POST | `/api/auth/logout` | 撤銷一組 refresh token |
 | GET / PATCH | `/api/auth/me` | 讀取／更新自己的資料 |
 | POST | `/api/auth/me/password` | 改密碼，登出其他所有裝置，並回一組新 token |
-| GET | `/api/users?q=&limit=&offset=` | 使用者列表（ADMIN） |
+| GET | `/api/users?q=&pending=&limit=&offset=` | 使用者列表（ADMIN）. `pending=true` filters to the approval queue |
 | GET / PATCH / DELETE | `/api/users/{user_id}` | 檢視／改角色與狀態／刪除（ADMIN） |
 | POST | `/api/users/{user_id}/password-reset` | 重設密碼，回傳一次性臨時密碼（ADMIN） |
+| POST | `/api/users/{user_id}/unlock` | Lift a login lockout early, leaving the password alone（ADMIN） |
 | GET / PUT | `/api/watchlist` | 自選股，整批讀寫（需登入） |
 | GET | `/api/jobs` | Every background job: schedule, last run, next run (**ADMIN**) |
 | GET | `/api/jobs/{job_id}/runs?limit=50` | One job's run history (**ADMIN**) |
@@ -943,6 +945,85 @@ never render and nothing polls.
 
 ---
 
+## Getting an account, and how often you may guess
+
+The section above is the reason this one exists. Gating realtime quotes behind a
+sign-in is only worth anything if an account means something -- and until this
+was added, it did not: registration was open, so ten seconds at the signup form
+bought anyone a share of the upstream budget, and the login endpoint accepted
+guesses forever.
+
+### Registration is reviewed
+
+`POST /api/auth/register` creates the account **dormant** and issues no tokens.
+An ADMIN activates it at `/admin/users`; only then can the person sign in.
+
+- The response is `201` either way, with `pending` in the body saying which
+  happened. There is no session to hand back for an account that may not be
+  used, and a token whose every request answered 403 would leave the client
+  looking signed in while nothing worked.
+- Activating **is** approving. There is no separate approve endpoint -- one
+  switch means the queue cannot drift out of step with who can actually sign in.
+- Two dormant states have to be told apart, which is why `pending_approval`
+  exists next to `is_active`: waiting for a first review and suspended by an
+  admin are the same `is_active = false`, and they need different words in the
+  UI and a different action from the operator.
+- The Register page reads `GET /api/auth/registration-policy` before it renders,
+  so it can say up front that submitting will not sign you in. Finding that out
+  afterwards reads as a broken signup.
+- Set `REGISTRATION_REQUIRES_APPROVAL=false` to go back to open registration.
+  That is for a local database, not for anything reachable from elsewhere.
+
+There is no email delivery in this service, so there is no "your account was
+approved" notification either -- the same constraint that shapes the ADMIN
+password reset above. The Register page says so rather than leaving the user
+watching an inbox.
+
+### Sign-in is limited on two dimensions
+
+Either limit alone has an obvious way around it, so both are enforced:
+
+| | Counts | Stored in | Why there |
+|---|---|---|---|
+| Per account | Consecutive failures against one account | `app_user.failed_login_count` / `locked_until` | A lockout that a container restart clears is a lockout the attacker can clear |
+| Per source IP | Failures against *any* account from one address | Process memory (`services/login_guard.py`) | An attacker who can rotate addresses defeats a shared table just as easily, so the write would buy nothing |
+
+The account lock stops one password list being ground against one account, and
+does nothing about the same attacker trying `admin`, `test`, `victor`... one
+guess each. The IP limit stops that, and does nothing about a botnet with one
+guess per address. Together both shapes cost something, which is all a login
+endpoint can honestly promise.
+
+Both answer **429 with `Retry-After`**, which the UI renders as a countdown --
+the difference between "try again later" and "try again in 12 minutes" is
+whether the user keeps hammering the endpoint for the whole window. A locked
+account refuses the **correct** password too; letting it through would defeat
+the point of the lock.
+
+Three deliberate trade-offs:
+
+- **The account lock is a denial-of-service surface.** Anyone who knows a
+  username can spend five wrong passwords to keep its owner out for the window.
+  That is accepted knowingly: the window is minutes rather than permanent, an
+  ADMIN can lift it from `/admin/users` without touching the password, and the
+  alternative is an unlimited guessing budget.
+- **The per-IP window is per process.** Several uvicorn workers would each hold
+  their own counters, multiplying the allowance by the worker count.
+  `server/Dockerfile` runs one worker; the account lock is the half that still
+  holds if that changes.
+- **`X-Real-IP` is only read from a trusted peer.** `docker-compose.yml` puts
+  nginx in front of the API *and* publishes the API's own port on the host, so
+  anything reaching that port directly could otherwise present as a fresh client
+  on every request. `TRUSTED_PROXY_IPS` defaults to loopback plus the private
+  ranges; narrow it to the proxy's address if that port is exposed beyond the
+  machine.
+
+The knobs are all in `deployment/.env` -- `LOGIN_MAX_FAILURES`,
+`LOGIN_LOCKOUT_MINUTES`, `LOGIN_IP_MAX_FAILURES`, `LOGIN_IP_WINDOW_MINUTES`,
+`REGISTER_IP_MAX_PER_HOUR`, `TRUSTED_PROXY_IPS` -- and `.env.example` explains
+each one where it is set.
+---
+
 ## The upstream fetch budget
 
 Requiring a sign-in for `/api/realtime` only helps if the cached routes cannot be
@@ -988,7 +1069,7 @@ given month is paid once, ever -- see [Why the endpoint is cache-only](#why-the-
 
 ## Deployment is single-process
 
-**This service can only run as one process.** Not "should preferably" — four
+**This service can only run as one process.** Not "should preferably" — five
 separate pieces of state live in process memory, and a second process silently
 gets its own copy of each:
 
@@ -998,9 +1079,10 @@ gets its own copy of each:
 | "Is this job already running?" | `server/app/services/jobs/runner.py` — `_locks: dict[str, threading.Lock]` | `JobBusyError` can only fire against a run in the same process, so two processes will happily run the same job at the same time. |
 | The listed-instrument snapshot (~44k rows) | `server/app/services/codes.py` — `_snapshot` | Every process pays the memory, and `invalidate()` after a sync clears only the caller's copy. A database-backed snapshot has no TTL, so the other processes keep serving the pre-sync listing until they happen to restart. |
 | `JWT_SECRET`, when it is not set | `server/app/security.py` — `secrets.token_urlsafe(48)`, resolved once at import | Each process signs with a different key, so a token minted by one is rejected by the others and the user bounces between signed-in and signed-out. |
+| The per-IP login and registration windows | `server/app/services/login_guard.py` — `IpRateWindow`, a `dict` of `deque`s behind a `threading.Lock` | Each process counts only the attempts it saw, so N processes allow N × `LOGIN_IP_MAX_FAILURES` guesses per window from one address. This one is memory *by choice* — an attacker who can rotate addresses defeats a shared table just as easily — and the per-account lock it works with is in the database, so the half that has to hold under multiple processes already does. |
 
 The rate limit is the one that matters, because the entire caching design in
-[資料為什麼要落地](#資料為什麼要落地) exists to stay under it. The other three
+[資料為什麼要落地](#資料為什麼要落地) exists to stay under it. The other four
 degrade; that one gets the deployment banned by the upstream.
 
 Nothing enforces the constraint. `server/Dockerfile` runs `uvicorn` without
@@ -1020,6 +1102,12 @@ Each item has to move out of process memory before a second process is safe:
 - the listing snapshot behind a shared invalidation signal, or a version column
   each process can check cheaply before serving from its own copy;
 - `JWT_SECRET` into a required setting, dropping the per-process fallback.
+
+The per-IP login window is the exception: it would move to the same shared
+counter as the rate limit if one existed, but until then it degrades to a looser
+limit rather than a broken one, and
+[the account lock](#getting-an-account-and-how-often-you-may-guess) is already
+where it needs to be.
 
 None of that is scheduled. At the current size one process with a thread pool is
 enough, and stating the limit is more useful than a scaling story the code does

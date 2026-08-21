@@ -2,9 +2,51 @@ import { useState } from 'react'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 
+import {
+  ACCOUNT_LOCKED,
+  ApiError,
+  isPendingApproval,
+} from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
+import type { Translate } from '../i18n/types'
 import { errorMessage } from '../utils/errors'
+
+/**
+ * Turn a sign-in failure into something worth reading.
+ *
+ * Three of these are not "you got it wrong" and must not look like it: an
+ * account waiting for an administrator, an account locked after repeated
+ * failures, and an address that has been trying too often. All three are
+ * narrowed on the server's contract strings rather than displayed raw --
+ * those are English by the CLAUDE.md rule, and these have translations.
+ */
+function signInError(
+  error: unknown,
+  t: Translate,
+): { message: string; tone: 'error' | 'warn' } {
+  if (isPendingApproval(error)) {
+    return { message: t('login.pendingApproval'), tone: 'warn' }
+  }
+
+  if (error instanceof ApiError && error.status === 429) {
+    const locked = error.message === ACCOUNT_LOCKED
+    // Rounded up, so "59 seconds" never renders as "0 minutes".
+    const minutes = error.retryAfter ? Math.ceil(error.retryAfter / 60) : null
+    if (minutes === null) {
+      return { message: t(locked ? 'login.locked' : 'login.throttled'), tone: 'warn' }
+    }
+    return {
+      message: t(locked ? 'login.lockedIn' : 'login.throttledIn', { minutes }),
+      tone: 'warn',
+    }
+  }
+
+  return {
+    message: t('login.failed', { message: errorMessage(error, t) }),
+    tone: 'error',
+  }
+}
 
 export default function Login() {
   const { status, login } = useAuth()
@@ -62,11 +104,11 @@ export default function Login() {
             />
           </div>
 
-          {submit.isError && (
-            <div className="banner banner-error">
-              {t('login.failed', { message: errorMessage(submit.error, t) })}
-            </div>
-          )}
+          {submit.isError &&
+            (() => {
+              const { message, tone } = signInError(submit.error, t)
+              return <div className={`banner banner-${tone}`}>{message}</div>
+            })()}
 
           <button
             type="submit"

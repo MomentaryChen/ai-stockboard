@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 
+import { api } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { useI18n } from '../i18n'
 import { errorMessage } from '../utils/errors'
@@ -24,6 +25,22 @@ export default function Register() {
   // Held as a key, not a sentence, so switching language re-renders it.
   const [localError, setLocalError] = useState<PasswordProblem | null>(null)
 
+  // Read before the form is filled in, so the notice above it can say that
+  // signing up will not sign you in. A failure here is not worth surfacing --
+  // the register call itself reports the outcome authoritatively, and this is
+  // only the advance warning.
+  const policy = useQuery({
+    queryKey: ['registrationPolicy'],
+    queryFn: api.getRegistrationPolicy,
+    staleTime: Infinity,
+    retry: false,
+  })
+
+  // Set once the account has been created and is waiting for an admin. The
+  // form is replaced rather than navigated away from: there is no session, so
+  // every route worth landing on would bounce straight back to /login.
+  const [awaitingApproval, setAwaitingApproval] = useState(false)
+
   const submit = useMutation({
     mutationFn: () =>
       register({
@@ -32,15 +49,43 @@ export default function Register() {
         password,
         phone: phone.trim() || undefined,
       }),
-    onSuccess: () => navigate('/realtime', { replace: true }),
+    onSuccess: (result) => {
+      if (result.pending) setAwaitingApproval(true)
+      else navigate('/realtime', { replace: true })
+    },
   })
 
   if (status === 'authenticated') return <Navigate to="/realtime" replace />
+
+  if (awaitingApproval) {
+    return (
+      <div className="auth-page">
+        <section className="card auth-card">
+          <h2 className="card-title">{t('register.pendingTitle')}</h2>
+          <div className="banner banner-warn" style={{ marginTop: 12 }}>
+            {t('register.pendingBody', { username: username.trim() })}
+          </div>
+          <p className="dim" style={{ marginTop: 14 }}>
+            {t('register.pendingNote')}
+          </p>
+          <Link to="/" className="btn btn-primary btn-block" style={{ marginTop: 10 }}>
+            {t('register.pendingHome')}
+          </Link>
+        </section>
+      </div>
+    )
+  }
 
   return (
     <div className="auth-page">
       <section className="card auth-card">
         <h2 className="card-title">{t('register.title')}</h2>
+
+        {policy.data?.requires_approval && (
+          <div className="banner banner-warn" style={{ marginTop: 10 }}>
+            {t('register.approvalNotice')}
+          </div>
+        )}
 
         <form
           className="form-stack"

@@ -30,6 +30,10 @@ function user(overrides: Partial<User> = {}): User {
     role: 'USER',
     is_active: true,
     must_change_password: false,
+    // Required on User since the account-approval work; an approved, unlocked
+    // account is the right default for a factory the auth tests build on.
+    pending_approval: false,
+    locked_until: null,
     created_at: '2024-01-01T00:00:00Z',
     ...overrides,
   }
