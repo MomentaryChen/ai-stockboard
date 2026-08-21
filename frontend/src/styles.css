@@ -370,16 +370,14 @@ tr.row-active { background: var(--bg-input); box-shadow: inset 2px 0 0 var(--acc
 .reason-list li { margin-bottom: 4px; }
 
 /* ---------- AI position call ---------- */
-/* Set apart by a rule and a tinted ground rather than by a colour of its own:
-   the verdict chip reuses the 四大買賣點 palette, so anything else competing for
-   the eye here would suggest a second scale. */
+/* Inline layout: a rule under the quote, not a second card. The card layout
+   reuses `.card` / `.card-title` / `.signal` / `.reason-list` so it sits next
+   to 四大買賣點 without a private visual language. */
 .ai-panel {
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
-.ai-head { gap: 10px; }
-.ai-title { font-size: 13px; letter-spacing: 0.02em; }
 .ai-quota { white-space: nowrap; }
 
 /* Size, as filled pips. The label already says 大/中/小; this is for the glance
@@ -387,30 +385,22 @@ tr.row-active { background: var(--bg-input); box-shadow: inset 2px 0 0 var(--acc
 .ai-pips { font-size: 8px; letter-spacing: 1px; opacity: 0.85; }
 .ai-pips-off { opacity: 0.25; }
 
-.ai-headline {
-  margin: 10px 0 0;
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--text);
-}
-.ai-meta { margin: 6px 0 0; }
 .ai-note { margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; border: 1px solid; font-size: 12px; }
-.ai-empty { margin: 10px 0 0; line-height: 1.5; }
 
-.ai-block { margin-top: 10px; }
 .ai-block-title {
+  display: block;
+  margin-top: 12px;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-dim);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.ai-block .quote-bfp-reasons { margin-top: 4px; }
+.ai-block-title + .reason-list { margin-top: 6px; }
 /* Risks are the half people skip. Tinting them costs nothing and stops the
    section from reading as a list of reasons to act. */
 .ai-risks { color: #f0c274; }
 
-.ai-foot { margin: 12px 0 0; font-size: 11px; }
 .ai-disclaimer {
   margin: 6px 0 0;
   font-size: 11px;

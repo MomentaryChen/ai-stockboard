@@ -7,6 +7,11 @@
  * the user has to ask -- and a watchlist of twenty stocks must not turn into
  * twenty generations because somebody opened the page.
  *
+ * Two layouts, one component, because the verdict is the same object in both
+ * places. `card` is the 個股 sidebar and uses the same `.card` / `.card-title`
+ * / `.signal` language as 四大買賣點. `inline` is the nested block under a
+ * watchlist quote, where a second card would be a box inside a box.
+ *
  * The result is written into the react-query cache under (sid, locale) rather
  * than kept in local state alone, so collapsing a board row and opening it
  * again shows the verdict already paid for instead of offering the button
@@ -17,7 +22,6 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
 
 import { ApiError, api } from '../api/client'
 import type { AiAnalysisResponse, AiVerdict as Verdict } from '../api/types'
@@ -25,6 +29,7 @@ import { useAuth } from '../auth/AuthContext'
 import { translateBfpLabel, useI18n } from '../i18n'
 import type { MessageKey } from '../i18n'
 import { errorMessage } from '../utils/errors'
+import SignInPrompt from './SignInPrompt'
 
 /** Which of the seven answers this is. Split by action so `hold` needs no size. */
 const CALL_KEY: Record<string, MessageKey> = {
@@ -55,36 +60,45 @@ const SIGNAL_CLASS: Record<Verdict['action'], string> = {
  *  for the eye scanning past it. */
 const PIPS: Record<string, number> = { large: 3, medium: 2, small: 1 }
 
-export function AiCallChip({ verdict }: { verdict: Verdict }) {
+function callKey(verdict: Verdict): MessageKey {
+  if (verdict.action === 'hold') return 'ai.callHold'
+  return CALL_KEY[`${verdict.action}:${verdict.size}`] ?? 'ai.callHold'
+}
+
+export function AiCallChip({
+  verdict,
+  compact = true,
+}: {
+  verdict: Verdict
+  compact?: boolean
+}) {
   const { t } = useI18n()
-  const key =
-    verdict.action === 'hold'
-      ? 'ai.callHold'
-      : CALL_KEY[`${verdict.action}:${verdict.size}`]
   const pips = verdict.size ? PIPS[verdict.size] : 0
 
   return (
-    <span className={`signal signal-sm ${SIGNAL_CLASS[verdict.action]}`}>
-      {t(key ?? 'ai.callHold')}
+    <div className={`signal ${compact ? 'signal-sm' : ''} ${SIGNAL_CLASS[verdict.action]}`}>
+      {t(callKey(verdict))}
       {pips > 0 && (
         <span className="ai-pips" aria-hidden="true">
           {'●'.repeat(pips)}
           <span className="ai-pips-off">{'●'.repeat(3 - pips)}</span>
         </span>
       )}
-    </span>
+    </div>
   )
 }
 
 interface Props {
   sid: string
+  /** `card` matches the 個股 analysis stack; `inline` nests under a quote. */
+  layout?: 'card' | 'inline'
 }
 
-export default function AiVerdictSection({ sid }: Props) {
+export default function AiVerdictSection({ sid, layout = 'inline' }: Props) {
   const { t, locale, intlTag } = useI18n()
   const { status } = useAuth()
-  const { pathname } = useLocation()
   const queryClient = useQueryClient()
+  const asCard = layout === 'card'
 
   const cacheKey = ['ai-verdict', sid, locale]
   const [result, setResult] = useState<AiAnalysisResponse | null>(
@@ -122,16 +136,21 @@ export default function AiVerdictSection({ sid }: Props) {
     },
   })
 
+  const wrapperClass = asCard ? 'card' : 'ai-panel'
+  const title = (
+    <h2 className="card-title" style={{ margin: 0 }}>
+      {t('ai.title')}
+    </h2>
+  )
+
   if (status !== 'authenticated') {
     return (
-      <div className="ai-panel">
-        <p className="dim ai-empty">
-          {t('ai.signIn')}{' '}
-          <Link to="/login" state={{ from: pathname }}>
-            {t('menu.login')}
-          </Link>
-        </p>
-      </div>
+      <section className={wrapperClass}>
+        <div className="row-between wrap" style={{ marginBottom: 12 }}>
+          {title}
+        </div>
+        <SignInPrompt compact title={t('ai.signIn')} />
+      </section>
     )
   }
 
@@ -151,19 +170,20 @@ export default function AiVerdictSection({ sid }: Props) {
     : ''
 
   return (
-    <div className="ai-panel">
-      <div className="row-between wrap ai-head">
-        <div className="row" style={{ gap: 8 }}>
-          <strong className="ai-title">{t('ai.title')}</strong>
-          {result && <AiCallChip verdict={result.verdict} />}
+    <section className={wrapperClass}>
+      <div className="row-between wrap" style={{ marginBottom: 12 }}>
+        <div className="row wrap" style={{ gap: 8 }}>
+          {title}
+          {result && !asCard && <AiCallChip verdict={result.verdict} />}
         </div>
-        <div className="row" style={{ gap: 8 }}>
+        <div className="row wrap" style={{ gap: 8 }}>
           {!exhausted && left !== null && !result && (
             <span className="dim ai-quota">{t('ai.quotaLeft', { left: String(left) })}</span>
           )}
+          {run.isPending && <span className="spinner" />}
           <button
             type="button"
-            className="btn-sm"
+            className={`btn btn-sm${result || exhausted ? '' : ' btn-primary'}`}
             disabled={run.isPending || (exhausted && !result)}
             onClick={() => run.mutate()}
           >
@@ -183,14 +203,20 @@ export default function AiVerdictSection({ sid }: Props) {
         </p>
       )}
 
-      {!result && !run.isPending && !error && <p className="dim ai-empty">{t('ai.empty')}</p>}
+      {!result && !run.isPending && !error && <p className="dim">{t('ai.empty')}</p>}
 
-      {result && <AiVerdictBody result={result} />}
-    </div>
+      {result && <AiVerdictBody result={result} showBadge={asCard} />}
+    </section>
   )
 }
 
-function AiVerdictBody({ result }: { result: AiAnalysisResponse }) {
+function AiVerdictBody({
+  result,
+  showBadge,
+}: {
+  result: AiAnalysisResponse
+  showBadge: boolean
+}) {
   const { t, intlTag } = useI18n()
   const { verdict } = result
 
@@ -207,41 +233,42 @@ function AiVerdictBody({ result }: { result: AiAnalysisResponse }) {
 
   return (
     <>
-      <p className="ai-headline">{verdict.headline}</p>
+      {showBadge && <AiCallChip verdict={verdict} compact={false} />}
 
-      <p className="dim ai-meta">
+      <p className="dim" style={{ margin: showBadge ? '10px 0 0' : '0' }}>
+        {verdict.headline}
+      </p>
+
+      <p className="dim" style={{ margin: '10px 0 0' }}>
         {t('ai.confidence')}：{t(CONFIDENCE_KEY[verdict.confidence])}
         {' · '}
         {agrees
           ? t('ai.agreesWithRule', { label: ruleLabel })
           : t('ai.differsFromRule', { label: ruleLabel })}
+        {' · '}
+        {t('ai.asOf', { date: result.as_of })}
       </p>
 
       {verdict.reasons.length > 0 && (
-        <div className="ai-block">
-          <span className="ai-block-title">{t('ai.reasons')}</span>
-          <ul className="quote-bfp-reasons">
-            {verdict.reasons.map((reason) => (
-              <li key={reason}>{reason}</li>
-            ))}
-          </ul>
-        </div>
+        <ul className="reason-list">
+          {verdict.reasons.map((reason) => (
+            <li key={reason}>{reason}</li>
+          ))}
+        </ul>
       )}
 
       {verdict.risks.length > 0 && (
-        <div className="ai-block">
+        <>
           <span className="ai-block-title">{t('ai.risks')}</span>
-          <ul className="quote-bfp-reasons ai-risks">
+          <ul className="reason-list ai-risks">
             {verdict.risks.map((risk) => (
               <li key={risk}>{risk}</li>
             ))}
           </ul>
-        </div>
+        </>
       )}
 
-      <p className="dim ai-foot">
-        {t('ai.asOf', { date: result.as_of })}
-        {' · '}
+      <p className="dim" style={{ margin: '12px 0 0', fontSize: 11 }}>
         {t('ai.generatedAt', {
           time: new Date(result.generated_at).toLocaleString(intlTag, {
             month: 'numeric',

@@ -1105,9 +1105,10 @@ hold. Direction and magnitude are separate fields rather than one seven-valued
 enum, so the card can render 進場/退場 and 大/中/小 independently and an
 evaluation can score direction without having to agree about sizing.
 
-The button lives in the expanded watchlist row, below the 四大買賣點 verdict. It
-is on `/realtime` and on the stock card, requires a sign-in, and answers on
-POST.
+The button lives in three places, all the same endpoint: the expanded watchlist
+row and the stock card on `/realtime` (inline, under the 四大買賣點 chip), and
+the 個股 page at `/stock/:sid` as a card in the analysis stack. It requires a
+sign-in, and answers on POST.
 
 ### Why the model is not shown the bars
 
