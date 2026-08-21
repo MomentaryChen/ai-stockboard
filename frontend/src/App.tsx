@@ -1,13 +1,11 @@
 import { Link, Route, Routes, useLocation } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
 
-import { api } from './api/client'
 import { useAuth } from './auth/AuthContext'
-import LanguageSwitcher from './components/LanguageSwitcher'
 import PasswordGate from './components/PasswordGate'
 import RequireAuth from './components/RequireAuth'
 import UserMenu from './components/UserMenu'
 import { useI18n } from './i18n'
+import AdminDashboard from './pages/AdminDashboard'
 import AdminJobDetail from './pages/AdminJobDetail'
 import AdminJobs from './pages/AdminJobs'
 import AdminStockCodes from './pages/AdminStockCodes'
@@ -18,25 +16,6 @@ import MarketDashboard from './pages/MarketDashboard'
 import Register from './pages/Register'
 import StockDetail from './pages/StockDetail'
 import RealtimeBoard from './pages/RealtimeBoard'
-
-function HealthIndicator() {
-  const { t } = useI18n()
-  const { data } = useQuery({
-    queryKey: ['health'],
-    queryFn: api.health,
-    refetchInterval: 60_000,
-  })
-
-  if (!data) return null
-
-  const ok = data.status === 'ok'
-  return (
-    <span className="row dim" title={`PostgreSQL: ${data.database}`}>
-      <span className={`dot ${ok ? 'dot-ok' : 'dot-bad'}`} />
-      {ok ? t('health.connected') : t('health.disconnected')}
-    </span>
-  )
-}
 
 export default function App() {
   const { pathname } = useLocation()
@@ -72,9 +51,7 @@ export default function App() {
           </Link>
         </nav>
         <div className="topbar-right">
-          <HealthIndicator />
           <UserMenu />
-          <LanguageSwitcher />
         </div>
       </header>
 
@@ -95,6 +72,14 @@ export default function App() {
               element={
                 <RequireAuth>
                   <ChangePassword />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <RequireAuth adminOnly>
+                  <AdminDashboard />
                 </RequireAuth>
               }
             />

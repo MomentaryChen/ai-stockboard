@@ -176,6 +176,9 @@ export default function AdminJobs() {
 
   return (
     <div className="stack">
+      <Link to="/admin" className="back-link">
+        {t('admin.back')}
+      </Link>
       <div className="row-between wrap" style={{ gap: 16 }}>
         <h2 className="card-title" style={{ margin: 0 }}>
           {t('jobs.title')}

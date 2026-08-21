@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 
 import { api } from '../api/client'
 import type { PasswordResetResponse, Role, User } from '../api/types'
@@ -54,6 +55,9 @@ export default function AdminUsers() {
 
   return (
     <div className="stack">
+      <Link to="/admin" className="back-link">
+        {t('admin.back')}
+      </Link>
       <div className="row-between wrap" style={{ gap: 16 }}>
         <h2 className="card-title" style={{ margin: 0 }}>
           {t('adminUsers.title')}
