@@ -856,6 +856,73 @@ table.data tbody tr:hover { background: var(--bg-input); }
   font-size: 12px;
 }
 
+/* ---------- drag a stock into a group ---------- */
+
+/* The grab cursor is the only affordance a table row has -- there is no handle
+   to draw one on without stealing a column. */
+.quote-row.draggable > td:first-child { cursor: grab; }
+.quote-row.draggable:active > td:first-child { cursor: grabbing; }
+.quote-card.draggable { cursor: grab; }
+.quote-card.draggable:active { cursor: grabbing; }
+/* The row stays in place while it is in flight; fading it is what says "this
+   is the one you picked up" once the drag image detaches from the cursor. */
+.quote-row.dragging > td,
+.quote-card.dragging { opacity: 0.4; }
+
+/* One outline rule for every drop target -- chip, board section and card
+   section -- so hovering any of them reads the same. */
+.group-chip-wrap.drop-over,
+.group-chip.drop-over,
+.card-group.drop-over,
+.group-section.drop-over .group-section-row > td {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+/* The outline alone is easy to miss on a dense board, and a whole tinted
+   section is what tells you where the row will land. */
+.group-section.drop-over,
+.card-group.drop-over { background: rgba(76, 141, 255, 0.07); }
+
+/* Children of a hovered target would otherwise fire dragleave on the parent
+   and flicker the outline off. */
+.group-chip.drop-over *,
+.group-chip-wrap.drop-over *,
+.card-group.drop-over *,
+.group-section.drop-over * { pointer-events: none; }
+
+/* ---------- group sections ---------- */
+
+.group-section-row > td {
+  padding: 8px 10px 4px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-input);
+}
+.group-section-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  margin-right: 6px;
+}
+.group-section-empty > td,
+.group-section-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.card-group { margin-bottom: 4px; }
+.group-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 .group-assign {
   display: flex;
   align-items: center;

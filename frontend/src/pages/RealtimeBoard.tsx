@@ -22,12 +22,14 @@ import StockSearch from '../components/StockSearch'
 import WatchBoard from '../components/WatchBoard'
 import WatchlistGroups from '../components/WatchlistGroups'
 import { useDocumentPip } from '../hooks/useDocumentPip'
+import { useGroupDrop } from '../hooks/useGroupDrop'
 import { POLL_MS } from '../hooks/useLiveQuote'
 import { useWatchlist } from '../hooks/useWatchlist'
 import { useI18n } from '../i18n'
 import { errorMessage } from '../utils/errors'
 import { isMarketOpen } from '../utils/market'
 import { MINI_WINDOW, miniUrl, useMiniView } from '../utils/view'
+import { groupSections } from '../utils/watchlistGroups'
 import { MAX_WATCHLIST } from '../watchlistStorage'
 
 export default function RealtimeBoard() {
@@ -62,6 +64,9 @@ export default function RealtimeBoard() {
   const [live, setLive] = useState(isMarketOpen)
   const [view, setView] = useState<BoardView>(readBoardView)
   const [filter, setFilter] = useState<GroupFilter>(readBoardGroup)
+  // The list board keeps its own drop state inside WatchBoard; the card grid
+  // has no such component to hold it.
+  const cardDrop = useGroupDrop(groupBySid, assign)
 
   useEffect(() => {
     if (filter.kind === 'group' && !groups.some((group) => group.id === filter.id)) {
@@ -211,6 +216,16 @@ export default function RealtimeBoard() {
 
   const addingTo = filter.kind === 'group' ? filter.id : null
 
+  /**
+   * "All" is not the opposite of the folders -- it is every folder at once.
+   *
+   * Filtering to one group answers "what is in this one?"; the whole list still
+   * has to answer "where does everything sit?", and a flat twenty rows cannot.
+   * The headings are also the drop targets, so the view that shows every group
+   * is the view where a stock can be moved between any two of them.
+   */
+  const showGrouped = filter.kind === 'all' && groups.length > 0
+
   const liveButton = (
     <button
       type="button"
@@ -235,6 +250,7 @@ export default function RealtimeBoard() {
       }}
       onRename={renameGroup}
       onDelete={deleteGroup}
+      onAssign={assign}
       compact={mini || pip.pipWindow !== null}
     />
   )
@@ -249,50 +265,79 @@ export default function RealtimeBoard() {
       groups={groups}
       groupBySid={groupBySid}
       onAssign={assign}
+      grouped={showGrouped}
       bfpLoading={analysis.isPending}
       fetching={isFetching}
       compact={mini || pip.pipWindow !== null}
     />
   )
 
-  const cards = (
-    <div className="quote-grid">
-      {visible.map((entry) =>
-        entry.quote ? (
-          <RealtimeCard
-            key={entry.code}
-            quote={entry.quote}
-            onRemove={remove}
-            groups={groups}
-            groupId={groupBySid[entry.code] ?? null}
-            onAssign={assign}
-            bfp={entry.bfp}
-            bfpLoading={analysis.isPending}
-            aiBatched
-            // `isLoading`, not `isPending`: this one gates a button, and a
-            // disabled query is pending forever -- which would leave the panel
-            // unclickable rather than merely un-spinnered.
-            aiLoading={aiVerdicts.isLoading}
-          />
-        ) : (
-          // Watchlist entries the upstream returned nothing for still need a way out.
-          <article className="card quote-card" key={entry.code}>
-            <button
-              type="button"
-              className="btn-icon remove"
-              title={t('realtime.remove')}
-              onClick={() => remove(entry.code)}
-            >
-              &times;
-            </button>
-            <div style={{ fontWeight: 700, fontSize: 17 }}>{entry.code}</div>
-            <p className="dim" style={{ marginTop: 8 }}>
-              {entry.error ?? (isFetching ? t('realtime.loading') : t('realtime.noQuote'))}
-            </p>
-          </article>
-        ),
-      )}
+  function card(entry: BoardEntry) {
+    if (entry.quote) {
+      return (
+        <RealtimeCard
+          key={entry.code}
+          quote={entry.quote}
+          onRemove={remove}
+          groups={groups}
+          groupId={groupBySid[entry.code] ?? null}
+          onAssign={assign}
+          dragging={cardDrop.dragging === entry.code}
+          onDragStateChange={cardDrop.setDragging}
+          bfp={entry.bfp}
+          bfpLoading={analysis.isPending}
+          aiBatched
+          // `isLoading`, not `isPending`: this one gates a button, and a
+          // disabled query is pending forever -- which would leave the panel
+          // unclickable rather than merely un-spinnered.
+          aiLoading={aiVerdicts.isLoading}
+        />
+      )
+    }
+    // Watchlist entries the upstream returned nothing for still need a way out.
+    return (
+      <article className="card quote-card" key={entry.code}>
+        <button
+          type="button"
+          className="btn-icon remove"
+          title={t('realtime.remove')}
+          onClick={() => remove(entry.code)}
+        >
+          &times;
+        </button>
+        <div style={{ fontWeight: 700, fontSize: 17 }}>{entry.code}</div>
+        <p className="dim" style={{ marginTop: 8 }}>
+          {entry.error ?? (isFetching ? t('realtime.loading') : t('realtime.noQuote'))}
+        </p>
+      </article>
+    )
+  }
+
+  const cards = showGrouped ? (
+    <div className="stack">
+      {groupSections(visible, groups, groupBySid, t('board.groupUngrouped')).map((section) => {
+        const target = cardDrop.target(section.id)
+        return (
+          <section
+            key={section.id ?? 'ungrouped'}
+            className={`card-group${target.className}`}
+            {...target.handlers}
+          >
+            <h3 className="group-section-title">
+              {section.name}
+              <span className="group-count">{section.items.length}</span>
+            </h3>
+            {section.items.length === 0 ? (
+              <p className="group-section-empty">{t('board.groupEmptyDrop')}</p>
+            ) : (
+              <div className="quote-grid">{section.items.map(card)}</div>
+            )}
+          </section>
+        )
+      })}
     </div>
+  ) : (
+    <div className="quote-grid">{visible.map(card)}</div>
   )
 
   const emptyNote =
