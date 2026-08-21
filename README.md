@@ -3,10 +3,12 @@
 台股看板服務。預設畫面是**台股大盤**（加權指數）看板，另可查個股歷史 K 線、即時報價與基本資料，
 並對大盤與個股產生同一套分析結果。
 
-分析分成兩種，可以互相對照：
+分析分成三種，可以互相對照：
 
 - **傳統分析** — 規則式技術分析：均線與四大買賣點。已完成。
-- **AI 分析** — 由模型對同一份行情資料產生判讀。開發中。
+- **訊號回測** — 把上面那條規則在歷史日線上重跑一遍，算它的命中率與同期基準。已完成。
+- **AI 分析** — 由模型對同一份行情資料給出進出場與部位建議。已完成，但還沒有自己的回測，
+  所以它的判讀目前無法像四大買賣點那樣拿出一個歷史命中率。
 
 行情資料（TWSE／TPEX 日成交、即時報價、上市櫃清單）來自 [twstock](https://github.com/mlouielu/twstock)，
 原始碼收在 `vendor/twstock/`，以 editable 方式安裝，之後為了 AI 分析要調整取數邏輯時可以直接改。
@@ -16,7 +18,7 @@
 ai-stockboard/
 ├── deployment/          docker-compose.yml + .env（DB、server、frontend 共用同一份設定）
 ├── server/              FastAPI (uv) + Dockerfile
-├── frontend/            React 19 + Vite + Recharts（pnpm）+ Dockerfile / nginx.conf
+├── frontend/            React 19 + Vite + Recharts（pnpm）+ Dockerfile / nginx/
 ├── docs/
 │   └── screenshots/     The images this README embeds, captured by the script below
 ├── tools/
@@ -161,6 +163,9 @@ silently if someone "simplified" them, or if twstock's return types changed:
 | | What would go missing without the test |
 |---|---|
 | `_GrsBestFourPoint` | The 乖離 gate and close-vs-close volume-shrink rules regress to twstock's bugs. The 20 000-sequence experiment in this README never became a regression check. |
+| Backtest `WINDOW_BARS` | The replay feeds each day a trailing slice so the walk is O(n). If it is ever too short the stock page and the backtest disagree about the same day, and neither says so. |
+| Backtest look-ahead | Orders fill at the *next* bar's open. Filling at the signal bar's close would lift every number in the product and is invisible in the output. |
+| Backtest pooling | Pooled rates come from summed counts. Averaging per-stock rates lets a three-signal stock weigh as much as an eighty-signal one -- the exact distortion pooling removes. |
 | Refresh-token replay | A reused token would stop wiping every session. |
 | `must_change_password` | Restricted mode is two `Depends()` choices, not middleware. A third bare `get_authenticated_user` compiles. |
 | Alembic baseline / `upgrade_to_head` | `create_all` and `schema_patches.py` are gone. Editing the frozen baseline, or booting without `upgrade head`, is how a running database silently drifts from the models. |
@@ -193,12 +198,20 @@ docker compose ps               # db / server / frontend 都要 (healthy)
 
 打開 <http://localhost:8100>，進站就是大盤看板。
 
-| 服務 | 內容 | Host port |
-|---|---|---|
-| `db` | postgres:16-alpine，資料存在 `stockboard-pgdata` volume | `5433` |
-| `server` | FastAPI + uvicorn，`server/Dockerfile` | `8000` |
-| `frontend` | vite build 產物由 nginx 提供，`frontend/Dockerfile` | `8100` |
-| `db-backup` | nightly `pg_dump` into `deployment/backups/` on the host | — |
+| 服務 | 內容 | Host port | Bound to |
+|---|---|---|---|
+| `db` | postgres:16-alpine，資料存在 `stockboard-pgdata` volume | `5433` | `127.0.0.1` |
+| `server` | FastAPI + uvicorn，`server/Dockerfile` | `8000` | `127.0.0.1` |
+| `frontend` | vite build 產物由 nginx 提供，`frontend/Dockerfile` | `8100`, `8443` (TLS) | `0.0.0.0` |
+| `db-backup` | nightly `pg_dump` into `deployment/backups/` on the host | — | — |
+
+Only the frontend is published on every interface. `ports: "5433:5432"` means
+*all* interfaces, so on a host without a firewall that line is the database on
+the internet -- and neither the database nor the API is reached that way by
+anything in this deployment: the containers talk over the compose network, and
+browsers reach the API through nginx at `/api`. The published ports are for
+`psql` and `curl` from the host, which loopback covers. Set `POSTGRES_BIND` or
+`SERVER_BIND` to `0.0.0.0` when you have actually decided otherwise.
 
 nginx 把 `/api` 與 `/docs` proxy 到 `server:8000`，瀏覽器全程同源，所以 CORS 不會參與；
 其餘路徑 fallback 到 `index.html` 交給 react-router。啟動順序由 healthcheck 串起來：
@@ -219,6 +232,101 @@ nginx 把 `/api` 與 `/docs` proxy 到 `server:8000`，瀏覽器全程同源，�
 ```bash
 docker compose up -d --build server     # 或 frontend
 ```
+
+### Security headers
+
+nginx sends a fixed set of headers on every route, from
+`frontend/nginx/includes/security-headers.conf`:
+
+| Header | Value | Why |
+|---|---|---|
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; …` | See below -- the one that earns its keep |
+| `X-Content-Type-Options` | `nosniff` | Stops a response being executed as a type it did not declare |
+| `X-Frame-Options` | `DENY` | Clickjacking, for browsers predating `frame-ancestors` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Keeps the path (which can carry a stock code) off outbound referers |
+| `Permissions-Policy` | `geolocation=(), microphone=(), …` | Nothing here needs those APIs |
+| `Cross-Origin-Opener-Policy` | `same-origin` | Severs the `window.opener` handle |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | **Only over TLS** -- see the TLS section |
+
+CSP is the one that matters, and it is here because of a limitation admitted
+further down this file: **the access token lives in `localStorage`, so any
+script that runs on this origin can read it.** `script-src 'self'` is what stops
+an injected `<script src=…>` or an inline payload from being that script. The
+two mitigations belong together -- the token storage decision is only defensible
+with the policy in place.
+
+Two deliberate holes:
+
+- **`style-src` allows `'unsafe-inline'`.** React writes style props through the
+  CSSOM, which CSP does not govern at all, but Recharts emits `style` attributes
+  on the SVG it renders and those are blocked without it. A style cannot read
+  `localStorage`; a script can, and scripts stay locked to `'self'`.
+- **`/docs` and `/redoc` get no headers at all.** Swagger UI is a CDN bundle
+  with an inline bootstrap script, which this CSP blocks outright. A policy that
+  breaks the page it is protecting only teaches people to turn it off, so those
+  two paths are excluded — do not publish that port on an untrusted network.
+
+`add_header` does not merge in nginx: a `location` that declares any header of
+its own discards every header inherited from `server`. That is why the snippet
+is `include`d once per location rather than once at the top, and why
+`/assets/` -- which sets its own `Cache-Control` -- would silently lose the
+whole set if it were not.
+
+### TLS
+
+Out of the box the frontend serves plain HTTP, and says so in its log. Give it a
+certificate and it serves HTTPS instead:
+
+```bash
+cd deployment
+cp /etc/letsencrypt/live/example.com/fullchain.pem certs/
+cp /etc/letsencrypt/live/example.com/privkey.pem   certs/
+docker compose up -d frontend
+```
+
+The container's entrypoint looks for both files at start and picks its config
+from what it finds -- there is no flag and no second image. With a certificate:
+443 serves the app, port 80 redirects to it, and HSTS is sent. Without one: port
+80 serves the app and HSTS is not sent, because a policy announced over plain
+HTTP is ignored by browsers anyway, and announcing it before TLS works is how a
+hostname makes itself unreachable for a year.
+
+`/healthz` answers on port 80 in both modes and is never redirected. The
+container healthcheck uses it: following a redirect into a self-signed
+certificate would report the container unhealthy for a reason that has nothing
+to do with it.
+
+Certificates are mounted, never baked into the image -- an image carrying a
+private key is an image nobody can push to a registry. `deployment/certs/` is
+git-ignored apart from its README. Renewal is not automated here: copy the new
+files in and restart the frontend. If you would rather not run TLS in this
+compose file at all, terminate it in front (Caddy, a cloud load balancer,
+Cloudflare) and leave the frontend on plain HTTP -- the `$scheme`-driven HSTS
+header means nothing here has to change either way, as long as the proxy sets
+`X-Forwarded-Proto`.
+
+### Resource limits and log rotation
+
+Every service has a memory ceiling, a CPU ceiling, and a capped log:
+
+| | CPU | Memory | Override |
+|---|---|---|---|
+| `db` | 1.0 | 768m | `DB_CPU_LIMIT` / `DB_MEMORY_LIMIT` |
+| `server` | 2.0 | 1g | `SERVER_CPU_LIMIT` / `SERVER_MEMORY_LIMIT` |
+| `frontend` | 0.5 | 128m | `FRONTEND_CPU_LIMIT` / `FRONTEND_MEMORY_LIMIT` |
+| `db-backup` | 0.5 | 256m | `BACKUP_CPU_LIMIT` / `BACKUP_MEMORY_LIMIT` |
+
+The point is not to size the service accurately -- it is that a job which goes
+wrong should cost its own container rather than the host. Without a limit, one
+runaway fetch takes the machine down to swap and PostgreSQL with it; with one,
+the container is OOM-killed and restarted by `restart: unless-stopped` while
+everything else keeps serving. Raise them in `.env` if a limit is genuinely too
+low; deleting them from the compose file gets you back to the failure mode they
+exist for.
+
+Container logs are capped at 3 × 10 MB per service for the same reason: nothing
+rotates Docker's JSON log by default, and a crash loop writing a few hundred
+lines a second fills the disk -- which stops PostgreSQL too.
 
 ### Backups
 
@@ -266,11 +374,97 @@ terminates any other session still connected -- an open `psql` holds locks on
 the objects `pg_restore` is about to drop, which is how a restore turns into a
 half-applied schema.
 
-Two things this is not. It is one machine's disk: a dump next to the database
-covers a mistaken `down -v`, an accidental `delete`, and a bad migration, but
-not the disk itself. Point `BACKUP_DIR` somewhere else if that matters. And
-nothing alerts -- `docker compose logs db-backup` is the only place a failing
-backup shows up, the same limitation the batch jobs have.
+This is one machine's disk: a dump next to the database covers a mistaken
+`down -v`, an accidental `delete`, and a bad migration, but not the disk itself.
+Point `BACKUP_DIR` somewhere else if that matters.
+
+The backup directory is also mounted read-only into the API container, which is
+the only reason a backup that stopped happening ever gets noticed: `/api/health`
+reports the age of the newest `*.dump` and goes `degraded` past
+`BACKUP_MAX_AGE_HOURS`. Only `*.dump` counts -- an interrupted run leaves
+`*.dump.partial`, and treating that as a backup would undo the rename that makes
+it safe. `docker compose logs db-backup` is still where the reason lives.
+
+### Logs and request ids
+
+Several requests and several background jobs run concurrently in one process,
+so an unlabelled log interleaves them: a traceback from a job sits between two
+lines of somebody's history fetch and nothing says which is which. Every line
+therefore carries an id:
+
+```
+2026-08-21 04:00:03 INFO app.access [8f2a1c04d9b3e750]: GET /api/stocks/2330/history -> 200 in 412ms
+2026-08-21 04:00:12 ERROR app.services.jobs.runner [job:stock_code_sync:1a2b3c4d]: job stock_code_sync failed (trigger=schedule) in 41.2s -- ConnectionError: ...
+```
+
+nginx mints one per request (`$request_id`) and passes it on as `X-Request-ID`;
+the API adopts it, stamps it on everything logged while that request is in
+flight, and echoes it back on the response -- so a user reporting "it failed at
+14:02" can hand over the id their browser saw. An id arriving from a proxy
+further out is kept, so a trace does not restart at our edge; it is checked
+first (≤ 64 characters, `[A-Za-z0-9_.:-]`) because it is written verbatim into
+every log line, and an unbounded value is a way to forge log entries.
+
+Background jobs are not requests and get `job:<name>:<id>` instead, which is
+what makes `grep job:stock_code_sync` pull one run's lines out of the noise --
+including lines written deep inside a handler that knows nothing about jobs.
+
+`LOG_FORMAT=json` swaps the text format for one JSON object per line, for a
+shipper to parse; `LOG_LEVEL` sets the threshold. A failed job logs at `ERROR`
+rather than `INFO`, because `INFO` is where log lines go to be filtered out.
+
+One caveat: an *unhandled* exception's 500 response carries no `X-Request-ID`.
+Starlette's `ServerErrorMiddleware` wraps the user middleware stack from the
+outside and writes that response past ours. The log line still has the id, which
+is the half that matters.
+
+### What `/api/health` reports
+
+There is no alerting stack in this deployment, and adding one is a separate
+piece of work. What there is instead: the two failures that are otherwise
+completely invisible are folded into the endpoint an uptime monitor is already
+polling, and they move `status`.
+
+```jsonc
+{
+  "status": "degraded",              // watch this field
+  "database": "connected",
+  "stock_codes_loaded": 2412,
+  "stock_codes_synced_at": "2026-08-21T04:00:41Z",
+  "jobs": {
+    "failing": ["stock_code_sync"],  // most recent attempt failed
+    "last_failure_at": "2026-08-21T04:00:12Z"
+  },
+  "backup": {
+    "status": "stale",               // ok | stale | missing | unchecked
+    "taken_at": "2026-08-18T04:00:07Z",
+    "age_hours": 74.2
+  },
+  "alerts": [
+    "background job(s) failing: stock_code_sync",
+    "newest database backup is 74h old (limit 36h)"
+  ]
+}
+```
+
+`alerts` is empty exactly when `status` is `ok`, and each line is written to be
+readable in an alert body at 03:00 -- "a job is failing" is not actionable, so
+the jobs are named. Point any uptime monitor at this path and alert on `status`
+or on `alerts` being non-empty.
+
+Three things it deliberately does *not* do:
+
+- **It never answers non-2xx.** The compose healthcheck polls this, so a 503
+  would mark the server container unhealthy and stop the frontend from ever
+  starting -- which is the wrong response to "last night's backup did not run".
+  `status` carries the verdict; the HTTP code carries only "the process is up".
+- **A failing job is judged on its latest attempt only.** One that failed at
+  03:00 and succeeded on the 03:10 retry is working, and paging about it teaches
+  people to ignore the page.
+- **`backup: unchecked` is not a fault.** It means `BACKUP_STATUS_DIR` is unset,
+  which is the normal state for a server run outside Docker. Compose sets it to
+  the backup directory mounted read-only; `BACKUP_MAX_AGE_HOURS` (36h, not 24h,
+  so one late run is not an alert) decides when a dump counts as stale.
 
 ### Schema migrations
 
@@ -334,24 +528,28 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 
 | Method | Path | 說明 |
 |---|---|---|
-| GET | `/api/health` | 服務與資料庫狀態 |
+| GET | `/api/health` | 服務、資料庫、背景作業與備份狀態；`status` 是給監控看的總結。見 [what /api/health reports](#what-apihealth-reports) |
 | GET | `/api/stocks/search?q=&limit=` | 代碼／名稱搜尋 |
 | GET | `/api/stocks/{sid}` | 個股基本資料 |
 | GET | `/api/stocks/{sid}/history?months=6` | 歷史日成交. `months` 上限 24; 12 without a token, and `force=true` is **ADMIN** -- see [the fetch budget](#the-upstream-fetch-budget) |
 | GET | `/api/stocks/{sid}/dividends?years=5` | 除權息. `years` 上限 10; 5 without a token, `force=true` is **ADMIN**, same reason |
 | GET | `/api/stocks/{sid}/analysis/traditional?months=6&rule_set=grs` | 傳統分析：MA5/10/20/60 + 四大買賣點. Backfills like `/history`, so the same `months` cap applies |
 | GET | `/api/analysis/traditional?sids=2330,0050` | Batch 四大買賣點 from cached daily bars only (no TWSE fetch, max 20) |
+| GET | `/api/stocks/{sid}/analysis/backtest?rule_set=grs` | One stock's replay, served from `backtest_result` and recomputed when its bars move. Carries the equity curve the card draws; fixed window, so no `months`. 422 when too few bars are landed |
+| GET | `/api/analysis/backtest?sids=2330,0050&months=12` | Replays 四大買賣點 over cached bars and scores it against the base rate of the same days — see [how good is the signal](#how-good-is-the-signal-actually). Cache-only, max 20 |
 | GET | `/api/realtime?sids=2330,0050` | 即時報價，最多 20 檔（**需登入**） |
 | GET | `/api/market/open?date=&sids=` | Opening intel for one trading day: gap and drift for the index plus up to 20 watchlist codes. Defaults to today in Taipei; cache-only apart from the index's own backfill |
-| POST | `/api/auth/register` | 註冊，直接回一組 token |
-| POST | `/api/auth/login` | 登入，帳號或 Email 皆可 |
+| GET | `/api/auth/registration-policy` | Whether signing up needs an ADMIN's approval. Public, read before the form renders |
+| POST | `/api/auth/register` | 註冊。Under review it creates the account and returns `pending: true` **without tokens** — see [getting an account](#getting-an-account-and-how-often-you-may-guess) |
+| POST | `/api/auth/login` | 登入，帳號或 Email 皆可. Throttled per account and per source IP; both answer 429 with `Retry-After` |
 | POST | `/api/auth/refresh` | 換發 token（會輪替 refresh token） |
 | POST | `/api/auth/logout` | 撤銷一組 refresh token |
 | GET / PATCH | `/api/auth/me` | 讀取／更新自己的資料 |
 | POST | `/api/auth/me/password` | 改密碼，登出其他所有裝置，並回一組新 token |
-| GET | `/api/users?q=&limit=&offset=` | 使用者列表（ADMIN） |
+| GET | `/api/users?q=&pending=&limit=&offset=` | 使用者列表（ADMIN）. `pending=true` filters to the approval queue |
 | GET / PATCH / DELETE | `/api/users/{user_id}` | 檢視／改角色與狀態／刪除（ADMIN） |
 | POST | `/api/users/{user_id}/password-reset` | 重設密碼，回傳一次性臨時密碼（ADMIN） |
+| POST | `/api/users/{user_id}/unlock` | Lift a login lockout early, leaving the password alone（ADMIN） |
 | GET / PUT | `/api/watchlist` | 自選股，整批讀寫（需登入） |
 | GET | `/api/jobs` | Every background job: schedule, last run, next run (**ADMIN**) |
 | GET | `/api/jobs/{job_id}/runs?limit=50` | One job's run history (**ADMIN**) |
@@ -369,6 +567,10 @@ server 偵測到 `frontend/dist` 存在時會把它掛在 `/`，用一個 port �
 curl 'http://localhost:8000/api/stocks/2330/history?months=3'
 curl 'http://localhost:8000/api/stocks/2330/analysis/traditional'
 curl 'http://localhost:8000/api/analysis/traditional?sids=2330,2317,0050'
+
+# Was the signal any good? Pooled across stocks is the readable number.
+curl 'http://localhost:8000/api/stocks/2330/analysis/backtest'
+curl 'http://localhost:8000/api/analysis/backtest?sids=2330,2317,0050'
 
 # 即時報價要帶 access token，其餘行情端點不用
 curl 'http://localhost:8000/api/realtime?sids=2330,6488' -H "Authorization: Bearer $ACCESS_TOKEN"
@@ -439,6 +641,141 @@ twstock 版在兩萬組裡**沒有一次回傳 Don't touch**，而且與 grs 版
 
 ---
 
+## How good is the signal, actually?
+
+四大買賣點 reads three columns — volume, open, close — and compares the two most
+recent bars. There is no trend term, no position sizing, no institutional flow.
+That is a narrow view of a market by construction, so before the signal is used
+as a benchmark for anything else, it needs a number rather than a reputation.
+
+`GET /api/analysis/backtest` produces one. It replays the exact function the
+stock page calls (`traditional.best_four_point`) over the bars already in
+`daily_price`, and reports what happened over the next 5 / 10 / 20 trading days.
+
+**The base rate is the point.** A hit rate on its own is unreadable: the reader
+has to supply a reference, and the one they supply is 50 %. It is almost never
+50 %. In a window where 58 % of all days closed higher 20 bars later, a Buy rule
+that is right 55 % of the time lost to owning the stock and ignoring the board.
+So every response carries `baseline` — the same horizons measured over *every*
+judged day, signal or not — beside the signal's own rates, and `edges` does the
+subtraction:
+
+```
+edges[].buy_edge   = buy win rate  - baseline up rate
+edges[].sell_edge  = sell win rate - baseline down rate   # not up rate
+```
+
+The sell side is spelled out because it is the step that gets quietly wrong: a
+Sell is a get-out, so it competes with the days that *fell*, and its excess
+return is the drop it avoided (baseline minus signal, the other way round).
+
+**Pool before you conclude.** One stock's year fires a handful of signals, and a
+rate off a handful moves twenty points on a single trade. Passing several codes
+returns `pooled`, which sums wins and samples across the basket — sums, never an
+average of per-stock rates, so a stock with forty signals does not get the same
+vote as one with two. `pooled[].buy_edge` over a watchlist is the number that
+actually answers whether the rule beats doing nothing.
+
+Three things keep the replay honest, each pinned by a test in
+`server/tests/test_backtest.py` because a wrong backtest still returns tidy
+percentages and nothing downstream can tell:
+
+- **No look-ahead.** A verdict is computed from bar `i`'s close, so it cannot be
+  traded until bar `i+1` opens. Every simulated order fills at the next open.
+- **Unfinished business stays unfinished.** A Buy four days before the window
+  ends has no 20-day outcome; it is counted as `pending` and kept out of the
+  rate rather than scored as though the horizon had elapsed. A position still
+  open at the end is reported separately from completed trades.
+- **The same engine.** Signals come from the function the card on the page
+  calls. A backtest of a reimplementation measures the reimplementation.
+
+A stock with too little history is listed with a `note` instead of being
+dropped, and contributes nothing to `pooled` — otherwise a pooled rate drawn
+from eleven stocks would present itself as covering the twenty that were asked
+for.
+
+The route is cache-only, like the traditional batch: twenty cold codes would
+otherwise queue tens of month-fetches on the limiter the realtime poll shares.
+Open a stock's page first to fill its bars.
+
+## The scorecard on the board
+
+[The section above](#how-good-is-the-signal-actually) is the engine and the API.
+This is what a reader sees, and where the numbers live between page loads.
+
+A **signal backtest card** sits under the Best Four Point verdict on the stock
+page and the market board, and follows the rule-set switch on the card above
+it, so the corrected and the upstream rules can be graded side by side. It adds
+two things to what the batch route reports:
+
+- an **equity curve** — following the signal against buying and holding, both
+  indexed to the first judged bar and drawn on shared points, so the two can
+  never be plotted over different ranges;
+- a **trade simulation** — completed round trips, win rate, average holding
+  period, and max drawdown for each curve.
+
+### What it actually says
+
+Uncomfortable things, mostly, which is the point of having built it:
+
+| 2330, 12 months to 2026-08-20 | |
+|---|---|
+| Trading the signal | **+2.2 %** |
+| Buying and holding | **+85.5 %** |
+| Trade win rate | 75 % (3 of 4) |
+| Time in market | **12 %** |
+
+Three of four trades made money and the strategy still returned almost nothing,
+because it was in cash seven days out of eight. That is why exposure is a
+headline figure on the card rather than a footnote: it is the number that
+reconciles a good hit rate with a bad result, and without it the two look
+contradictory.
+
+The hit rates are the worse news. Over the same window every buy horizon lands
+37–43 percentage points *below* the baseline — in a market that mostly went up,
+the rule picked entries that did worse than picking days at random.
+
+### Why this one is cached and the batch is not
+
+`backtest_result` holds one row per (stock, rule set): headline figures as
+columns so "where does this signal work" is an `ORDER BY`, the equity curve and
+signal list as JSONB because nothing queries into them.
+
+The split follows from the window. The batch route takes a caller-chosen
+`months`, which cannot be cached and does not need to be — pooling is its
+point. The card is pinned to `BACKTEST_WINDOW_MONTHS` and backs a page anyone
+can load, so it has to be a lookup rather than a 240-day replay per view.
+
+Every row is derived and rebuildable from `daily_price`, which is what makes
+the arrangement safe:
+
+- the nightly **訊號回測預算** job is only a *warmer*, walking the stocks that
+  already have bars;
+- the endpoint is *self-healing* — a stock the job has never seen, or one that
+  has traded since, is recomputed on the spot and stored on the way out.
+
+So a cold cache costs a slower first card, never a missing or a wrong one. That
+matters because the job can only ever know about stocks somebody has already
+looked at.
+
+Staleness is measured against the newest bar in `daily_price`, not against a
+clock: a stock that has not traded since the last run does not need recomputing
+however long ago that was, and one that has does, however recently the job
+happened to fire.
+
+### The window is fixed, on purpose
+
+Twelve months (`BACKTEST_WINDOW_MONTHS`), not a range the card offers. A
+one-month backtest produces two or three signals, and a win rate over three
+samples renders exactly as authoritatively as one over eighty. Offering the
+short window would mostly be offering a way to generate noise that looks like
+evidence.
+
+---
+
+
+---
+
 ## 大盤（加權指數）
 
 首頁 `/` 是大盤看板：即時指數、K 線與均線、四大買賣點、近 10 日。個股頁在 `/stock/:sid`，即時報價在 `/realtime`。
@@ -466,6 +803,20 @@ curl 'http://localhost:8000/api/realtime?sids=t00' -H "Authorization: Bearer $AC
 清單裡沒有指數會被誤判成上櫃，所以頻道名寫在 `INDICES` 裡，由 `realtime_service` 直接指定。
 
 指數沒有 `nf`（全名）也沒有單量欄位，MIS 回的 payload 少那幾個 key，這部分在 service 層補掉。
+
+The OTC index is the same sid trick with a different pair of monthly reports,
+because TPEx does not publish `MI_5MINS_HIST` / `FMTQIK`. **`o00`** (櫃買指數)
+uses `indexInfo/inx` for OHLC and `afterTrading/tradingIndex` for volume; those
+reports quote volume in 張 and turnover in 仟元, so the fetcher scales both
+×1000 before they land in `daily_price` as 股 / 元, the same convention OTC
+stocks already use. Realtime is the MIS channel `otc_o00.tw`. Search 「櫃買」 or
+`o00` and the chart is `/stock/o00` -- the landing board stays TAIEX.
+
+```bash
+curl 'http://localhost:8000/api/stocks/o00'
+curl 'http://localhost:8000/api/stocks/o00/history?months=3'
+curl 'http://localhost:8000/api/realtime?sids=o00' -H "Authorization: Bearer $ACCESS_TOKEN"
+```
 
 ---
 
@@ -572,6 +923,11 @@ twstock 把上市櫃名冊做成兩個 CSV 打包在套件裡，更新方式是 
 但**刻意沒有退役任何代碼**。超過兩個排程週期沒有成功紀錄時，頁面上會出現警示橫幅。
 每個作業各保留最近 200 次紀錄。
 
+`/admin/jobs` requires somebody to go and look, which is why a failed run also
+logs at `ERROR` and shows up in `/api/health` as `jobs.failing` -- see
+[what /api/health reports](#what-apihealth-reports). That is the whole of the
+alerting; there is no pager.
+
 幾個刻意的決定：
 
 - **每個作業一條背景 daemon thread**。名冊首次抓取要 40 秒以上（上市那頁是 8MB HTML），
@@ -597,6 +953,7 @@ are all driven off that list.
 |---|---|---|
 | `stock_code_sync` | every 24 h (`STOCK_CODE_SYNC_INTERVAL_HOURS`), plus once at startup | reconciles `stock_code` with the exchanges' registry -- see above |
 | `refresh_token_cleanup` | daily at 04:10 | deletes expired refresh tokens, and revoked ones past their retention window |
+| `backtest_refresh` | daily at 05:20 | replays the four-point [signal backtest](#the-scorecard-on-the-board) for every stock whose bars have moved. Reads only local rows -- it is a cache warmer, and the endpoint recomputes anything it missed |
 
 Each attempt lands in `job_run`, whose `stats` column is JSONB rather than a set
 of columns: every job counts different things, and the admin table renders
@@ -690,16 +1047,21 @@ TWSE 有 **每 5 秒 3 個 request** 的限制，超過會被 ban。分析要跑
 server/app/services/analysis/
 ├── __init__.py
 ├── traditional.py     規則式：均線 + 四大買賣點
+├── backtest.py        把 traditional 的訊號在歷史上重跑一遍，算命中率與績效
 ├── features.py        純函式：從日線算出 AI 要看的衍生指標
 ├── gemini.py          唯一知道 provider 存在的模組：提示詞、結構化輸出、限流
 └── ai.py              編排：什麼時候該花一次 Gemini 請求，什麼時候不該
 ```
 
-兩種分析吃同一份 `daily_price` 資料，各自獨立產生結果，端點也分開，
-所以可以對同一支股票同時取得兩種判讀來比較。
+三者吃同一份 `daily_price` 資料，各自獨立產生結果，端點也分開，
+所以可以對同一支股票同時取得多種判讀來比較。
 
 傳統分析沒有自己重寫演算法：`_CachedStock` 把資料庫的資料餵回 twstock 的
 `Analytics` / `BestFourPoint`，因此結果與該套件本身一致，也不會多打一次交易所。
+
+`backtest.py` 同理，只是把時間軸往回推：它逐日呼叫 `traditional.best_four_point`
+本身，而不是另外寫一份規則，所以回測評的一定是頁面上那張卡片真正在用的引擎。
+落地與排程的部分在 `services/backtest_store.py`，引擎本身維持純函式。
 
 ```
 本服務  : close 2375.0  MA5 2380.0  MA10 2389.5  MA20 2358.25  buy / 量縮價不跌
@@ -815,6 +1177,9 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `POSTGRES_HOST` / `POSTGRES_PORT` | `localhost` / `5433` | server 連線位置；5433 避免撞到既有的 5432 |
 | `DATABASE_URL` | （未設） | 設了就蓋過上面組出來的連線字串，用來指向外部託管資料庫 |
 | `SERVER_PORT` / `FRONTEND_PORT` | `8000` / `8100` | docker compose 對外公開的 port |
+| `POSTGRES_BIND` / `SERVER_BIND` / `FRONTEND_BIND` | `127.0.0.1` / `127.0.0.1` / `0.0.0.0` | Which host interface each published port binds to. Only the frontend is meant to be reachable |
+| `TLS_CERT_DIR` / `FRONTEND_TLS_PORT` | `./certs` / `8443` | Drop `fullchain.pem` + `privkey.pem` in there and the frontend serves HTTPS; empty means plain HTTP. See [TLS](#tls) |
+| `DB_` / `SERVER_` / `FRONTEND_` / `BACKUP_` `_MEMORY_LIMIT`, `_CPU_LIMIT` | see [resource limits](#resource-limits-and-log-rotation) | Per-container ceilings, so a runaway job costs its container and not the host |
 | `CORS_ORIGINS` | `http://localhost:5173,...` | 允許的來源（走 nginx 時同源，用不到） |
 | `CURRENT_MONTH_TTL_SECONDS` | `900` | 當月資料快取秒數 |
 | `THROTTLE_MAX_CALLS` / `THROTTLE_WINDOW_SECONDS` | `3` / `5.5` | 上游速率限制 |
@@ -829,8 +1194,11 @@ Docker Compose 會自動讀它，API server 也讀同一份（`server/app/config
 | `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin` / （未設） / （未設） | 啟動時建立的第一個管理員，email 與密碼都設了才生效 |
 | `STOCK_CODE_SYNC_ENABLED` | `true` | First-boot default for the listing sync. Once an admin saves a schedule at `/admin/jobs`, the `job_schedule` row wins |
 | `STOCK_CODE_SYNC_INTERVAL_HOURS` | `24` | First-boot default for its interval, same as above |
+| `BACKTEST_WINDOW_MONTHS` | `12` | Trailing window the signal backtest replays. One window is offered rather than a per-request range -- a short one answers with win rates drawn from two or three signals |
 | `JOBS_SCHEDULER_ENABLED` | `true` | Master switch. Off means this process fires nothing on its own (manual runs still work); leave it on for exactly one replica |
 | `SCHEDULER_TIMEZONE` | `Asia/Taipei` | Wall clock a "daily at HH:MM" schedule is read in. `TZ` comes from the same .env, so the two agree by default |
+| `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | `json` emits one object per line for a shipper. Every line carries a request id -- see [logs and request ids](#logs-and-request-ids) |
+| `BACKUP_MAX_AGE_HOURS` | `36` | Past this, `/api/health` calls the newest dump stale and reports `degraded` |
 
 ---
 
@@ -1032,6 +1400,86 @@ never render and nothing polls.
 
 ---
 
+## Getting an account, and how often you may guess
+
+The section above is the reason this one exists. Gating realtime quotes behind a
+sign-in is only worth anything if an account means something -- and until this
+was added, it did not: registration was open, so ten seconds at the signup form
+bought anyone a share of the upstream budget, and the login endpoint accepted
+guesses forever.
+
+### Registration is reviewed
+
+`POST /api/auth/register` creates the account **dormant** and issues no tokens.
+An ADMIN activates it at `/admin/users`; only then can the person sign in.
+
+- The response is `201` either way, with `pending` in the body saying which
+  happened. There is no session to hand back for an account that may not be
+  used, and a token whose every request answered 403 would leave the client
+  looking signed in while nothing worked.
+- Activating **is** approving. There is no separate approve endpoint -- one
+  switch means the queue cannot drift out of step with who can actually sign in.
+- Two dormant states have to be told apart, which is why `pending_approval`
+  exists next to `is_active`: waiting for a first review and suspended by an
+  admin are the same `is_active = false`, and they need different words in the
+  UI and a different action from the operator.
+- The Register page reads `GET /api/auth/registration-policy` before it renders,
+  so it can say up front that submitting will not sign you in. Finding that out
+  afterwards reads as a broken signup.
+- Set `REGISTRATION_REQUIRES_APPROVAL=false` to go back to open registration.
+  That is for a local database, not for anything reachable from elsewhere.
+
+There is no email delivery in this service, so there is no "your account was
+approved" notification either -- the same constraint that shapes the ADMIN
+password reset above. The Register page says so rather than leaving the user
+watching an inbox.
+
+### Sign-in is limited on two dimensions
+
+Either limit alone has an obvious way around it, so both are enforced:
+
+| | Counts | Stored in | Why there |
+|---|---|---|---|
+| Per account | Consecutive failures against one account | `app_user.failed_login_count` / `locked_until` | A lockout that a container restart clears is a lockout the attacker can clear |
+| Per source IP | Failures against *any* account from one address | Process memory (`services/login_guard.py`) | An attacker who can rotate addresses defeats a shared table just as easily, so the write would buy nothing |
+
+The account lock stops one password list being ground against one account, and
+does nothing about the same attacker trying `admin`, `test`, `victor`... one
+guess each. The IP limit stops that, and does nothing about a botnet with one
+guess per address. Together both shapes cost something, which is all a login
+endpoint can honestly promise.
+
+Both answer **429 with `Retry-After`**, which the UI renders as a countdown --
+the difference between "try again later" and "try again in 12 minutes" is
+whether the user keeps hammering the endpoint for the whole window. A locked
+account refuses the **correct** password too; letting it through would defeat
+the point of the lock.
+
+Three deliberate trade-offs:
+
+- **The account lock is a denial-of-service surface.** Anyone who knows a
+  username can spend five wrong passwords to keep its owner out for the window.
+  That is accepted knowingly: the window is minutes rather than permanent, an
+  ADMIN can lift it from `/admin/users` without touching the password, and the
+  alternative is an unlimited guessing budget.
+- **The per-IP window is per process.** Several uvicorn workers would each hold
+  their own counters, multiplying the allowance by the worker count.
+  `server/Dockerfile` runs one worker; the account lock is the half that still
+  holds if that changes.
+- **`X-Real-IP` is only read from a trusted peer.** `docker-compose.yml` puts
+  nginx in front of the API *and* publishes the API's own port on the host, so
+  anything reaching that port directly could otherwise present as a fresh client
+  on every request. `TRUSTED_PROXY_IPS` defaults to loopback plus the private
+  ranges, which is safe to trust only because `SERVER_BIND` keeps that port on
+  loopback -- the two settings have to be widened together. Narrow this one to
+  the proxy's address if you publish the API beyond the machine.
+
+The knobs are all in `deployment/.env` -- `LOGIN_MAX_FAILURES`,
+`LOGIN_LOCKOUT_MINUTES`, `LOGIN_IP_MAX_FAILURES`, `LOGIN_IP_WINDOW_MINUTES`,
+`REGISTER_IP_MAX_PER_HOUR`, `TRUSTED_PROXY_IPS` -- and `.env.example` explains
+each one where it is set.
+---
+
 ## The upstream fetch budget
 
 Requiring a sign-in for `/api/realtime` only helps if the cached routes cannot be
@@ -1077,7 +1525,7 @@ given month is paid once, ever -- see [Why the endpoint is cache-only](#why-the-
 
 ## Deployment is single-process
 
-**This service can only run as one process.** Not "should preferably" — four
+**This service can only run as one process.** Not "should preferably" — five
 separate pieces of state live in process memory, and a second process silently
 gets its own copy of each:
 
@@ -1087,9 +1535,10 @@ gets its own copy of each:
 | "Is this job already running?" | `server/app/services/jobs/runner.py` — `_locks: dict[str, threading.Lock]` | `JobBusyError` can only fire against a run in the same process, so two processes will happily run the same job at the same time. |
 | The listed-instrument snapshot (~44k rows) | `server/app/services/codes.py` — `_snapshot` | Every process pays the memory, and `invalidate()` after a sync clears only the caller's copy. A database-backed snapshot has no TTL, so the other processes keep serving the pre-sync listing until they happen to restart. |
 | `JWT_SECRET`, when it is not set | `server/app/security.py` — `secrets.token_urlsafe(48)`, resolved once at import | Each process signs with a different key, so a token minted by one is rejected by the others and the user bounces between signed-in and signed-out. |
+| The per-IP login and registration windows | `server/app/services/login_guard.py` — `IpRateWindow`, a `dict` of `deque`s behind a `threading.Lock` | Each process counts only the attempts it saw, so N processes allow N × `LOGIN_IP_MAX_FAILURES` guesses per window from one address. This one is memory *by choice* — an attacker who can rotate addresses defeats a shared table just as easily — and the per-account lock it works with is in the database, so the half that has to hold under multiple processes already does. |
 
 The rate limit is the one that matters, because the entire caching design in
-[資料為什麼要落地](#資料為什麼要落地) exists to stay under it. The other three
+[資料為什麼要落地](#資料為什麼要落地) exists to stay under it. The other four
 degrade; that one gets the deployment banned by the upstream.
 
 Nothing enforces the constraint. `server/Dockerfile` runs `uvicorn` without
@@ -1109,6 +1558,12 @@ Each item has to move out of process memory before a second process is safe:
 - the listing snapshot behind a shared invalidation signal, or a version column
   each process can check cheaply before serving from its own copy;
 - `JWT_SECRET` into a required setting, dropping the per-process fallback.
+
+The per-IP login window is the exception: it would move to the same shared
+counter as the rate limit if one existed, but until then it degrades to a looser
+limit rather than a broken one, and
+[the account lock](#getting-an-account-and-how-often-you-may-guess) is already
+where it needs to be.
 
 None of that is scheduled. At the current size one process with a thread pool is
 enough, and stating the limit is more useful than a scaling story the code does
@@ -1142,10 +1597,9 @@ not support.
 - **The English UI covers interface copy only.** Stock names and industry groups
   stay as the exchange publishes them; server error `detail` strings are already
   English by convention.
-- 即時報價不寫入資料庫，只有歷史日成交落地（大盤的日線同樣落在 `daily_price`，sid = `t00`）。
+- 即時報價不寫入資料庫，只有歷史日成交落地（指數日線同樣落在 `daily_price`，sid = `t00` / `o00`）。
 - 大盤看板非交易時段顯示最近一個交易日的收盤。13:30 收盤到 TWSE 發布當日報表之間，
   日線還是前一天，此時改用 MIS 的最後成交值，避免看板倒退一天。
-- 目前只接了加權指數。櫃買指數（`o00`）的即時頻道可用，但歷史報表端點不同，尚未接。
 - 上市櫃名冊預設每 24 小時才對一次。當天早上剛掛牌的標的最久要等一天才查得到，
   急用可到 `/admin/stock-codes` 按「立即同步」。
 - Scheduling is per process; there is no leader election across replicas. Run with
@@ -1154,10 +1608,13 @@ not support.
   this switch covers the scheduler only, not the other per-process state: see
   [Deployment is single-process](#deployment-is-single-process).
 - Run history is capped at the most recent 200 attempts per job and lives only in
-  the database. Nothing alerts anywhere; someone has to look at `/admin/jobs`.
+  the database. A failed run logs at `ERROR` and surfaces in `/api/health` as
+  `jobs.failing`, so an uptime monitor pointed at that endpoint will see it --
+  but there is no pager and no notification: something outside this deployment
+  has to be watching, or someone has to look at `/admin/jobs`.
 - 四大買賣點只讀成交量、開盤、收盤三個欄位，且只比較最新一根與前一根 K 棒，沒有趨勢或部位概念；
   籌碼面（法人買賣超、融資融券）完全不在裡面。
-- 同一套規則現在也跑在大盤 `t00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
+- 同一套規則現在也跑在指數 `t00` / `o00` 上。這是工程上的一致性選擇，不是因為該方法原本適用於指數——
   指數的「量」是全市場成交股數，性質與單一個股的量能不同。
 - grs 與 twstock 都沒有為四大買賣點提供書目出處，可驗證的「標準」只到 grs 這份參考實作為止。
 - Schema changes are Alembic revisions under `server/alembic/versions/`, applied
@@ -1167,12 +1624,20 @@ not support.
   than letting a deploy do it. See the schema migrations section above.
 - Backups are a nightly `pg_dump` to one directory on the same host. That covers
   a mistaken `down -v`, a bad migration and a wrong `delete`; it does not cover
-  losing the machine. Nothing alerts when a backup fails -- it shows up in
-  `docker compose logs db-backup` and nowhere else.
+  losing the machine. A backup that stopped happening shows up in `/api/health`
+  as `backup.status: stale`; *why* it failed is only in
+  `docker compose logs db-backup`.
+- **TLS is off unless you supply a certificate**, and renewal is not automated:
+  copy the new `fullchain.pem` / `privkey.pem` into `deployment/certs/` and
+  restart the frontend. Terminating TLS in front of this compose file (Caddy, a
+  cloud load balancer) is the other supported shape -- see [TLS](#tls).
 - 重設密碼產生的臨時密碼**只顯示一次**，且只能靠 ADMIN 自己轉交。沒有寄信、沒有簡訊，
   也沒有「忘記密碼」的自助流程——使用者一定要找得到管理員。
 - **Token 存在 localStorage**，任何 XSS 都讀得到。專案沒有 cookie/CSRF 基礎建設，
   nginx 與 Vite proxy 都已原樣轉發 `Authorization`，所以先採 Bearer；access token 的短效期限制了外洩的影響範圍。
+  正式部署由 nginx 的 CSP（`script-src 'self'`）擋住「注入的 script 去讀它」這條路，
+  見 [security headers](#security-headers)——但那是緩解，不是把 token 移出 localStorage。
+  `pnpm dev` 起的 Vite dev server 沒有這層 CSP。
 - **登出後既有的 access token 仍然有效到過期為止**（最多 30 分鐘）。這是無狀態 token 的固有取捨；
   refresh token 會立刻撤銷，所以 session 無法續期。
 - 使用者資料表名為 `app_user` 而不是 `user`——`user` 是 PostgreSQL 保留字，

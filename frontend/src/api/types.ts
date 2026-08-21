@@ -208,6 +208,155 @@ export interface AiQuotaStatus {
   resets_at: string
 }
 
+/** How a signal type scored over one forward horizon.
+ *
+ *  `samples` counts only signals whose horizon has fully elapsed; `pending` is
+ *  the rest. Every derived field is null rather than 0 when there is nothing to
+ *  derive it from -- "0% of the time" and "no signals yet" are opposite
+ *  messages and must not render the same. */
+export interface BacktestHorizonStats {
+  horizon: number
+  samples: number
+  wins: number
+  pending: number
+  win_rate: number | null
+  average_return: number | null
+  median_return: number | null
+}
+
+/** The same horizon over every judged day, signal or not.
+ *
+ *  Read `BacktestHorizonStats.win_rate` against this and never against 50%. */
+export interface BacktestBaselineStats {
+  horizon: number
+  samples: number
+  ups: number
+  up_rate: number | null
+  average_return: number | null
+  median_return: number | null
+}
+
+/** Signal minus baseline. At or below zero, the rule added nothing.
+ *
+ *  Precomputed by the server because the sell side's arithmetic is not what
+ *  anyone guesses: a Sell competes with the days that *fell*. */
+export interface BacktestEdge {
+  horizon: number
+  buy_edge: number | null
+  sell_edge: number | null
+  buy_excess_return: number | null
+  sell_excess_return: number | null
+}
+
+export interface BacktestSignal {
+  date: string
+  signal: 'buy' | 'sell'
+  close: number
+  reasons: string[]
+  /** Keyed by horizon in trading days. A key is absent when the window ended
+   *  before that horizon did -- absent means unknown, not zero. */
+  forward: Record<string, number>
+}
+
+export interface BacktestTrade {
+  entry_date: string
+  entry_price: number
+  exit_date: string
+  exit_price: number
+  holding_days: number
+  profit: number
+}
+
+export interface BacktestEquityPoint {
+  date: string
+  strategy: number
+  buy_hold: number
+}
+
+export interface BacktestSimulation {
+  trades: BacktestTrade[]
+  trade_count: number
+  winning_trades: number
+  strategy_return: number
+  buy_hold_return: number
+  max_drawdown: number
+  buy_hold_max_drawdown: number
+  open_entry_date: string | null
+  open_entry_price: number | null
+  /** Fraction of judged days spent holding. A rule 80% in cash can only ever
+   *  capture 20% of a rally, however good its hit rate looks. */
+  exposure: number
+  trade_win_rate: number | null
+  average_holding_days: number | null
+  equity: BacktestEquityPoint[]
+}
+
+export interface BacktestResponse {
+  sid: string
+  name: string
+  rule_set: RuleSet
+  window_months: number
+  start: string
+  end: string
+  bars: number
+  judged_days: number
+  signal_count: number
+  buy_stats: BacktestHorizonStats[]
+  sell_stats: BacktestHorizonStats[]
+  baseline: BacktestBaselineStats[]
+  edges: BacktestEdge[]
+  simulation: BacktestSimulation
+  signals: BacktestSignal[]
+  computed_at: string
+  computed_through: string
+  cached: boolean
+}
+
+export interface BacktestSummary {
+  sid: string
+  name: string
+  rule_set: RuleSet
+  start: string | null
+  end: string | null
+  bars: number
+  judged_days: number
+  signal_count: number
+  buy_stats: BacktestHorizonStats[]
+  sell_stats: BacktestHorizonStats[]
+  baseline: BacktestBaselineStats[]
+  edges: BacktestEdge[]
+  strategy_return: number | null
+  buy_hold_return: number | null
+  exposure: number | null
+  trade_count: number
+  /** Why this stock could not be scored. Non-null means every figure is null. */
+  note: string | null
+}
+
+export interface BacktestPooledHorizon {
+  horizon: number
+  stocks: number
+  buy_samples: number
+  buy_win_rate: number | null
+  buy_average_return: number | null
+  sell_samples: number
+  sell_win_rate: number | null
+  sell_average_return: number | null
+  baseline_samples: number
+  baseline_up_rate: number | null
+  baseline_average_return: number | null
+  buy_edge: number | null
+  sell_edge: number | null
+  buy_excess_return: number | null
+  sell_excess_return: number | null
+}
+
+export interface BacktestBatchResponse {
+  items: BacktestSummary[]
+  pooled: BacktestPooledHorizon[]
+  errors: Record<string, string>
+}
+
 export interface RealtimeQuote {
   code: string
   name: string
@@ -314,6 +463,18 @@ export interface User {
    * holds them on /change-password.
    */
   must_change_password: boolean
+  /**
+   * True between self-service registration and an ADMIN activating the
+   * account. Together with `is_active` it separates the two dormant states
+   * the admin console has to word differently: waiting to be let in
+   * (`is_active` false, this true) and let in then suspended (both false).
+   */
+  pending_approval: boolean
+  /**
+   * ISO timestamp the account stops being locked out after repeated failed
+   * sign-ins, or null when it is not locked. Only ever set by the server.
+   */
+  locked_until: string | null
   created_at: string
 }
 
@@ -328,7 +489,28 @@ export interface TokenResponse {
 
 export interface UserListResponse {
   total: number
+  /** Accounts awaiting approval across the whole table, not just this page --
+   *  it is a badge, so a filtered or paginated count would be misleading. */
+  pending_total: number
   users: User[]
+}
+
+/** What signing up currently does, read before the Register form renders. */
+export interface RegistrationPolicy {
+  open: boolean
+  requires_approval: boolean
+}
+
+/** POST /api/auth/register, in one of two shapes.
+ *
+ *  `tokens` is present exactly when `pending` is false. Under review the
+ *  server deliberately issues nothing: the account exists and may not be used
+ *  yet, so there is no session to adopt.
+ */
+export interface RegisterResponse {
+  pending: boolean
+  user: User
+  tokens: TokenResponse | null
 }
 
 /** The one response in the API that carries a secret. */

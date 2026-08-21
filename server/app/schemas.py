@@ -274,6 +274,222 @@ class AiQuotaStatus(BaseModel):
     resets_at: datetime.datetime
 
 
+class BacktestHorizonStats(BaseModel):
+    """How one signal type scored over one forward horizon."""
+
+    horizon: int
+    samples: int
+    wins: int
+    #: Signals too recent to have run the horizon out. Excluded from `samples`,
+    #: so `win_rate` is never a partial outcome scored as a final one.
+    pending: int
+    win_rate: float | None
+    average_return: float | None
+    median_return: float | None
+
+
+class BacktestBaselineStats(BaseModel):
+    """The same horizon over every judged day, signal or not.
+
+    Read `BacktestHorizonStats.win_rate` against this and never against 50 %.
+    A rule that is right 55 % of the time, in a window where 58 % of all days
+    closed higher, lost to doing nothing -- and the win rate alone cannot say
+    so, which is why this ships in the same response rather than as something
+    the caller is trusted to look up.
+    """
+
+    horizon: int
+    samples: int
+    ups: int
+    up_rate: float | None
+    average_return: float | None
+    median_return: float | None
+
+
+class BacktestEdge(BaseModel):
+    """Signal minus baseline. Zero or below means the rule added nothing.
+
+    Served precomputed because the sell side is not the arithmetic a caller
+    guesses: a Sell competes with the days that *fell* (`1 - up_rate`), and its
+    excess return is the drop it avoided (baseline minus signal).
+    """
+
+    horizon: int
+    buy_edge: float | None
+    sell_edge: float | None
+    buy_excess_return: float | None
+    sell_excess_return: float | None
+
+
+class BacktestSignalOut(BaseModel):
+    """One historical verdict and what the price did after it.
+
+    `forward` is keyed by horizon in trading days; a key is absent when the
+    window ended before that horizon did. Absent means unknown, not zero.
+    """
+
+    date: datetime.date
+    signal: Literal["buy", "sell"]
+    close: float
+    reasons: list[str]
+    forward: dict[int, float]
+
+
+class BacktestTradeOut(BaseModel):
+    entry_date: datetime.date
+    entry_price: float
+    exit_date: datetime.date
+    exit_price: float
+    holding_days: int
+    profit: float
+
+
+class BacktestEquityPoint(BaseModel):
+    """Both curves on one point, indexed to 1.0 at the first judged bar.
+
+    Carried on shared points rather than as two series so the chart cannot draw
+    them over different date ranges, which is the one way an equity comparison
+    lies without looking wrong.
+    """
+
+    date: datetime.date
+    strategy: float
+    buy_hold: float
+
+
+class BacktestSimulationOut(BaseModel):
+    """Long-only replay: in on a Buy, out on a Sell, filled at the next open.
+
+    `strategy_return` includes any position still open at the end, marked to
+    the last close; `open_entry_date` is how a caller can tell. That position
+    is deliberately not one of `trades`, so it never reaches the trade stats.
+    """
+
+    trades: list[BacktestTradeOut]
+    trade_count: int
+    winning_trades: int
+    strategy_return: float
+    buy_hold_return: float
+    max_drawdown: float
+    buy_hold_max_drawdown: float
+    open_entry_date: datetime.date | None
+    open_entry_price: float | None
+    #: Fraction of judged days spent holding. A rule 80 % in cash can only ever
+    #: capture a fifth of a rally, however good its hit rate looks.
+    exposure: float
+    #: Null rather than 0 when nothing closed: "never won" and "never traded"
+    #: are different answers and must not render the same.
+    trade_win_rate: float | None
+    average_holding_days: float | None
+    #: Daily mark-to-market of both curves. Carried only by the single-stock
+    #: response, which draws it; the batch reports rates and would ship a
+    #: megabyte of points to plot nothing.
+    equity: list[BacktestEquityPoint] = []
+
+
+class BacktestResponse(BaseModel):
+    """One stock's replay in full, served from `backtest_result`.
+
+    The batch sibling below answers the same question across a basket and
+    stops at the rates. This one carries the equity curve, the trade list and
+    the recent signals, because it backs a card someone is reading about one
+    company.
+
+    `cached` says whether this came out of the table untouched or was
+    recomputed on the spot because the bars had moved past the stored row.
+    Surfaced rather than hidden: a board that quietly serves last week's answer
+    to "is this signal working" is worse than one that admits it is catching up.
+    """
+
+    sid: str
+    name: str
+    rule_set: Literal["grs", "twstock"]
+    #: The trailing window replayed, in months. Fixed by configuration rather
+    #: than chosen per request -- see `BacktestResult` for why.
+    window_months: int
+    start: datetime.date
+    end: datetime.date
+    bars: int
+    judged_days: int
+    signal_count: int
+    buy_stats: list[BacktestHorizonStats]
+    sell_stats: list[BacktestHorizonStats]
+    baseline: list[BacktestBaselineStats]
+    edges: list[BacktestEdge]
+    simulation: BacktestSimulationOut
+    signals: list[BacktestSignalOut]  # most recent first, capped
+
+    computed_at: datetime.datetime
+    computed_through: datetime.date
+    cached: bool
+
+
+class BacktestSummary(BaseModel):
+    """One stock's scorecard: the rates, without the per-signal list.
+
+    Everything is null and `note` explains why when the cache held too few
+    bars. A stock that could not be scored stays in `items` rather than
+    vanishing -- otherwise `pooled` reads as covering the whole basket when it
+    covered part of it.
+    """
+
+    sid: str
+    name: str
+    rule_set: Literal["grs", "twstock"]
+    start: datetime.date | None
+    end: datetime.date | None
+    bars: int
+    judged_days: int
+    signal_count: int
+    buy_stats: list[BacktestHorizonStats]
+    sell_stats: list[BacktestHorizonStats]
+    baseline: list[BacktestBaselineStats]
+    edges: list[BacktestEdge]
+    strategy_return: float | None
+    buy_hold_return: float | None
+    #: Fraction of judged days spent holding. A rule 80 % in cash can only ever
+    #: capture a fifth of a rally, however good its hit rate looks.
+    exposure: float | None
+    trade_count: int
+    note: str | None
+
+
+class BacktestPooledHorizon(BaseModel):
+    """The basket summed per horizon -- the only readable number here.
+
+    A single stock's year fires a handful of signals, and a rate off a handful
+    swings twenty points on one trade. `stocks` and the `*_samples` counts are
+    part of the answer rather than decoration: a pooled rate over 30 signals is
+    still noise, and the caller needs to be able to see that.
+    """
+
+    horizon: int
+    stocks: int
+    buy_samples: int
+    buy_win_rate: float | None
+    buy_average_return: float | None
+    sell_samples: int
+    sell_win_rate: float | None
+    sell_average_return: float | None
+    baseline_samples: int
+    baseline_up_rate: float | None
+    baseline_average_return: float | None
+    buy_edge: float | None
+    sell_edge: float | None
+    buy_excess_return: float | None
+    sell_excess_return: float | None
+
+
+class BacktestBatchResponse(BaseModel):
+    items: list[BacktestSummary]
+    #: Pooled over the stocks in `items` that had enough bars to score. Empty
+    #: when none did.
+    pooled: list[BacktestPooledHorizon]
+    #: Codes that could not be resolved at all. Same contract as the
+    #: traditional batch: one bad sid does not drop the rest.
+    errors: dict[str, str]
+
+
 class MaSeriesPoint(BaseModel):
     date: datetime.date
     ma5: float | None
@@ -378,13 +594,45 @@ class MarketOpenResponse(BaseModel):
     errors: dict[str, str]
 
 
+class JobHealth(BaseModel):
+    """Which background jobs are currently in a failed state."""
+
+    # Judged on each job's most recent attempt only: a failure that the retry
+    # already fixed is history, not a fault.
+    failing: list[str] = []
+    last_failure_at: datetime.datetime | None = None
+
+
+class BackupHealth(BaseModel):
+    """Age of the newest database dump on disk.
+
+    "unchecked" is not a fault: it means BACKUP_STATUS_DIR is unset, which is
+    the normal state for a server running outside Docker.
+    """
+
+    status: Literal["ok", "stale", "missing", "unchecked"]
+    taken_at: datetime.datetime | None = None
+    age_hours: float | None = None
+
+
 class HealthResponse(BaseModel):
+    # The rollup an uptime monitor should watch. "degraded" covers an
+    # unreachable database *and* the quieter faults below -- a failing nightly
+    # job or a backup that stopped happening are exactly the things nobody
+    # notices for a fortnight, so they have to move this field.
     status: Literal["ok", "degraded"]
     database: str
     stock_codes_loaded: int
     # None until `stock_code` has been reconciled with the exchanges at least
     # once -- i.e. the listing on offer is still twstock's bundled snapshot.
     stock_codes_synced_at: datetime.datetime | None = None
+
+    jobs: JobHealth = JobHealth()
+    backup: BackupHealth = BackupHealth(status="unchecked")
+    # One human-readable line per reason `status` is not "ok"; empty when it
+    # is. A monitor that can only match on text has something to match on, and
+    # whoever reads the alert has the reason in the alert body.
+    alerts: list[str] = []
 
 
 class CodeSyncResponse(BaseModel):
@@ -525,6 +773,14 @@ class UserOut(BaseModel):
     # password. While set, the API allows only /api/auth/me and
     # /api/auth/me/password, and the UI keeps them on the change-password page.
     must_change_password: bool
+    # True between self-service registration and an ADMIN activating the
+    # account. Distinguishes "waiting to be let in" from "was let in and then
+    # suspended" -- both of which are is_active=False.
+    pending_approval: bool
+    # Set while the account is locked out after repeated failed sign-ins.
+    # Exposed so an admin can see why somebody cannot get in without reading
+    # the server log, and so the UI can offer to lift it.
+    locked_until: datetime.datetime | None
     created_at: datetime.datetime
 
 
@@ -533,6 +789,18 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     phone: str | None = None
+
+
+class RegistrationPolicy(BaseModel):
+    """What self-service registration currently does. Public.
+
+    The Register page has to know before it renders: under review, submitting
+    the form does not sign you in, and telling the user that only after they
+    have typed everything in is how you get a bug report about a broken signup.
+    """
+
+    open: bool  # False once the deployment stops accepting new accounts at all
+    requires_approval: bool
 
 
 class LoginRequest(BaseModel):
@@ -553,6 +821,20 @@ class TokenResponse(BaseModel):
     user: UserOut
 
 
+class RegisterResponse(BaseModel):
+    """The outcome of POST /api/auth/register, in one of two shapes.
+
+    `tokens` is present exactly when `pending` is false. Under review there is
+    deliberately nothing to hand back: the account exists but may not be used,
+    and issuing a token that every other route answers 403 to would only make
+    the client look signed in while nothing worked.
+    """
+
+    pending: bool
+    user: UserOut
+    tokens: TokenResponse | None = None
+
+
 class ProfileUpdateRequest(BaseModel):
     email: EmailStr | None = None
     phone: str | None = None
@@ -565,6 +847,9 @@ class PasswordChangeRequest(BaseModel):
 
 class UserListResponse(BaseModel):
     total: int
+    # How many accounts are waiting for approval *in total*, not in this page
+    # and not after the filter -- it is the badge the admin console shows.
+    pending_total: int = 0
     users: list[UserOut]
 
 

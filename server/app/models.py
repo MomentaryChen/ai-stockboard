@@ -16,6 +16,10 @@ and what happened every time it did. The run log is the only way to tell a
 healthy nightly job from one that has been failing quietly, because both leave
 the tables they maintain untouched.
 
+`backtest_result` caches one 四大買賣點 replay per (stock, rule set) -- how the
+signal would have performed over the trailing window, recomputed from
+`daily_price` whenever the bars move past it.
+
 `app_user`, `refresh_token` and `watchlist_item` carry the account system: who
 may sign in, which refresh tokens are still live, and what each user watches.
 """
@@ -297,6 +301,81 @@ class DividendFetchLog(Base):
     )
 
 
+class BacktestResult(Base):
+    """The latest 四大買賣點 replay for one stock under one rule set.
+
+    A cache, not a record: every row can be recomputed from `daily_price` by
+    `services/analysis/backtest.py`, and is, whenever it is missing or older
+    than the bars it was built from. The table exists so the board does not pay
+    for a 240-day replay on every page load, and so "which stocks does this
+    signal actually work on" is a query rather than a fleet of recomputations.
+
+    Keyed on (sid, rule_set) because the two rule sets disagree often enough
+    that a win rate is meaningless without saying which one produced it -- the
+    same reason the card on the page carries the switch.
+
+    The window is a *property* of the run, not part of the key: one trailing
+    window is computed (`BACKTEST_WINDOW_MONTHS`) and `window_months` records
+    which. Letting callers pick the window would mostly serve requests short
+    enough to produce two or three signals, and a win rate over three samples
+    reads exactly as authoritative as one over eighty.
+
+    Headline figures are columns so they can be ordered and filtered; the
+    equity curve and the signal list are JSONB because nothing queries into
+    them and they are rendered whole.
+    """
+
+    __tablename__ = "backtest_result"
+
+    sid: Mapped[str] = mapped_column(String(16), primary_key=True)
+    rule_set: Mapped[str] = mapped_column(String(16), primary_key=True)
+
+    window_months: Mapped[int] = mapped_column(SmallInteger)
+    start_date: Mapped[datetime.date] = mapped_column(Date)
+    end_date: Mapped[datetime.date] = mapped_column(Date)
+    bars: Mapped[int] = mapped_column(Integer)
+    judged_days: Mapped[int] = mapped_column(Integer)
+
+    buy_signals: Mapped[int] = mapped_column(Integer, default=0)
+    sell_signals: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Completed round trips only. A position still open when the window ended
+    # is inside `strategy_return` but is not a trade and never a win -- see
+    # `open_entry` in the JSONB payload.
+    trades: Mapped[int] = mapped_column(Integer, default=0)
+    trade_wins: Mapped[int] = mapped_column(Integer, default=0)
+
+    strategy_return: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    buy_hold_return: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    max_drawdown: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    buy_hold_max_drawdown: Mapped[float | None] = mapped_column(Numeric(12, 6))
+    # Fraction of judged days spent holding. The number that explains a
+    # strategy trailing buy-and-hold without ever having lost money: it was
+    # not in the market.
+    exposure: Mapped[float | None] = mapped_column(Numeric(8, 6))
+
+    # {"buy": [{horizon, samples, wins, pending, ...}], "sell": [...],
+    #  "equity": [[date, value], ...], "signals": [...], "open_entry": ...}
+    payload: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    # The newest bar this was computed from. Compared against `daily_price` to
+    # decide staleness, rather than a clock: a stock that has not traded since
+    # the last run does not need recomputing, and one that has does, however
+    # recently the job happened to fire.
+    computed_through: Mapped[datetime.date] = mapped_column(Date)
+    computed_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        # "Where does this signal work best" reads the whole table ordered by
+        # one of the headline figures.
+        Index("ix_backtest_result_rule_set", "rule_set"),
+    )
+
+
 # Role names are a closed set, but stay a plain String column guarded by a check
 # constraint. A native PG enum would need an ALTER TYPE migration to gain a
 # value, and ALTER TYPE ... ADD VALUE cannot run inside a transaction block --
@@ -341,6 +420,40 @@ class AppUser(Base):
     # cannot be used to browse the account.
     must_change_password: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
+    )
+
+    # Raised by self-service registration while REGISTRATION_REQUIRES_APPROVAL
+    # is on, and cleared by the ADMIN who activates the account.
+    #
+    # It exists to tell two dormant accounts apart, because `is_active = false`
+    # alone cannot: an account waiting for its first review and an account an
+    # admin suspended look identical, and they need different words in the UI
+    # and different actions from the operator. It also keeps the distinction
+    # honest across restarts -- deriving "never reviewed" from the absence of
+    # refresh tokens or from created_at would guess wrong the moment either of
+    # those is cleaned up.
+    #
+    # The default is false, which is what makes this safe to add to a table
+    # that already holds rows: every existing account is one an admin already
+    # lives with, not one waiting in a queue nobody knew existed.
+    pending_approval: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+
+    # Consecutive failed sign-ins, and the instant this account starts
+    # answering again. Both are reset by any successful sign-in.
+    #
+    # In the database rather than in process memory on purpose: a lockout that
+    # a container restart clears is a lockout an attacker can clear, and
+    # `docker compose restart` is not a privileged operation for whoever is
+    # already grinding the login endpoint. The per-IP half of the same defence
+    # is in-process precisely because it does not have that property -- see
+    # services/login_guard.py.
+    failed_login_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
+    )
+    locked_until: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
     )
 
     created_at: Mapped[datetime.datetime] = mapped_column(

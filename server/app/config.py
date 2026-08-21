@@ -4,6 +4,7 @@ Loaded from `deployment/.env`, the same file Docker Compose reads, so the
 database credentials only have to be written down once.
 """
 
+import ipaddress
 from functools import lru_cache
 from pathlib import Path
 
@@ -61,6 +62,31 @@ class Settings(BaseSettings):
     stock_code_sync_enabled: bool = True
     stock_code_sync_interval_hours: int = 24
 
+    # --- Signal backtest ---
+    # How far back the 四大買賣點 replay reaches. One window is offered, not a
+    # range the caller picks: a short window produces two or three signals, and
+    # a win rate over three samples reads exactly as authoritative as one over
+    # eighty. Twelve months is the shortest window that survives that objection
+    # while still describing the regime the stock is currently in.
+    backtest_window_months: int = 12
+
+    # --- Logging ---
+    log_level: str = "INFO"
+    # text | json. JSON is one object per line for a log shipper; text is what
+    # you want when the log is being read by a person in `docker compose logs`.
+    log_format: str = "text"
+
+    # --- Health / backup reporting ---
+    # Path *inside this process* to the directory the db-backup container
+    # writes dumps into. Distinct from the compose-side BACKUP_DIR, which is a
+    # host path and means nothing in here. Unset -> /api/health reports the
+    # backup as "unchecked" rather than missing, which is right for a server
+    # run outside Docker.
+    backup_status_dir: str = ""
+    # A daily dump older than this is a fault worth reporting. 36h rather than
+    # 24h so one late run, or the hour the clock changes, is not an alert.
+    backup_max_age_hours: int = 36
+
     # --- Auth / JWT ---
     # JWT_SECRET deliberately has no usable default: when it is blank,
     # app/security.py generates an ephemeral per-process secret and logs a
@@ -75,6 +101,42 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_email: str = ""
     admin_password: str = ""
+
+    # --- Registration ---
+    # New accounts land dormant and an ADMIN activates them by hand. The point
+    # of gating realtime quotes behind a login is that the upstream quota is
+    # attributable to somebody; open registration hands that quota to anyone
+    # who can spend ten seconds on a signup form, which gives the gate nothing
+    # to attribute. Turn it off for a local development database, not for a
+    # deployment reachable from anywhere else.
+    registration_requires_approval: bool = True
+
+    # --- Login abuse ---
+    # Two dimensions, because either one alone has an obvious way around it:
+    # locking the account stops one attacker grinding one password list, and
+    # throttling the source stops that same attacker spreading the attempts
+    # across every username they can guess.
+    #
+    # Per account: consecutive failures before the account stops answering, and
+    # how long it stays that way. Any success resets the counter.
+    login_max_failures: int = 5
+    login_lockout_minutes: int = 15
+    # Per source IP: failures inside a sliding window. Deliberately far looser
+    # than the per-account limit -- a whole office behind one NAT address shares
+    # this budget, and locking a building out is a worse outcome than the extra
+    # guesses this allows.
+    login_ip_max_failures: int = 20
+    login_ip_window_minutes: int = 5
+    # Registrations from one source IP per hour. Cheap insurance against a
+    # script filling the review queue faster than an admin can empty it.
+    register_ip_max_per_hour: int = 5
+
+    # Whose X-Real-IP header is worth believing. `deployment/docker-compose.yml`
+    # publishes the API port on the host as well as putting nginx in front of
+    # it, so the header is only trustworthy when the connection itself came
+    # from the proxy -- anyone reaching :8000 directly can write whatever they
+    # like in it. Blank means trust nobody and use the socket peer address.
+    trusted_proxy_ips: str = "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
     # --- AI analysis (Google Gemini) ---
     # Blank disables the feature outright: the endpoint answers 503 and the
@@ -116,6 +178,25 @@ class Settings(BaseSettings):
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+    @property
+    def trusted_proxy_networks(self) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+        """Parsed once per settings instance; `get_settings` is lru_cached.
+
+        A malformed entry is dropped rather than raising: a typo here must not
+        stop the service from booting, and the failure mode of dropping it is
+        the safe one -- that proxy simply stops being trusted.
+        """
+        networks = []
+        for raw in self.trusted_proxy_ips.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                networks.append(ipaddress.ip_network(raw, strict=False))
+            except ValueError:
+                continue
+        return tuple(networks)
 
     @property
     def cors_origin_list(self) -> list[str]:

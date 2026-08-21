@@ -20,9 +20,14 @@ export default function AdminDashboard() {
   const { t } = useI18n()
 
   const health = useQuery({ queryKey: ['health'], queryFn: api.health })
-  // Only the total is rendered; the unfiltered listing is what /admin/users
-  // already caches under the same key, so this is usually free.
-  const users = useQuery({ queryKey: ['users', ''], queryFn: () => api.listUsers('') })
+  // Only the totals are rendered; the unfiltered listing is what /admin/users
+  // already caches under the same key, so this is usually free. The key has to
+  // match that page's shape exactly -- ['users', q, pendingOnly] -- or the two
+  // views each fetch their own copy.
+  const users = useQuery({
+    queryKey: ['users', '', false],
+    queryFn: () => api.listUsers(''),
+  })
   const jobs = useQuery({ queryKey: ['jobs'], queryFn: api.listJobs })
 
   const jobList = jobs.data?.jobs ?? []
@@ -50,7 +55,19 @@ export default function AdminDashboard() {
           <div className="admin-tile-stat tabular">
             {users.data ? t('admin.usersStat', { count: fmtInt(users.data.total) }) : '—'}
           </div>
-          <p className="dim admin-tile-desc">{t('admin.usersDesc')}</p>
+          {/* Accounts waiting for approval are the only thing on this tile
+              that somebody is actively blocked on, so they replace the
+              description and take the same colour the jobs tile uses for
+              "needs attention". */}
+          <p
+            className={`admin-tile-desc ${
+              (users.data?.pending_total ?? 0) > 0 ? 'up' : 'dim'
+            }`}
+          >
+            {(users.data?.pending_total ?? 0) > 0
+              ? t('admin.usersPending', { count: users.data?.pending_total ?? 0 })
+              : t('admin.usersDesc')}
+          </p>
         </Link>
 
         <Link to="/admin/jobs" className="card admin-tile">

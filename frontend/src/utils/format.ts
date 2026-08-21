@@ -76,6 +76,39 @@ export function fmtSigned(value: number | null | undefined, digits = 2): string 
   return `${sign}${value.toFixed(digits)}`
 }
 
+/** A fraction (0.626) as a percentage ('62.6%'). */
+export function fmtPercent(
+  value: number | null | undefined,
+  digits = 1,
+): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '--'
+  return `${(value * 100).toFixed(digits)}%`
+}
+
+/** Same, signed -- for returns, where the sign is the point. */
+export function fmtSignedPercent(
+  value: number | null | undefined,
+  digits = 1,
+): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '--'
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${(value * 100).toFixed(digits)}%`
+}
+
+/**
+ * The gap between two rates, in percentage *points*.
+ *
+ * Deliberately not '%'. A win rate of 55% against a base rate of 50% is five
+ * percentage points better, not five percent better, and writing it as '%'
+ * invites exactly the reading that makes a marginal edge sound like a decisive
+ * one. The unit is the whole reason the reader can tell those apart.
+ */
+export function fmtPoints(value: number | null | undefined, digits = 1): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '--'
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${(value * 100).toFixed(digits)}pp`
+}
+
 export type Direction = 'up' | 'down' | 'flat'
 
 export function direction(value: number | null | undefined): Direction {

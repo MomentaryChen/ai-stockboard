@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Job, ScheduleKind } from '../api/types'
 import { useI18n, type MessageKey, type Translate } from '../i18n'
+import { errorMessage } from '../utils/errors'
 import { fmtTime } from '../utils/jobs'
 
 type Unit = 'minutes' | 'hours' | 'days'
@@ -179,7 +180,7 @@ export default function JobScheduleForm({ job }: { job: Job }) {
 
       {save.error && (
         <div className="banner banner-error">
-          {t('schedule.saveFailed', { message: (save.error as Error).message })}
+          {t('schedule.saveFailed', { message: errorMessage(save.error, t) })}
         </div>
       )}
     </div>

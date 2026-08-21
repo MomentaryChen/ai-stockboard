@@ -16,6 +16,7 @@ import { useDocumentPip } from '../hooks/useDocumentPip'
 import { POLL_MS } from '../hooks/useLiveQuote'
 import { useWatchlist } from '../hooks/useWatchlist'
 import { useI18n } from '../i18n'
+import { errorMessage } from '../utils/errors'
 import { isMarketOpen } from '../utils/market'
 import { MINI_WINDOW, miniUrl, useMiniView } from '../utils/view'
 import { MAX_WATCHLIST } from '../watchlistStorage'
@@ -282,7 +283,7 @@ export default function RealtimeBoard() {
 
       {error && (
         <div className="banner banner-error">
-          {t('error.loadFailed', { message: (error as Error).message })}
+          {t('error.loadFailed', { message: errorMessage(error, t) })}
         </div>
       )}
 

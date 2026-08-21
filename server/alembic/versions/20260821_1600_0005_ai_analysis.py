@@ -1,7 +1,7 @@
 """ai_analysis: the shared cache of generated position calls
 
-Revision ID: 0003_ai_analysis
-Revises: 0002_retire_create_all_leftovers
+Revision ID: 0005_ai_analysis
+Revises: 0004_backtest_result_cache
 Create Date: 2026-08-21 11:30:00.000000+00:00
 
 One row per (sid, trading day, model, prompt version, locale). The unique index
@@ -20,8 +20,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0003_ai_analysis"
-down_revision: str | None = "0002_retire_create_all_leftovers"
+revision: str = "0005_ai_analysis"
+down_revision: str | None = "0004_backtest_result_cache"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

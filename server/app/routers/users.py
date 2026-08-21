@@ -8,6 +8,11 @@ losing the ability to fix it from the UI at all:
 
 The env-seeded account in app/services/auth.py is the remaining escape hatch.
 
+Activating an account is also *approving* it: self-service registration leaves
+a new account dormant with `pending_approval` set, and flipping `is_active` on
+is what lets it in. There is deliberately no separate approve endpoint -- one
+switch means the queue cannot drift out of step with who can actually sign in.
+
 `POST /{user_id}/password-reset` is the one route here that returns a secret.
 It exists because the service has no mail delivery: the generated password
 comes back in the response body for the admin to relay out of band, which is
@@ -42,14 +47,22 @@ def _load(db: Session, user_id: int) -> AppUser:
 @router.get("", response_model=UserListResponse)
 def list_users(
     q: str | None = Query(None, description="以帳號或 Email 片段過濾"),
+    pending: bool = Query(False, description="只列出等待審核的帳號"),
     limit: int = Query(50, ge=1, le=200, description="每頁筆數"),
     offset: int = Query(0, ge=0, description="略過前幾筆"),
     _admin: AppUser = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> UserListResponse:
-    total, rows = auth_service.list_users(db, q=q, limit=limit, offset=offset)
+    total, rows = auth_service.list_users(
+        db, q=q, limit=limit, offset=offset, pending_only=pending
+    )
+    # `pending_total` is counted regardless of the filter in force, because the
+    # admin console shows the size of the queue on a page that is usually
+    # showing everybody.
     return UserListResponse(
-        total=total, users=[auth_service.to_user_out(u) for u in rows]
+        total=total,
+        pending_total=auth_service.count_pending_approvals(db),
+        users=[auth_service.to_user_out(u) for u in rows],
     )
 
 
@@ -113,6 +126,28 @@ def reset_user_password(
     return PasswordResetResponse(
         user=auth_service.to_user_out(user), temp_password=temp_password
     )
+
+
+@router.post("/{user_id}/unlock", response_model=UserOut)
+def unlock_user(
+    user_id: int,
+    _admin: AppUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> UserOut:
+    """Lift a lockout before its timer runs out.
+
+    Repeated wrong passwords lock an account for a while, which is also how
+    somebody who knows a username can lock its owner out on purpose. This is
+    the way back that does not involve waiting, and unlike a password reset it
+    leaves the user's own password alone -- they may well have been typing it
+    correctly all along.
+
+    Unlike the other routes here it is not refused for your own account: an
+    admin who has locked themselves out in one browser can still be signed in
+    in another, and refusing would send them to the database for no reason.
+    Idempotent on an account that is not locked.
+    """
+    return auth_service.to_user_out(auth_service.unlock(db, _load(db, user_id)))
 
 
 @router.delete("/{user_id}", status_code=204)
