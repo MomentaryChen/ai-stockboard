@@ -671,6 +671,109 @@ class HoldBacktestResponse(BaseModel):
     curve: list[HoldEquityPoint]
 
 
+class HoldDeepYear(BaseModel):
+    """One calendar year of the record a long-horizon holder is buying into.
+
+    The quick lane hands the model aggregates -- average EPS, average ROE, a
+    payout streak, a count of years checked. Those answer "is this a good
+    company" and cannot answer "is it getting better or worse", which is the
+    question a ten-year commitment actually turns on. An average hides a
+    collapse followed by a recovery, and it hides a decade of quiet decline
+    equally well. So the deep lane hands over the series.
+
+    `cash_dividend` is keyed on the ex-date's calendar year -- what a holder
+    received and when -- while `eps` and `roe_pct` are the fiscal year's. The
+    two are deliberately not reconciled into one number here: see
+    `payout_ratio_pct` for the one place they are put together, and for why
+    that figure is approximate by construction.
+    """
+
+    year: int
+    eps: float | None
+    roe_pct: float | None
+    #: Cash paid with an ex-date in this calendar year, summed over a company
+    #: that pays more than once.
+    cash_dividend: float | None
+    #: This year's cash against *last* fiscal year's EPS, which is the Taiwan
+    #: convention: earnings are distributed the following year. Approximate for
+    #: a quarterly payer, whose distribution of one fiscal year straddles two
+    #: calendar ones -- which is why it is reported per year rather than only as
+    #: an average, so a reader can see the timing noise instead of trusting a
+    #: number that smoothed it away.
+    payout_ratio_pct: float | None
+
+
+class HoldDeepFundamentals(BaseModel):
+    """The per-year record, plus the two things a series says and a mean cannot."""
+
+    #: Newest first, capped at the checklist's window. Years with neither
+    #: earnings nor a payout are omitted rather than carried as empty rows.
+    years: list[HoldDeepYear]
+    #: Years where EPS fell against the year before, both figures present. The
+    #: plain-language version of "is the trend down", and unlike a CAGR it is
+    #: defined for a company that had a loss-making year.
+    eps_down_years: int | None
+    #: Compound annual growth of EPS across the window. Null unless the first
+    #: and last years both earned money -- a growth rate spanning a sign change
+    #: is arithmetic, not information.
+    eps_cagr_pct: float | None
+    #: Total cash paid over the window against total EPS earned, lagged a year.
+    #: Robust where the per-year figure is not: whatever straddles a calendar
+    #: boundary is inside both sums.
+    avg_payout_ratio_pct: float | None
+    years_with_eps: int
+    years_with_dividend: int
+
+
+class HoldDeepValuation(BaseModel):
+    """Where today's price sits against what this stock has traded at before.
+
+    Chen's 買得便宜 has two halves: cheap against a sector ceiling, which the
+    checklist already applies, and cheap against the company's own history,
+    which needs a history. `valuation_day` accumulates one session per day from
+    the exchange's own board-wide report, so this band is as long as the
+    deployment has been running -- which for a young install is days, not years.
+    `days_covered` is therefore read first, and a short history is a coverage
+    gap rather than a percentile nobody should trust.
+    """
+
+    days_covered: int
+    #: Oldest and newest stored session behind the percentiles, so a reader can
+    #: see what "its own history" actually spans.
+    first_date: datetime.date | None
+    last_date: datetime.date | None
+    pe_ratio: float | None
+    #: Share of stored sessions whose figure was below today's, 0-100. Low is
+    #: cheap for PE and PB; for yield it is the other way round, which the
+    #: prompt is told explicitly because the model will otherwise read all
+    #: three the same way.
+    pe_percentile: float | None
+    pb_ratio: float | None
+    pb_percentile: float | None
+    dividend_yield_pct: float | None
+    dividend_yield_percentile: float | None
+
+
+class HoldDeepInputs(BaseModel):
+    """What a deep 存股 verdict was shown beyond the checklist's snapshot.
+
+    Null on a quick response, and that is the only difference between the two
+    on the wire -- `features`, `rules` and the verdict keep their shape, so a
+    reader written against the quick response goes on working.
+
+    `chip` is the same structure the technical deep lane sends, from the same
+    extractor. A holder reads it for a different purpose -- whether the accounts
+    that hold this for years are adding or leaving, not whether a trade is
+    setting up -- but it is the same measurement, and two shapes for one
+    measurement would drift the first time a column moved.
+    """
+
+    fundamentals: HoldDeepFundamentals
+    valuation: HoldDeepValuation
+    chip: DeepChipFeatures
+    coverage_gaps: list[str]
+
+
 class AiHoldVerdict(BaseModel):
     """The 存股 call.
 
@@ -705,6 +808,13 @@ class AiHoldAnalysisResponse(BaseModel):
     #: The checklist's answer for the same snapshot, so the card can show the
     #: deterministic and the generated verdict side by side.
     rules: ChenRuleResult
+    #: Which of the two assessments this is. Part of the cache key, not a
+    #: display flag -- see `AiHoldAnalysis.depth`.
+    depth: AiDepth = "quick"
+    #: What the deep call additionally read. Null on a quick verdict.
+    deep: HoldDeepInputs | None = None
+
+
 class AiModelSettingsOut(BaseModel):
     """What /admin/ai shows: the live model and the closed set it may be."""
 

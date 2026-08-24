@@ -121,7 +121,7 @@ def _sum(rows: list[ChipDay], attr: str) -> int | None:
     return sum(int(v) for v in sample) if sample else None
 
 
-def _chip_features(chips: list[ChipDay], prices: list[DailyPrice]) -> DeepChipFeatures:
+def chip_features(chips: list[ChipDay], prices: list[DailyPrice]) -> DeepChipFeatures:
     """Institutional flow and margin over the last `CHIP_WINDOW` sessions."""
     # Newest first, which is the order `streak_and_net` counts a run in.
     rows = sorted(chips, key=lambda r: r.date, reverse=True)[:CHIP_WINDOW]
@@ -172,15 +172,13 @@ def _chip_features(chips: list[ChipDay], prices: list[DailyPrice]) -> DeepChipFe
     )
 
 
-def _coverage_gaps(
-    chip: DeepChipFeatures, fundamentals: HoldFundamentalsFeatures
-) -> list[str]:
-    """What the deep read could not see, as stable identifiers.
+def chip_gaps(chip: DeepChipFeatures) -> list[str]:
+    """What the chip read could not see, as stable identifiers.
 
-    Slugs rather than sentences, so the UI renders them in the reader's own
-    language -- the same contract `chen_rules._coverage_gaps` follows. It
-    deliberately reuses that function's fundamentals slugs where the meaning is
-    identical, so one catalogue serves both panels.
+    Public because the 存股 deep lane sends the same measurement and must
+    report its absence the same way. A second copy of these three conditions
+    would let one panel call four covered sessions partial while the other
+    called it covered, over identical rows.
     """
     gaps: list[str] = []
 
@@ -193,6 +191,21 @@ def _coverage_gaps(
         # and the margin one did not, which is a normal state between the two
         # publications and a different thing for an operator to look at.
         gaps.append("no_margin_data")
+
+    return gaps
+
+
+def _coverage_gaps(
+    chip: DeepChipFeatures, fundamentals: HoldFundamentalsFeatures
+) -> list[str]:
+    """What the deep read could not see, as stable identifiers.
+
+    Slugs rather than sentences, so the UI renders them in the reader's own
+    language -- the same contract `chen_rules._coverage_gaps` follows. It
+    deliberately reuses that function's fundamentals slugs where the meaning is
+    identical, so one catalogue serves both panels.
+    """
+    gaps: list[str] = chip_gaps(chip)
 
     if fundamentals.years_available == 0:
         gaps.append("no_annual_fundamentals")
@@ -222,7 +235,7 @@ def extract(
     than a covered stock's, and it is an answer, which is the point: refusing
     to generate would leave the button dead on every ETF.
     """
-    chip = _chip_features(chips, prices)
+    chip = chip_features(chips, prices)
     annual = hold_features.fundamentals_features(
         fundamentals, valuation, as_of, latest_close
     )

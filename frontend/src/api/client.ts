@@ -446,10 +446,17 @@ export const api = {
    *  click. The server answers 204 when nothing has been generated, which
    *  `request` turns into undefined; normalised to null here so "no verdict"
    *  is a value the caller can cache rather than an absence it re-fetches.
+   *
+   *  `depth` picks which of the two answers to read. Omitted, the server serves
+   *  the better-informed one, which is what a board wants from a single read.
+   *  Passed, the read is pinned -- so a panel showing 價量 keeps showing 價量,
+   *  and null means "this depth has not been paid for" rather than "fall back
+   *  to the other one".
    */
-  getAiAnalysis: (sid: string, locale: string) =>
+  getAiAnalysis: (sid: string, locale: string, depth?: AiDepth) =>
     request<AiAnalysisResponse | undefined>(
-      `/api/stocks/${sid}/analysis/ai?locale=${encodeURIComponent(locale)}`,
+      `/api/stocks/${sid}/analysis/ai?locale=${encodeURIComponent(locale)}` +
+        (depth ? `&depth=${encodeURIComponent(depth)}` : ''),
       { auth: true },
     ).then((result) => result ?? null),
 
@@ -508,12 +515,35 @@ export const api = {
   getHoldBacktest: (sid: string) =>
     request<HoldBacktestResponse>(`/api/stocks/${sid}/analysis/hold-backtest`),
 
+  /** The 存股 verdict this company already has, or null.
+   *
+   *  The free half of `generateHoldAnalysis`, and the same split the technical
+   *  lane has: cache-only, so it may run on mount, while the POST waits for a
+   *  click. `depth` pins which of the two assessments to read -- omitted, the
+   *  better-informed one is served; passed, a null means that lane has not been
+   *  paid for rather than "fall back to the other one".
+   *
+   *  Slow timeout: the snapshot behind it is the widest single-stock read in
+   *  the service, even though every part of it is cache-only. */
+  getHoldAnalysis: (sid: string, locale: string, depth?: AiDepth) =>
+    request<AiHoldAnalysisResponse | undefined>(
+      `/api/stocks/${sid}/analysis/ai-hold?locale=${encodeURIComponent(locale)}` +
+        (depth ? `&depth=${encodeURIComponent(depth)}` : ''),
+      { auth: true, timeoutMs: SLOW_TIMEOUT_MS },
+    ).then((result) => result ?? null),
+
   /** Ask the AI whether this is a company to accumulate and hold. Spends from
    *  the same daily allowance as the technical call, which is why the two
-   *  buttons share one quota query. */
-  generateHoldAnalysis: (sid: string, locale: string) =>
+   *  buttons share one quota query.
+   *
+   *  `depth` widens what the model is shown: "deep" adds the year-by-year
+   *  earnings and payout record, the valuation band against this stock's own
+   *  history, and institutional flow. A separate cached answer rather than a
+   *  richer rendering of the same one. */
+  generateHoldAnalysis: (sid: string, locale: string, depth: AiDepth = 'quick') =>
     request<AiHoldAnalysisResponse>(
-      `/api/stocks/${sid}/analysis/ai-hold?locale=${encodeURIComponent(locale)}`,
+      `/api/stocks/${sid}/analysis/ai-hold?locale=${encodeURIComponent(locale)}` +
+        `&depth=${encodeURIComponent(depth)}`,
       { method: 'POST', auth: true, timeoutMs: AI_TIMEOUT_MS },
     ),
 

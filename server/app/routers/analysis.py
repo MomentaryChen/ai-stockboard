@@ -27,14 +27,18 @@ separate routes with their own vocabulary rather than extra fields on the ones
 above, because a hit rate over 5/10/20 days is not a grade a holding strategy
 can be given, and one blended score across both horizons would mean nothing.
 
-`/analysis/ai-hold` still has only the metered half. The free read below is for
-the position-call lane alone, so a stored hold assessment is still invisible
-until somebody pays for it a second time.
+Both AI lanes now come in pairs -- a free GET that can only read what has been
+generated, and a metered POST that may generate -- and both take a `depth`.
+That parameter is the subject, not a rendering flag: a quick verdict and a deep
+one are two answers about the same trading day, kept in two rows, and every
+entrance that knows which one it is being asked about has to say so. An
+unpinned probe in front of the meter is how the two lanes came to share one
+answer in the first place.
 """
 
 import datetime
 import math
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
@@ -282,7 +286,11 @@ def _ai_window_start() -> datetime.date:
 
 
 def _cached_verdict(
-    db: Session, sid: str, name: str, locale: str
+    db: Session,
+    sid: str,
+    name: str,
+    locale: str,
+    depth: AiDepth | None = None,
 ) -> AiAnalysisResponse | None:
     """A stored verdict for `sid`, or None -- without ever calling the exchange.
 
@@ -291,13 +299,20 @@ def _cached_verdict(
     is the same staleness test `get_history` would apply, asked without acting
     on it, so a True here means `read_prices` is exactly the input the metered
     path would have used.
+
+    `depth` pins which of the two answers counts as a hit. Every caller that
+    knows which one it is asking about has to pass it: this probe stands in
+    front of the metered path, so an unpinned lookup there returns the *other*
+    depth's verdict for free and the button that was pressed never runs.
     """
     buckets = history_service.month_range(AI_MONTHS)
     if not history_service.months_are_cached(db, sid, buckets):
         return None
 
     rows = history_service.read_prices(db, sid, _ai_window_start())
-    return ai_service.get_cached(db, sid=sid, name=name, rows=rows, locale=locale)
+    return ai_service.get_cached(
+        db, sid=sid, name=name, rows=rows, locale=locale, depth=depth
+    )
 
 
 @router.get(
@@ -312,6 +327,13 @@ def get_ai_analysis(
     response: Response,
     locale: str = Query(
         ai_service.DEFAULT_LOCALE, description="要讀哪個語言的判讀（zh-TW / en）"
+    ),
+    depth: AiDepth | None = Query(
+        None,
+        description=(
+            "只讀這個深度的判讀。省略時回傳資訊較完整的那一份"
+            "（有深度評估就給深度評估）"
+        ),
     ),
     _user: AppUser = Depends(deps.get_current_user),
     db: Session = Depends(get_db),
@@ -328,6 +350,12 @@ def get_ai_analysis(
     state of this endpoint, not an error, and 404 here would be indistinguishable
     from the 404 an unknown sid gets three lines below.
 
+    `depth` turns this into the free way to move between the two answers. Omit
+    it and the better-informed one is served, which is what a board wants from
+    a single read. Name it and the panel showing 價量 stays showing 價量 -- and
+    a 204 for a depth nobody has paid for is the correct answer, not a reason
+    to fall back to the other one.
+
     Signed in for the same reason `/api/realtime` is -- this is the one class of
     market data the deployment pays per request for, and read access to it
     follows the account, not the URL.
@@ -336,7 +364,9 @@ def get_ai_analysis(
     if info is None:
         raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")
 
-    result = _cached_verdict(db, sid, info.name, ai_service.normalise_locale(locale))
+    result = _cached_verdict(
+        db, sid, info.name, ai_service.normalise_locale(locale), depth
+    )
     if result is None:
         return Response(status_code=204)
 
@@ -450,7 +480,10 @@ def generate_ai_analysis(
     # trading day. On a hit this turns a request that could queue six TWSE
     # month-fetches into two indexed reads.
     if not regenerate:
-        hit = _cached_verdict(db, sid, info.name, locale)
+        # Pinned to the depth that was asked for. Unpinned, pressing 價量評估 on
+        # a stock somebody had already analysed deeply returned the deep row --
+        # free, and labelled as the answer to a question it was not asked.
+        hit = _cached_verdict(db, sid, info.name, locale, depth)
         if hit is not None:
             response.headers["Cache-Control"] = "no-store"
             return hit
@@ -524,8 +557,26 @@ HOLD_BACKTEST_MONTHS = 132
 HOLD_BACKTEST_YEARS = 11
 
 
-def _hold_snapshot(db: Session, sid: str, info) -> tuple[HoldFeatures, ChenRuleResult]:
-    """Everything the 存股 lane needs, built once and shared by both routes.
+class _HoldSnapshot(NamedTuple):
+    """The 存股 snapshot, and the rows it was derived from.
+
+    The rows travel with it because the deep verdict needs them -- the
+    year-by-year payout record and the earnings series are derivations of the
+    same `dividend_event` and `fundamentals_annual` reads the checklist already
+    made. Re-reading them inside the AI service would be three more queries for
+    rows this function is already holding, and would let the two derivations
+    disagree about a window boundary.
+    """
+
+    features: HoldFeatures
+    rules: ChenRuleResult
+    prices: list
+    dividends: list
+    fundamentals: list
+
+
+def _hold_snapshot(db: Session, sid: str, info) -> _HoldSnapshot:
+    """Everything the 存股 lane needs, built once and shared by every route.
 
     Built here rather than inside each service so the free checklist and the
     metered verdict are provably reading the same numbers: a model asked about
@@ -564,7 +615,13 @@ def _hold_snapshot(db: Session, sid: str, info) -> tuple[HoldFeatures, ChenRuleR
         fundamentals=annual,
         valuation=valuation,
     )
-    return features, chen_rules.evaluate(features)
+    return _HoldSnapshot(
+        features=features,
+        rules=chen_rules.evaluate(features),
+        prices=rows,
+        dividends=events,
+        fundamentals=annual,
+    )
 
 
 @router.get("/{sid}/analysis/chen", response_model=ChenAnalysisResponse)
@@ -589,10 +646,73 @@ def get_chen_analysis(
     if info is None:
         raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")
 
-    features, rules = _hold_snapshot(db, sid, info)
+    snapshot = _hold_snapshot(db, sid, info)
     return ChenAnalysisResponse(
-        sid=sid, name=info.name, as_of=features.as_of, features=features, rules=rules
+        sid=sid,
+        name=info.name,
+        as_of=snapshot.features.as_of,
+        features=snapshot.features,
+        rules=snapshot.rules,
     )
+
+
+@router.get(
+    "/{sid}/analysis/ai-hold",
+    response_model=AiHoldAnalysisResponse,
+    responses={204: {"description": "尚未產生過這個交易日的存股判讀"}},
+)
+def get_hold_analysis(
+    sid: str,
+    response: Response,
+    locale: str = Query(
+        hold_ai_service.DEFAULT_LOCALE, description="要讀哪個語言的判讀（zh-TW / en）"
+    ),
+    depth: AiDepth | None = Query(
+        None,
+        description=(
+            "只讀這個深度的判讀。省略時回傳資訊較完整的那一份"
+            "（有深度評估就給深度評估）"
+        ),
+    ),
+    _user: AppUser = Depends(deps.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The 存股 verdict already generated for this company, if any.
+
+    The free half of the POST below, and the half this lane went without for a
+    release: until it existed, the only way to discover a stored hold verdict
+    was to POST for it, so a company that had already been assessed rendered as
+    though it never had and every reader was offered a button whose answer was
+    already in the database. The technical lane learned that first; this is the
+    same fix, and the deep lane is what made it urgent -- two assessments a
+    reader can move between are worth nothing if arriving at either costs money.
+
+    Nothing here can spend a Gemini request or reach the exchange: the snapshot
+    behind it is the same cache-only one `/analysis/chen` builds.
+
+    204 rather than 404 for a miss, and `depth` pins which of the two
+    assessments counts as one -- a reader looking at the 深度 lane is told it is
+    unpaid rather than handed the checklist-only verdict under its heading.
+    """
+    info = codes_service.get_stock(sid)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")
+
+    snapshot = _hold_snapshot(db, sid, info)
+    result = hold_ai_service.get_cached(
+        db,
+        features=snapshot.features,
+        rules=snapshot.rules,
+        locale=hold_ai_service.normalise_locale(locale),
+        depth=depth,
+    )
+    if result is None:
+        return Response(status_code=204)
+
+    # Metered upstream of here, so no shared proxy may keep a copy -- the row it
+    # came from is the cache that matters, and it is keyed on the trading day.
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 @router.post("/{sid}/analysis/ai-hold", response_model=AiHoldAnalysisResponse)
@@ -601,6 +721,13 @@ def generate_hold_analysis(
     response: Response,
     locale: str = Query(
         hold_ai_service.DEFAULT_LOCALE, description="判讀要用哪個語言生成（zh-TW / en）"
+    ),
+    depth: AiDepth = Query(
+        "quick",
+        description=(
+            "評估深度。quick = 只看存股檢查表的快照；deep = 另外帶入逐年 EPS/ROE "
+            "與配息、本益比與殖利率的歷史分位、三大法人籌碼"
+        ),
     ),
     regenerate: bool = Depends(deps.regenerate_ai),
     user: AppUser = Depends(deps.get_current_user),
@@ -611,6 +738,13 @@ def generate_hold_analysis(
     POST, signed-in and cached on the trading day, exactly like `/analysis/ai`
     -- and drawing on the *same* daily allowance rather than a second one, so
     shipping this lane did not double what an account can spend.
+
+    `depth` widens what the model is shown; it does not change the answer's
+    shape, so a client that ignores it keeps working. Both depths are cached
+    separately and both draw on the one allowance -- a deep call is one
+    generation, not two, even though it costs the provider more. The deep path
+    reads `chip_day` and `valuation_day` and never fetches; see
+    `hold_ai.deep_inputs` for why that matters on a page anyone can open.
     """
     if not hold_gemini.is_configured():
         raise HTTPException(
@@ -621,16 +755,20 @@ def generate_hold_analysis(
     if info is None:
         raise HTTPException(status_code=404, detail=f"Stock ID '{sid}' not found")
 
-    features, rules = _hold_snapshot(db, sid, info)
+    snapshot = _hold_snapshot(db, sid, info)
 
     try:
         result = hold_ai_service.get_or_create(
             db,
-            features=features,
-            rules=rules,
+            features=snapshot.features,
+            rules=snapshot.rules,
+            prices=snapshot.prices,
+            dividends=snapshot.dividends,
+            fundamentals=snapshot.fundamentals,
             user=user,
             locale=locale,
             force=regenerate,
+            depth=depth,
         )
     except hold_ai_service.InsufficientData as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

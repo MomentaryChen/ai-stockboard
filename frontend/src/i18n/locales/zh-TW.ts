@@ -353,6 +353,8 @@ export const zhTW = {
   'ai.rerunDeep': '重新深度評估',
   'ai.depthQuick': '價量',
   'ai.depthDeep': '深度',
+  'ai.depthSelect': '選擇要看哪一種評估',
+  'ai.emptyDeep': '按下按鈕，讓 AI 再帶入法人籌碼與年度基本面給出進出場與部位建議。',
   'ai.deepIncluded': '已額外納入近 {days} 個交易日的三大法人籌碼、融資融券與年度基本面。',
   'ai.deepLead': '深度評估會再帶入法人籌碼與年度基本面，同樣計入今日次數。',
   'ai.gaps': '未能納入的資料',
@@ -405,6 +407,8 @@ export const zhTW = {
   'gap.noChipData': '尚未載入三大法人日報，籌碼面無法納入判讀。',
   'gap.partialChipCoverage': '法人日報只涵蓋少數幾個交易日，近五日買賣超不具代表性。',
   'gap.noMarginData': '融資融券日報尚未發布或未載入，槓桿變化無法判讀。',
+  'gap.noValuationHistory': '尚未累積本益比與殖利率的每日資料，無法判斷目前估值是貴是便宜。',
+  'gap.shortValuationHistory': '本益比與殖利率的歷史不足一季，估值分位僅反映近期行情，不具代表性。',
   'hold.dividendBlock': '配息',
   'hold.valuationBlock': '評價',
   'hold.streak': '連續配息',
@@ -425,7 +429,17 @@ export const zhTW = {
   'holdAi.run': 'AI 評估',
   'holdAi.running': '評估中…',
   'holdAi.rerun': '重新評估',
+  'holdAi.runDeep': '深度評估',
+  'holdAi.runningDeep': '深度評估中…',
+  'holdAi.rerunDeep': '重新深度評估',
+  'holdAi.depthQuick': '檢查表',
   'holdAi.empty': '按下按鈕，讓 AI 依配息、基本面與價格資料判斷這檔適不適合長期存股。',
+  'holdAi.emptyDeep':
+    '按下按鈕，讓 AI 再帶入逐年 EPS 與配息、估值分位與法人籌碼，判斷這檔適不適合長期存股。',
+  'holdAi.deepLead': '深度評估會再帶入逐年配息與 EPS、本益比與殖利率的歷史分位、法人籌碼，同樣計入今日次數。',
+  'holdAi.deepIncluded': '已額外納入近 {years} 個年度的配息與 EPS，以及近 {days} 個交易日的三大法人籌碼。',
+  'holdAi.deepPayout': '窗期內配息約為前一年度 EPS 的 {pct}%',
+  'holdAi.deepBand': '本益比位於自身近 {days} 個交易日區間的第 {pct} 百分位',
   'holdAi.signIn': '登入後可使用 AI 存股評估。',
   'holdAi.agreesWithRules': '與檢查表一致（{label}）',
   'holdAi.differsFromRules': '檢查表為 {label}，AI 判讀不同',
@@ -433,6 +447,8 @@ export const zhTW = {
   'holdAi.insufficient': '尚未載入日線，無法評估。先開啟這檔的歷史資料。',
   'holdAi.disclaimer':
     '本評估由 AI 依配息與（若有）年度財報資料生成，未含產業前景與經營者判斷，僅供研究參考，不構成投資建議。',
+  'holdAi.disclaimerDeep':
+    '本評估由 AI 依逐年配息與 EPS、估值歷史分位與三大法人籌碼生成，未含新聞、財報細項與經營者判斷，僅供研究參考，不構成投資建議。',
 
   // ---------- 存股回測（長期成績單） ----------
   'hbt.title': '存股回測',

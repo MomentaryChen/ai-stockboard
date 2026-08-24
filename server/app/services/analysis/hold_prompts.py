@@ -114,11 +114,19 @@ class WireVerdict(BaseModel):
     )
 
 
+def language_name(locale: str) -> str:
+    """The reviewed English name of the language to answer in.
+
+    Public for the reason `prompts.language_name` is: the deep 存股 lane fills
+    the same slot in its own instruction, and which languages a prompt has been
+    reviewed in belongs to this package rather than to either lane.
+    """
+    return _LANGUAGE.get(locale, _LANGUAGE["zh-TW"])
+
+
 def system_instruction(locale: str) -> str:
     """System turn with the reviewed language name filled in."""
-    return SYSTEM_INSTRUCTION.format(
-        language=_LANGUAGE.get(locale, _LANGUAGE["zh-TW"])
-    )
+    return SYSTEM_INSTRUCTION.format(language=language_name(locale))
 
 
 def user_prompt(*, features: HoldFeatures, rules: ChenRuleResult) -> str:

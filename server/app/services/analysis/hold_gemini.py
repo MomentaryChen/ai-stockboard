@@ -1,8 +1,12 @@
 """The Gemini adapter for the 存股 lane: transport only.
 
-Prompt wording, the wire schema and `PROMPT_VERSION` live in `hold_prompts.py`,
-the same split `gemini.py` and `prompts.py` use. This module owns only the
-call: the SDK, the retry policy, the thinking budget and the limiter.
+Prompt wording, the wire schema and `PROMPT_VERSION` live in `hold_prompts.py`
+and `hold_deep_prompts.py`, the same split `gemini.py` and `prompts.py` use.
+This module owns only the call: the SDK, the retry policy, the thinking budget
+and the limiter. Both depths go through one transport, `generate_hold_verdict`,
+because they return the same object from the same schema and differ only in
+which instruction is sent and how large an answer is budgeted for -- two copies
+of the retry loop would be two chances to fix a transport bug once.
 
 It is a second adapter rather than another function in `gemini.py` because the
 two lanes ask different questions and return different shapes, and because
@@ -30,8 +34,8 @@ import time
 from dataclasses import dataclass
 
 from app.config import get_settings
-from app.schemas import AiHoldVerdict, ChenRuleResult, HoldFeatures
-from app.services.analysis import hold_prompts
+from app.schemas import AiHoldVerdict, ChenRuleResult, HoldDeepInputs, HoldFeatures
+from app.services.analysis import hold_deep_prompts, hold_prompts
 from app.services.analysis.gemini import (
     MAX_ATTEMPTS,
     RETRYABLE,
@@ -50,6 +54,7 @@ __all__ = [
     "AiUnavailable",
     "Generation",
     "generate",
+    "generate_deep",
     "is_configured",
 ]
 
@@ -94,20 +99,90 @@ def generate(
     this directly working without a database session -- same contract as
     `gemini.generate`.
     """
+    return generate_hold_verdict(
+        sid=features.sid,
+        system_instruction=hold_prompts.system_instruction(locale),
+        contents=hold_prompts.user_prompt(features=features, rules=rules),
+        rules=rules,
+        model=model,
+    )
+
+
+def generate_deep(
+    *,
+    features: HoldFeatures,
+    deep: HoldDeepInputs,
+    rules: ChenRuleResult,
+    locale: str = "zh-TW",
+    model: str | None = None,
+) -> Generation:
+    """The same question, shown the year-by-year record and the valuation band.
+
+    A sibling of `generate` rather than a flag on it, for the reason
+    `gemini.generate_deep` is one: the two send different instructions and
+    budget different answer lengths, and a boolean that switches both is a
+    function whose behaviour you have to read the body to know.
+
+    Its own output ceiling, from the same settings the technical deep lane
+    uses. A deep answer cites more numbers, and a verdict truncated mid-JSON
+    fails the request outright rather than coming back shorter.
+    """
+    return generate_hold_verdict(
+        sid=features.sid,
+        system_instruction=hold_deep_prompts.system_instruction(locale),
+        contents=hold_deep_prompts.user_prompt(
+            features=features, deep=deep, rules=rules
+        ),
+        rules=rules,
+        model=model,
+        max_output_tokens=_settings.gemini_deep_max_output_tokens,
+        thinking_budget=_settings.gemini_deep_thinking_budget,
+    )
+
+
+def generate_hold_verdict(
+    *,
+    sid: str,
+    system_instruction: str,
+    contents: str,
+    rules: ChenRuleResult,
+    model: str | None = None,
+    max_output_tokens: int | None = None,
+    thinking_budget: int | None = None,
+) -> Generation:
+    """Transport for any prompt whose answer is a `hold_prompts.WireVerdict`.
+
+    Shared by this lane's two depths, exactly as `gemini.generate_verdict` is
+    shared by the technical lane's. It stays separate from that one because the
+    verdict shape genuinely differs -- a suitability and an agreement flag, not
+    an action and a size -- which is the same line the two adapter modules were
+    split along in the first place.
+
+    `rules` is threaded through only because `to_verdict` needs it to decide
+    whether "agrees with the checklist" is a claim anyone can make.
+    """
     from google.genai import errors, types
 
     model_name = model or _settings.gemini_model
     client = _client()
     config = types.GenerateContentConfig(
-        system_instruction=hold_prompts.system_instruction(locale),
+        system_instruction=system_instruction,
         temperature=_settings.gemini_temperature,
-        max_output_tokens=_settings.gemini_max_output_tokens,
+        max_output_tokens=(
+            _settings.gemini_max_output_tokens
+            if max_output_tokens is None
+            else max_output_tokens
+        ),
         # Stated rather than left to the model's default, for the reason spelled
         # out in gemini.py: on the 2.5 models thinking is billed against
         # max_output_tokens, so an unstated budget can spend the whole
         # allowance before the JSON starts and return an empty body.
         thinking_config=types.ThinkingConfig(
-            thinking_budget=_settings.gemini_thinking_budget
+            thinking_budget=(
+                _settings.gemini_thinking_budget
+                if thinking_budget is None
+                else thinking_budget
+            )
         ),
         response_mime_type="application/json",
         response_json_schema=hold_prompts.WireVerdict.model_json_schema(),
@@ -115,7 +190,6 @@ def generate(
             timeout=int(_settings.gemini_timeout_seconds * 1000)
         ),
     )
-    contents = hold_prompts.user_prompt(features=features, rules=rules)
 
     last_error: Exception | None = None
     for attempt in range(MAX_ATTEMPTS):
@@ -136,7 +210,7 @@ def generate(
             code = getattr(exc, "code", None)
             logger.warning(
                 "hold gemini call failed sid=%s attempt=%d code=%s",
-                features.sid, attempt + 1, code, exc_info=True,
+                sid, attempt + 1, code, exc_info=True,
             )
             if code not in RETRYABLE:
                 break
@@ -145,7 +219,7 @@ def generate(
             last_error = exc
             logger.warning(
                 "hold gemini returned unusable output sid=%s attempt=%d",
-                features.sid, attempt + 1, exc_info=True,
+                sid, attempt + 1, exc_info=True,
             )
             continue
 

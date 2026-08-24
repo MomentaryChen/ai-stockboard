@@ -82,8 +82,12 @@ def _judged_years(as_of: datetime.date, paid_years: set[int]) -> tuple[int, int]
     return last - WINDOW_YEARS + 1, last
 
 
-def _cash_by_year(events: list[DividendEvent]) -> dict[int, float]:
+def cash_by_year(events: list[DividendEvent]) -> dict[int, float]:
     """Total cash paid per calendar year, keyed on the ex-date's year.
+
+    Public because the deep 存股 lane reports the same series year by year, and
+    two derivations of "what did this pay in 2023" would eventually disagree
+    about a company that paid twice.
 
     Ex-date rather than the fiscal year it was declared for: this is what a
     holder actually received and when, which is the quantity every rule below
@@ -142,7 +146,7 @@ def _dividend_features(
     # Only cash already gone ex counts as paid: an announced ex-date is a
     # promise, and letting it anchor the window would extend a streak on the
     # strength of one.
-    by_year = _cash_by_year([e for e in events if e.ex_date <= as_of])
+    by_year = cash_by_year([e for e in events if e.ex_date <= as_of])
     first_year, last_year = _judged_years(as_of, set(by_year))
     in_window = {y: v for y, v in by_year.items() if first_year <= y <= last_year}
 
