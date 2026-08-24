@@ -1520,11 +1520,13 @@ was already collected.
   streak, the 25/20/20/25/10 weights -- all encode the published method, none
   is fitted to or tested against outcomes. Nothing here demonstrates that a
   high score predicts anything.
-- **Hold backtests are not comparable between stocks.** The window is however
-  much history `daily_price` holds, which depends on which stocks someone
-  browsed and how far back. Two stocks can be graded over different lengths
-  *and* different market regimes. `annualised_return_pct` helps with the
-  first, nothing helps with the second.
+- **Hold backtests are not comparable between stocks** -- *being addressed.*
+  The window is however much history `daily_price` holds, which historically
+  depended on which stocks someone browsed and how far back. The
+  `history_backfill` job below now fills a defined universe to a fixed depth,
+  so once it reports `remaining: 0` the comparison is between equal windows.
+  Different *market regimes* inside those windows remain, and nothing fixes
+  that except reading the start and end dates the card prints.
 - **The score is comparable only as far as `known_weight` says.** 100 over 35
   weight and 80 over 100 weight are not the same claim, and the larger number
   is the smaller claim.
@@ -1538,8 +1540,38 @@ was already collected.
   later, no 定期定額. Individually small, and all optimistic.
 
 What would settle the first point is bucketing stocks by score and measuring
-what happened next -- which the hold backtest now makes possible and nobody
-has run.
+what happened next. The hold backtest made that computable; `history_backfill`
+is what gives it a sample worth computing over. Until that job reports
+`remaining: 0`, the study would be measuring whichever stocks happened to get
+browsed -- which is how you get a confident answer to the wrong question.
+
+### The history backfill job
+
+`history_backfill` walks the companies with the longest cash-payout record --
+ranked out of `dividend_event`, which the board-wide warmup already fills for
+the whole market -- and fetches ten years of daily bars for each. It ships
+**hourly**, because ~300 stocks x 120 months is roughly 36,000 fetches and a
+nightly run would take weeks.
+
+Three things make an hourly exchange scrape safe to leave running:
+
+- **It refuses during market hours.** `twse_throttle` is shared with the
+  realtime poll, and a backfill running through a session would sit in front
+  of a user waiting for a quote. Weekday 08:00-15:00 Taipei is skipped
+  outright, so "hourly" really means every quiet hour. The manual run-now
+  button overrides it.
+- **It stops at a months-per-run budget**, so one run is a bounded few minutes
+  of the limiter rather than "until finished". The cap is soft -- checked
+  between stocks, so a run finishes the name it is on rather than leaving it
+  half-fetched -- which puts the real ceiling at `budget + (years * 12 - 1)`
+  months. Size the setting for that, not for the nominal number.
+- **Progress lives in `fetch_log`, not in the run.** A killed container
+  resumes where it stopped, and `remaining` is re-read from the database
+  rather than inferred -- so it means "still incomplete now", which is what an
+  operator needs in order to decide when to move the job back to nights.
+
+Move it back to a nightly schedule once `remaining` reaches zero. Leaving it
+hourly after that costs nothing but says nothing either.
 
 ---
 

@@ -345,10 +345,17 @@ surface area.
 
 Still open, and the one that matters most:
 
-4. [ ] **Validate the thresholds.** Nothing demonstrates that a high score
-   predicts anything. The hold backtest now makes the experiment possible --
-   bucket by score, measure what happened next -- and it has not been run.
-   Until it is, the score has the appearance of rigour without the evidence.
+4. [~] **Validate the thresholds.** Nothing demonstrates that a high score
+   predicts anything. Two things were missing: a way to compute the outcome,
+   and a sample to compute it over. The hold backtest supplied the first;
+   `history_backfill` now supplies the second, filling ten years of bars
+   across the longest-paying ~300 companies on an hourly schedule that yields
+   to live traffic.
+
+   The study itself is still not written, and deliberately so: running it
+   against today's coverage would measure whichever stocks happened to get
+   browsed, which is how you get a confident answer to the wrong question.
+   Wait for `remaining: 0` at /admin/jobs.
 
 The remaining known distortions are listed in README under "Known
 distortions". The largest is that hold backtests are not comparable between

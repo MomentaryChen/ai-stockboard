@@ -20,6 +20,7 @@ from app.services import code_sync
 from app.services import codes as codes_service
 from app.services import dividend as dividend_service
 from app.services import fundamentals as fundamentals_service
+from app.services import history_backfill as history_backfill_service
 from app.services import valuation as valuation_service
 from app.config import get_settings
 from app.services.jobs.registry import JobContext, JobResult
@@ -112,6 +113,42 @@ def dividend_board_warmup(context: JobContext) -> JobResult:
     else:
         status, message = "skipped", "Every dividend bucket is current"
     return JobResult(status=status, message=message, stats=stats)
+
+
+def history_backfill(context: JobContext) -> JobResult:
+    """Fill years of daily bars across the 存股 universe, a slice per run.
+
+    `skipped` has two distinct causes and the message says which. Either the
+    market is open -- in which case the run deliberately spends nothing,
+    because the exchange limiter is shared with the realtime poll -- or every
+    stock in the universe is already complete, which is the steady state and
+    the signal to put this job back on nights.
+    """
+    stats = history_backfill_service.run(
+        context.db,
+        years=settings.history_backfill_years,
+        stocks=settings.history_backfill_stocks,
+        month_budget=settings.history_backfill_months_per_run,
+        force=context.force,
+    )
+
+    if stats["skipped"]:
+        return JobResult(
+            status="skipped",
+            message="Market is open; leaving the exchange budget to live traffic",
+            stats=stats,
+        )
+    if stats["fetched"]:
+        return JobResult(
+            status="success",
+            message=f"{stats['remaining']} stock(s) still incomplete",
+            stats=stats,
+        )
+    return JobResult(
+        status="skipped",
+        message="Every stock in the universe has its full history",
+        stats=stats,
+    )
 
 
 def refresh_token_cleanup(context: JobContext) -> JobResult:
