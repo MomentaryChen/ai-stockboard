@@ -109,8 +109,17 @@ INDICES: dict[str, IndexMeta] = {
     ),
 }
 
-#: The index the dashboard opens on.
+#: The index the dashboard opens on, and the benchmark for a listed stock.
 DEFAULT_INDEX = "t00"
+#: The benchmark for an OTC stock. A 上櫃 holder's alternative was the OTC
+#: board, not the 加權指數, and over some years the two diverge enough that
+#: benchmarking against the wrong one flips the verdict.
+TPEX_INDEX = "o00"
+
+
+def benchmark_for(data_source: str) -> str:
+    """The index a stock on this board should be measured against."""
+    return TPEX_INDEX if data_source == "tpex" else DEFAULT_INDEX
 
 
 def get(sid: str) -> IndexMeta | None:

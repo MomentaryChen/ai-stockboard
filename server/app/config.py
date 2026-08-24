@@ -169,6 +169,31 @@ class Settings(BaseSettings):
     finmind_throttle_max_calls: int = 250
     finmind_throttle_window_seconds: float = 3600.0
 
+    # --- Daily-history backfill (for the 存股 study) ---
+    # Everything else fetches history lazily, so `daily_price` holds whatever
+    # was browsed. That makes the hold backtest's window differ per stock and
+    # makes "bucket by Chen score, measure what happened next" unrunnable --
+    # the sample would be a record of clicking, not of the market.
+    #
+    # This job fills a defined universe instead: the companies with the longest
+    # cash-payout record, which is the population the method is about.
+    history_backfill_years: int = 10
+    history_backfill_stocks: int = 300
+    # Months fetched per run. The exchange limiter is shared with the realtime
+    # poll, so this bounds how long one run can sit in front of a user waiting
+    # for a quote. The job also refuses to run during market hours entirely.
+    #
+    # A *soft* cap, checked between stocks: a run finishes whichever name it is
+    # on rather than leaving it half-fetched, so the real ceiling is
+    # `budget + (years * 12 - 1)` months. At the defaults that is 250 + 119 =
+    # 369 months, about eleven minutes at 3 requests / 5.5s. Sized for that
+    # worst case, not for the nominal number.
+    #
+    # 300 stocks x 120 months is ~36,000 fetches, so hourly overnight covers
+    # the universe in a handful of days. Watch `remaining` and move the job
+    # back to nightly once it reaches zero.
+    history_backfill_months_per_run: int = 250
+
     # --- AI analysis (Google Gemini) ---
     # Blank disables the feature outright: the endpoint answers 503 and the
     # frontend hides the button. There is no fallback model, because a service

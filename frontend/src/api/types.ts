@@ -345,6 +345,10 @@ export interface HoldFundamentalsFeatures {
   roe_stdev_pct: number | null
   roe_years_checked: number
   trailing_pe: number | null
+  /** Price over *average* EPS: a cyclically adjusted PE. A trailing PE is at
+   *  its most flattering exactly when a cyclical is most dangerous. */
+  cape: number | null
+  cape_years: number
 }
 
 export interface HoldPriceFeatures {
@@ -438,6 +442,12 @@ export interface HoldBacktestResponse {
   total_return_pct: number
   dividend_return_pct: number
   annualised_return_pct: number | null
+  /** The market over the same sessions. Compare against `price_return_pct`,
+   *  never the total: 加權指數 excludes dividends. Null when the index has no
+   *  stored bars over this window. */
+  index_sid: string | null
+  index_return_pct: number | null
+  excess_price_return_pp: number | null
   cash_collected: number
   yield_on_cost_pct: number | null
   max_drawdown_pct: number

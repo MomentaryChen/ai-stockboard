@@ -87,6 +87,8 @@ def _features(*, covered: bool = True) -> HoldFeatures:
             roe_stdev_pct=1.4 if covered else None,
             roe_years_checked=10 if covered else 0,
             trailing_pe=13.3 if covered else None,
+            cape=14.1 if covered else None,
+            cape_years=10 if covered else 0,
         ),
         price=HoldPriceFeatures(
             latest_close=20.0,

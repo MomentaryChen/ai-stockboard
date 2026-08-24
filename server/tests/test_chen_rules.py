@@ -52,6 +52,7 @@ def _features(
     roe_stdev_pct: float | None = None,
     roe_years: int = 0,
     trailing_pe: float | None = None,
+    cape: float | None = None,
     latest_eps: float | None = None,
 ) -> HoldFeatures:
     """A snapshot with every dimension unknown, and knobs to make one known."""
@@ -90,6 +91,8 @@ def _features(
             roe_stdev_pct=roe_stdev_pct,
             roe_years_checked=roe_years,
             trailing_pe=trailing_pe,
+            cape=cape,
+            cape_years=10 if cape is not None else 0,
         ),
         price=HoldPriceFeatures(
             latest_close=100.0,
@@ -375,3 +378,113 @@ def test_an_unscored_checklist_says_so_rather_than_reporting_none_out_of_100():
     text = chen_rules.summarise(chen_rules.evaluate(nothing_known))
     assert "not scored" in text
     assert "None" not in text
+
+
+def test_an_unchecked_dividend_record_cannot_be_labelled_strong():
+    """The defect this cap exists for.
+
+    An OTC name has no yearly dividend archive, so Collect is structurally
+    `unknown` -- leaving 75 of 100 weight known, comfortably past the thin
+    threshold. Before the cap, such a stock could pass the other four and be
+    labelled 「適合存股」 while nobody knew whether it had ever paid a dividend.
+    """
+    otc = chen_rules.evaluate(
+        _features(
+            coverage="recent",           # TPEx: Collect goes unknown
+            years_with_cash=0,
+            eps_years=8, eps_positive=8,
+            avg_roe_pct=chen_rules.EFFICIENT_MIN_AVG_ROE_PCT + 5,
+            roe_stdev_pct=1.0, roe_years=8,
+            trailing_pe=chen_rules.CHEAP_MAX_PE - 3,
+            avg_daily_shares=chen_rules.LIQUID_MIN_AVG_SHARES * 3,
+        )
+    )
+
+    statuses = _by_key(otc)
+    assert statuses["collect"] == "unknown"
+    assert all(statuses[k] == "pass" for k in ("earn", "efficient", "cheap", "liquid"))
+
+    # Everything that *was* checked passed, and the score says so...
+    assert otc.score == 100
+    # ...but the weight alone would have cleared the old gate.
+    assert otc.known_weight > chen_rules.MIN_KNOWN_WEIGHT_FOR_STRONG
+    # ...and the label still refuses, because the premise is unverified.
+    assert otc.suitability == "ok"
+
+
+def test_the_same_stock_is_strong_once_its_payout_record_is_known():
+    """The cap is about the missing check, not about the stock."""
+    covered = chen_rules.evaluate(
+        _features(
+            coverage="history",
+            years_observed=10,
+            years_with_cash=10,
+            consecutive_years=10,
+            cash_yield_pct=chen_rules.COLLECT_MIN_YIELD_PCT + 1,
+            eps_years=8, eps_positive=8,
+            avg_roe_pct=chen_rules.EFFICIENT_MIN_AVG_ROE_PCT + 5,
+            roe_stdev_pct=1.0, roe_years=8,
+            trailing_pe=chen_rules.CHEAP_MAX_PE - 3,
+            avg_daily_shares=chen_rules.LIQUID_MIN_AVG_SHARES * 3,
+        )
+    )
+    assert _by_key(covered)["collect"] == "pass"
+    assert covered.suitability == "strong"
+
+
+def test_a_cap_never_moves_a_label_up_or_touches_the_score():
+    """Both caps are one-directional; the number stays what it measured."""
+    weak = chen_rules.evaluate(
+        _features(
+            coverage="recent",
+            years_with_cash=0,
+            eps_years=8, eps_positive=2,
+            avg_daily_shares=1,
+        )
+    )
+    assert weak.suitability in ("weak", "avoid")
+    assert weak.score is not None and weak.score < chen_rules.BAND_OK
+
+
+def test_a_cyclical_at_its_earnings_peak_does_not_read_as_cheap():
+    """The value trap a trailing PE walks straight into.
+
+    A steel or shipping name at the top of its cycle earns a record year, so
+    the denominator peaks with it and the trailing PE prints single digits.
+    Averaging earnings over a decade is what says otherwise.
+    """
+    ceiling = chen_rules.CHEAP_MAX_PE          # general industry
+    cape_ceiling = ceiling * chen_rules.CHEAP_CAPE_TOLERANCE
+
+    trap = chen_rules.evaluate(
+        _features(
+            industry="鋼鐵工業",
+            trailing_pe=ceiling / 2,           # looks like a bargain...
+            cape=cape_ceiling * 1.5,           # ...on one exceptional year
+        )
+    )
+    assert _by_key(trap)["cheap"] == "fail"
+    assert "cyclically elevated" in next(
+        d.evidence for d in trap.dimensions if d.key == "cheap"
+    )
+
+    # A steadily-earning company at the same trailing PE still passes.
+    steady = chen_rules.evaluate(
+        _features(
+            industry="鋼鐵工業",
+            trailing_pe=ceiling / 2,
+            cape=ceiling / 2 * 1.1,
+        )
+    )
+    assert _by_key(steady)["cheap"] == "pass"
+
+
+def test_without_enough_eps_history_cheap_falls_back_to_the_trailing_check():
+    """Saying so in the evidence, rather than silently checking one thing."""
+    result = chen_rules.evaluate(
+        _features(trailing_pe=chen_rules.CHEAP_MAX_PE - 1, cape=None)
+    )
+    assert _by_key(result)["cheap"] == "pass"
+    assert "too few years" in next(
+        d.evidence for d in result.dimensions if d.key == "cheap"
+    )

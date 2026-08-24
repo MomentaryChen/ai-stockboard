@@ -19,10 +19,16 @@ verdicts attributable to the inputs that produced them. The `hold-` prefix
 keeps it from ever colliding with the technical lane's version in an
 evaluation that reads both tables.
 
-`hold-v2` is an example of the second kind: the wording below is unchanged
-from v1, but `trailing_pe` stopped being "last completed year's annual EPS
-against today's close" and became the exchange's own daily published figure. A
-verdict citing a PE has to stay attributable to which PE it was shown.
+`hold-v2` was an example of the second kind: the wording was unchanged from
+v1, but `trailing_pe` stopped being "last completed year's annual EPS against
+today's close" and became the exchange's own daily published figure. A verdict
+citing a PE has to stay attributable to which PE it was shown.
+
+`hold-v3` adds `cape` to the measurements and changes what the Cheap
+dimension means -- it now fails a company whose trailing PE is low only
+because this year was the top of its cycle. A verdict that called such a name
+cheap under v2 was reasoning from what it was given, and should not be
+silently reissued as though it had seen the cyclical figure.
 """
 
 from __future__ import annotations
@@ -34,7 +40,7 @@ from pydantic import BaseModel, Field
 from app.schemas import AiHoldVerdict, ChenRuleResult, HoldFeatures
 from app.services.analysis import chen_rules
 
-PROMPT_VERSION = "hold-v2"
+PROMPT_VERSION = "hold-v3"
 
 SYSTEM_INSTRUCTION = """\
 You are assessing whether one Taiwan-listed company suits a long-horizon

@@ -65,6 +65,14 @@ EFFICIENT_MIN_YEARS = 3
 #: else is judged against the broader market band.
 CHEAP_MAX_PE = 15.0
 CHEAP_MAX_PE_FINANCIAL = 10.0
+
+#: The cyclically adjusted PE is judged against the same ceiling widened by
+#: this much. Average earnings are lower than peak earnings for anything
+#: cyclical, so a CAPE is structurally higher than a trailing PE and holding
+#: both to one number would fail every cyclical outright -- which is not the
+#: point. The point is to catch the name whose trailing PE is single-digit
+#: *only* because this year was the top of its cycle.
+CHEAP_CAPE_TOLERANCE = 1.4
 #: 產業別 strings the ISIN listing uses for financial holdings and insurers.
 #: Matched as substrings because the registry has several variants and adding
 #: a sector should not require a code change to keep the others working.
@@ -110,6 +118,20 @@ BAND_WEAK = 40
 #: score itself is left alone -- only the label is capped -- so the number and
 #: the word never disagree about the evidence.
 MIN_KNOWN_WEIGHT_FOR_STRONG = 60
+
+#: Dimensions the method cannot be applied without, whatever the rest score.
+#:
+#: Weight alone is the wrong gate here, and shipping it that way was a real
+#: defect: an OTC name has no dividend archive to read, so Collect is
+#: structurally `unknown`, leaving 75 of 100 weight known -- comfortably over
+#: the threshold above. A stock could therefore be labelled `strong` while
+#: nobody knew whether it had ever paid a dividend, which for a
+#: dividend-accumulation method is the one thing that cannot be left open.
+#:
+#: Missing Liquid (weight 10) and missing Collect (weight 25, and the premise
+#: of the whole method) are not interchangeable, and a weighted denominator
+#: cannot express that difference.
+ESSENTIAL_DIMENSIONS = ("collect",)
 
 
 def is_financial(industry: str) -> bool:
@@ -206,6 +228,7 @@ def _cheap(features: HoldFeatures) -> ChenDimension:
     ceiling = pe_ceiling(features.industry)
     metrics = {
         "trailing_pe": f.trailing_pe,
+        "cape": f.cape,
         "ceiling": ceiling,
         "latest_eps": f.latest_eps,
         "position_pct": features.price.position_pct,
@@ -221,14 +244,30 @@ def _cheap(features: HoldFeatures) -> ChenDimension:
         )
         return _dimension("cheap", "unknown", f"{reason}; PE not computable", metrics)
 
-    passed = f.trailing_pe <= ceiling
     band = "financial" if is_financial(features.industry) else "general"
-    return _dimension(
-        "cheap",
-        "pass" if passed else "fail",
-        f"trailing PE {f.trailing_pe} against the {band} ceiling of {ceiling}",
-        metrics,
-    )
+    cape_ceiling = round(ceiling * CHEAP_CAPE_TOLERANCE, 1)
+    metrics["cape_ceiling"] = cape_ceiling
+
+    passed = f.trailing_pe <= ceiling
+    evidence = f"trailing PE {f.trailing_pe} against the {band} ceiling of {ceiling}"
+
+    # The cyclical check. A trailing PE is at its most flattering exactly when
+    # a cyclical is most dangerous -- earnings peak with the cycle, so the
+    # denominator does too. Averaging it over a decade is what catches the
+    # steel name printing 8x at the top and calling itself a bargain.
+    if f.cape is not None:
+        cyclically_ok = f.cape <= cape_ceiling
+        passed = passed and cyclically_ok
+        evidence += (
+            f"; cyclically adjusted PE {f.cape} over {f.cape_years} years "
+            f"against {cape_ceiling}"
+        )
+        if not cyclically_ok:
+            evidence += " -- current earnings look cyclically elevated"
+    else:
+        evidence += "; too few years of EPS for a cyclically adjusted check"
+
+    return _dimension("cheap", "pass" if passed else "fail", evidence, metrics)
 
 
 def _collect(features: HoldFeatures) -> ChenDimension:
@@ -387,14 +426,23 @@ def _coverage_gaps(features: HoldFeatures, dimensions: list[ChenDimension]) -> l
     return gaps
 
 
-def _band(score: int, known_weight: int) -> HoldSuitability:
-    if score >= BAND_STRONG:
-        return "strong" if known_weight >= MIN_KNOWN_WEIGHT_FOR_STRONG else "ok"
-    if score >= BAND_OK:
-        return "ok"
-    if score >= BAND_WEAK:
-        return "weak"
-    return "avoid"
+def _band(
+    score: int, known_weight: int, dimensions: list[ChenDimension]
+) -> HoldSuitability:
+    """Score to label, with two caps that only ever move the label down.
+
+    A cap never touches `score`. The number says what was passed out of what
+    was checked; the word says how much confidence that deserves, and the two
+    are allowed to differ as long as the card shows both.
+    """
+    if score < BAND_STRONG:
+        return "ok" if score >= BAND_OK else ("weak" if score >= BAND_WEAK else "avoid")
+
+    thin = known_weight < MIN_KNOWN_WEIGHT_FOR_STRONG
+    unchecked_essential = any(
+        d.status == "unknown" for d in dimensions if d.key in ESSENTIAL_DIMENSIONS
+    )
+    return "ok" if thin or unchecked_essential else "strong"
 
 
 def evaluate(features: HoldFeatures) -> ChenRuleResult:
@@ -417,7 +465,9 @@ def evaluate(features: HoldFeatures) -> ChenRuleResult:
 
     return ChenRuleResult(
         score=score,
-        suitability=_band(score, known_weight) if score is not None else None,
+        suitability=(
+            _band(score, known_weight, dimensions) if score is not None else None
+        ),
         dimensions=dimensions,
         known_weight=known_weight,
         total_weight=TOTAL_WEIGHT,

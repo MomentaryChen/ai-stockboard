@@ -1301,7 +1301,7 @@ into five weighted questions in `services/analysis/chen_rules.py`:
 |---|---|---|
 | Earn (年年賺錢) | Has it earned in essentially every year? | `fundamentals_annual.eps` |
 | Efficient (資本效率) | Is the return on equity good *and* steady? | `fundamentals_annual.roe` |
-| Cheap (買得便宜) | Is the trailing PE inside its sector's band? | EPS + `daily_price` |
+| Cheap (買得便宜) | Is the PE inside its sector's band — *and* not just because this year was the top of the cycle? | EPS + `valuation_day` |
 | Collect (穩定配息) | Does it pay, without gaps, at a yield worth having? | `dividend_event` |
 | Liquid (買得到) | Can a position be built a little at a time? | `daily_price` |
 
@@ -1468,6 +1468,110 @@ is an optimistic bound — said on the card rather than buried here.
 It also does not simulate 定期定額. Buying monthly is a money-weighted question
 with a different answer, and mixing the two would produce a number that is
 neither.
+
+---
+
+## Known distortions, and what was done about them
+
+A checklist with a 0-100 score looks like a model. This one is an encoding of
+a published heuristic with arithmetic behind it, and the difference matters.
+What follows is what it gets wrong, kept here rather than discovered later.
+
+### Fixed
+
+**An unchecked payout record could still be called `strong`.** TPEx publishes
+no yearly dividend archive, so Collect is structurally `unknown` for OTC
+names -- which still left 75 of 100 weight known, comfortably past the
+"thinly covered" gate. A stock could be labelled 適合存股 while nobody knew
+whether it had ever paid a dividend, which for a dividend-accumulation method
+is the one thing that cannot be left open. `ESSENTIAL_DIMENSIONS` now caps the
+label when Collect is unchecked. Weight alone could not express the
+difference between a missing Liquid (10) and a missing Collect (25, and the
+premise of the method).
+
+**The hold return had nothing to be good relative to.** +47% over four years
+reads as a success until you learn the market did +80%. The card now carries
+the index over the very same sessions.
+
+It is compared against the **price** leg only, and says so. 加權指數 is a price
+index: setting it beside a dividend-reinvested figure would flatter every
+stock on the board by roughly its own yield, every year. TWSE does publish
+發行量加權股價報酬指數, which would be the like-for-like benchmark -- but only
+as a current-month window with no dated query, so it cannot cover a multi-year
+replay.
+
+**A trailing PE flatters a cyclical exactly when it is most dangerous.**
+Earnings peak with the cycle, so the denominator peaks too, and a steel or
+shipping name at the top prints a single-digit PE that reads as a bargain.
+Cheap now also checks a **cyclically adjusted PE** -- price over average EPS
+across the stored decade, in the Shiller sense -- against a widened ceiling.
+Average earnings are structurally lower than peak earnings, so holding both to
+one number would fail every cyclical outright, which is not the point.
+
+The design sketched "PE vs its own 5-year band" for this. That would not have
+worked: at the top of a cycle a name's PE is low *and* low against its own
+history, so a percentile says the same flattering thing. Averaging the
+denominator is what actually removes the cycle, and the annual EPS to do it
+was already collected.
+
+### Still true, and worth knowing before trusting a number
+
+- **The thresholds have never been validated.** ROE ≥ 10%, PE ≤ 15, an 8-year
+  streak, the 25/20/20/25/10 weights -- all encode the published method, none
+  is fitted to or tested against outcomes. Nothing here demonstrates that a
+  high score predicts anything.
+- **Hold backtests are not comparable between stocks** -- *being addressed.*
+  The window is however much history `daily_price` holds, which historically
+  depended on which stocks someone browsed and how far back. The
+  `history_backfill` job below now fills a defined universe to a fixed depth,
+  so once it reports `remaining: 0` the comparison is between equal windows.
+  Different *market regimes* inside those windows remain, and nothing fixes
+  that except reading the start and end dates the card prints.
+- **The score is comparable only as far as `known_weight` says.** 100 over 35
+  weight and 80 over 100 weight are not the same claim, and the larger number
+  is the smaller claim.
+- **ROE switches basis by industry.** Parent-with-parent where both are
+  published, total-with-total for financial holdings that publish only 權益總計.
+  Each is internally right; across industries it is not one ruler.
+- **填息 is inflated in a bull market.** Everything fills when everything
+  rises, and this figure has no benchmark.
+- **Every unmodelled cost points the same way.** No tax, no 二代健保, no
+  brokerage, dividends reinvested at the ex-date close rather than a month
+  later, no 定期定額. Individually small, and all optimistic.
+
+What would settle the first point is bucketing stocks by score and measuring
+what happened next. The hold backtest made that computable; `history_backfill`
+is what gives it a sample worth computing over. Until that job reports
+`remaining: 0`, the study would be measuring whichever stocks happened to get
+browsed -- which is how you get a confident answer to the wrong question.
+
+### The history backfill job
+
+`history_backfill` walks the companies with the longest cash-payout record --
+ranked out of `dividend_event`, which the board-wide warmup already fills for
+the whole market -- and fetches ten years of daily bars for each. It ships
+**hourly**, because ~300 stocks x 120 months is roughly 36,000 fetches and a
+nightly run would take weeks.
+
+Three things make an hourly exchange scrape safe to leave running:
+
+- **It refuses during market hours.** `twse_throttle` is shared with the
+  realtime poll, and a backfill running through a session would sit in front
+  of a user waiting for a quote. Weekday 08:00-15:00 Taipei is skipped
+  outright, so "hourly" really means every quiet hour. The manual run-now
+  button overrides it.
+- **It stops at a months-per-run budget**, so one run is a bounded few minutes
+  of the limiter rather than "until finished". The cap is soft -- checked
+  between stocks, so a run finishes the name it is on rather than leaving it
+  half-fetched -- which puts the real ceiling at `budget + (years * 12 - 1)`
+  months. Size the setting for that, not for the nominal number.
+- **Progress lives in `fetch_log`, not in the run.** A killed container
+  resumes where it stopped, and `remaining` is re-read from the database
+  rather than inferred -- so it means "still incomplete now", which is what an
+  operator needs in order to decide when to move the job back to nights.
+
+Move it back to a nightly schedule once `remaining` reaches zero. Leaving it
+hourly after that costs nothing but says nothing either.
 
 ---
 

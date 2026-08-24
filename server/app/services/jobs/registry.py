@@ -41,6 +41,7 @@ CHIP_REFRESH = "chip_refresh"
 DIVIDEND_BOARD_WARMUP = "dividend_board_warmup"
 FUNDAMENTALS_REFRESH = "fundamentals_refresh"
 FUNDAMENTALS_BACKFILL = "fundamentals_backfill"
+HISTORY_BACKFILL = "history_backfill"
 
 
 @dataclass(frozen=True)
@@ -321,6 +322,42 @@ def build() -> None:
                 "rows": "寫入年數",
                 "empty": "查無資料",
                 "failed": "失敗",
+            },
+        )
+    )
+
+    register(
+        JobDefinition(
+            id=HISTORY_BACKFILL,
+            name="歷史日線回補",
+            description=(
+                "把配息紀錄最長的那幾百檔，逐檔補滿十年日線，讓存股回測與分數"
+                "驗證有夠寬的樣本。每次跑固定額度、可中斷續跑；盤中會自動跳過，"
+                "把交易所額度讓給即時報價。補完後 remaining 會歸零，那時就可以"
+                "把它改回每天跑。"
+            ),
+            handler=handlers.history_backfill,
+            default_enabled=True,
+            # Hourly to start with: the universe is ~36,000 month-fetches and
+            # nightly alone would take weeks. The handler skips itself during
+            # market hours, so an hourly schedule is really "every quiet hour".
+            default_kind=SCHEDULE_INTERVAL,
+            default_interval_minutes=60,
+            default_daily_at="01:30",
+            # The floor is an hour because a run is already several minutes of
+            # the shared limiter; back-to-back runs would keep it saturated.
+            min_interval_minutes=60,
+            max_interval_minutes=7 * 24 * 60,
+            manual_cooldown_seconds=300,
+            # Never at boot: a crash loop would become a scrape loop against
+            # the exchange, with this deployment's name on it.
+            run_on_startup=False,
+            expected_seconds=480,
+            stat_labels={
+                "fetched": "新抓月份",
+                "stocks": "本次處理",
+                "complete": "已補完",
+                "remaining": "尚未補完",
             },
         )
     )
