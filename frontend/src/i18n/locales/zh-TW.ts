@@ -86,6 +86,8 @@ export const zhTW = {
   'adminScore.loadFailed': '無法計算：{message}',
   'adminScore.notReady':
     '歷史日線還沒補完（尚餘 {remaining} 檔），所以這裡不列出報酬。樣本若是有人看過的股票，高分看起來有效只是看的順序。到排程作業確認「尚未補完」歸零後再看。',
+  'adminScore.notReadyEmpty':
+    '還沒有可比較的母體。配息紀錄還沒寫進資料庫，所以這裡不列報酬。先跑配息預熱，再等歷史日線補完。',
   'adminScore.openJobs': '前往排程作業',
   'adminScore.window': '{start} 計分，持有到 {end}（{years} 年）',
   'adminScore.universe': '母體 {universe} 檔，納入比較 {included} 檔',

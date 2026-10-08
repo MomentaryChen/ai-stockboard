@@ -90,6 +90,8 @@ export const en: Messages = {
   'adminScore.loadFailed': 'Could not compute: {message}',
   'adminScore.notReady':
     'The price backfill is not finished ({remaining} names still incomplete), so returns are not shown. A sample of whichever names were opened would make a high score look predictive for the wrong reason. Check Jobs and come back when remaining is zero.',
+  'adminScore.notReadyEmpty':
+    'There is no universe to compare yet. No dividend history is stored, so returns are not shown. Run the dividend warmup, then wait for the price backfill to finish.',
   'adminScore.openJobs': 'Open jobs',
   'adminScore.window': 'Scored on {start}, held to {end} ({years} years)',
   'adminScore.universe': '{universe} in the universe, {included} compared',

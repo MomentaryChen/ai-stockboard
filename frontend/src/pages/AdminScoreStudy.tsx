@@ -91,7 +91,9 @@ export default function AdminScoreStudy() {
             {!data.sample_ready && (
               <div className="stack" style={{ gap: 8 }}>
                 <p className="up" style={{ margin: 0 }}>
-                  {t('adminScore.notReady', { remaining: data.remaining })}
+                  {data.universe_size === 0
+                    ? t('adminScore.notReadyEmpty')
+                    : t('adminScore.notReady', { remaining: data.remaining })}
                 </p>
                 <Link to="/admin/jobs" className="btn btn-sm" style={{ alignSelf: 'flex-start' }}>
                   {t('adminScore.openJobs')}
