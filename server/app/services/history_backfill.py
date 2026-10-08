@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+from dataclasses import dataclass
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
@@ -132,6 +133,49 @@ def _landed_months(db: Session, sids: list[str], start: datetime.date) -> dict[s
     return {sid: count for sid, count in rows}
 
 
+@dataclass(frozen=True, slots=True)
+class UniverseCoverage:
+    """How much of the study universe already has a full price window.
+
+    `remaining` is the same number the backfill job reports. The score study
+    refuses to publish returns until it is zero; a second way of counting
+    "done" would let it publish while this job still says the sample is
+    incomplete.
+    """
+
+    sids: tuple[str, ...]
+    complete: int
+    remaining: int
+
+
+def expected_window(years: int) -> tuple[datetime.date, int]:
+    """First day of the window, and how many month buckets a full one holds."""
+    buckets = history_service.month_range(years * 12)
+    start = datetime.date(buckets[0][0], buckets[0][1], 1)
+    return start, len(buckets)
+
+
+def coverage(
+    db: Session, *, years: int | None = None, stocks: int | None = None
+) -> UniverseCoverage:
+    """Universe and how many of it are still short of `expected_window`.
+
+    Defaults are the job's own settings, so a caller that does not pass them
+    is asking about the sample the job is filling, not a different one.
+    """
+    years = settings.history_backfill_years if years is None else years
+    stocks = settings.history_backfill_stocks if stocks is None else stocks
+    start, expected = expected_window(years)
+    targets = universe(db, stocks, years)
+    landed = _landed_months(db, targets, start)
+    complete = sum(1 for sid in targets if landed.get(sid, 0) >= expected)
+    return UniverseCoverage(
+        sids=tuple(targets),
+        complete=complete,
+        remaining=len(targets) - complete,
+    )
+
+
 def run(
     db: Session,
     *,
@@ -152,9 +196,8 @@ def run(
             "fetched": 0, "stocks": 0, "complete": 0, "remaining": -1, "skipped": 1,
         }
 
+    start, expected = expected_window(years)
     buckets = history_service.month_range(years * 12)
-    start = datetime.date(buckets[0][0], buckets[0][1], 1)
-    expected = len(buckets)
 
     targets = universe(db, stocks, years)
     landed = _landed_months(db, targets, start)

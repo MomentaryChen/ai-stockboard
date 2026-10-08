@@ -33,6 +33,7 @@ const AdminJobs = lazy(() => import('./pages/AdminJobs'))
 const AdminJobDetail = lazy(() => import('./pages/AdminJobDetail'))
 const AdminStockCodes = lazy(() => import('./pages/AdminStockCodes'))
 const AdminAi = lazy(() => import('./pages/AdminAi'))
+const AdminScoreStudy = lazy(() => import('./pages/AdminScoreStudy'))
 
 export default function App() {
   const { pathname } = useLocation()
@@ -159,6 +160,14 @@ export default function App() {
                   element={
                     <RequireAuth adminOnly>
                       <AdminAi />
+                    </RequireAuth>
+                  }
+                />
+                <Route
+                  path="/admin/score-study"
+                  element={
+                    <RequireAuth adminOnly>
+                      <AdminScoreStudy />
                     </RequireAuth>
                   }
                 />

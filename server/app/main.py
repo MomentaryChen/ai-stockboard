@@ -30,6 +30,7 @@ from app.routers import (
     jobs,
     market,
     realtime,
+    score_study,
     stocks,
     users,
     watchlist,
@@ -102,6 +103,7 @@ app.add_middleware(
 app.include_router(stocks.router)
 app.include_router(jobs.router)
 app.include_router(ai_settings.router)
+app.include_router(score_study.router)
 app.include_router(history.router)
 app.include_router(dividends.router)
 app.include_router(chips.router)

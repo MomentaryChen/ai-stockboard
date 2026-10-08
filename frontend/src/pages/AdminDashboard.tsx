@@ -109,6 +109,11 @@ export default function AdminDashboard() {
           </div>
           <p className="dim admin-tile-desc">{t('admin.aiDesc')}</p>
         </Link>
+
+        <Link to="/admin/score-study" className="card admin-tile">
+          <div className="card-title">{t('admin.scoreTitle')}</div>
+          <p className="dim admin-tile-desc">{t('admin.scoreDesc')}</p>
+        </Link>
       </div>
 
       <section className="card stack" style={{ gap: 10 }}>

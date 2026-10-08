@@ -958,3 +958,33 @@ export interface JobTriggerResponse {
   started: boolean
   message: string
 }
+
+export type ScoreStudySuitability = 'strong' | 'ok' | 'weak' | 'avoid'
+
+export interface ScoreStudyBand {
+  suitability: ScoreStudySuitability
+  count: number
+  median_total_return_pct: number | null
+  median_annualised_return_pct: number | null
+  median_excess_price_return_pp: number | null
+  median_max_drawdown_pct: number | null
+  withheld: 'universe_incomplete' | 'bucket_too_small' | null
+}
+
+/** One shared decision date, then the following years, by hold-score band. */
+export interface ScoreStudyResponse {
+  as_of: string
+  horizon_years: number
+  horizon_end: string
+  cheap_basis: 'close_over_annual_eps'
+  sample_ready: boolean
+  universe_size: number
+  remaining: number
+  included: number
+  excluded_no_entry: number
+  excluded_pending: number
+  excluded_thin_outcome: number
+  excluded_thin_score: number
+  min_bucket: number
+  bands: ScoreStudyBand[]
+}

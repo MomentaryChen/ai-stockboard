@@ -60,6 +60,8 @@ export const zhTW = {
   'admin.listingNeverSynced': '尚未同步過，目前是內建快照',
   'admin.aiTitle': 'AI 模型',
   'admin.aiDesc': '選擇產生進出場判讀的 Gemini 模型。',
+  'admin.scoreTitle': '存股分數驗證',
+  'admin.scoreDesc': '同一天的分數，對照之後幾年的報酬。',
 
   // ---------- admin: AI model ----------
   'adminAi.title': 'AI 模型',
@@ -75,6 +77,37 @@ export const zhTW = {
   'adminAi.saving': '儲存中…',
   'adminAi.saved': '已儲存。',
   'adminAi.saveFailed': '儲存失敗：{message}',
+
+  // ---------- admin: hold-score study ----------
+  'adminScore.title': '存股分數驗證',
+  'adminScore.lede':
+    '在同一個日期為每一檔計算存股分數，再看之後幾年的報酬落在哪個分數帶。這是在檢驗門檻，不是再做一次個股回測。',
+  'adminScore.loading': '計算中…',
+  'adminScore.loadFailed': '無法計算：{message}',
+  'adminScore.notReady':
+    '歷史日線還沒補完（尚餘 {remaining} 檔），所以這裡不列出報酬。樣本若是有人看過的股票，高分看起來有效只是看的順序。到排程作業確認「尚未補完」歸零後再看。',
+  'adminScore.notReadyEmpty':
+    '還沒有可比較的母體。配息紀錄還沒寫進資料庫，所以這裡不列報酬。先跑配息預熱，再等歷史日線補完。',
+  'adminScore.openJobs': '前往排程作業',
+  'adminScore.window': '{start} 計分，持有到 {end}（{years} 年）',
+  'adminScore.universe': '母體 {universe} 檔，納入比較 {included} 檔',
+  'adminScore.excluded':
+    '沒有進場價 {noEntry}、結果還沒走完 {pending}、走勢太稀 {thinOutcome}、分數涵蓋不足 {thinScore}',
+  'adminScore.band': '分數帶',
+  'adminScore.count': '檔數',
+  'adminScore.total': '總報酬中位數',
+  'adminScore.annualised': '年化中位數',
+  'adminScore.excess': '相對自身指數（價格）',
+  'adminScore.drawdown': '最大回撤中位數',
+  'adminScore.tooSmall': '少於 {min} 檔，不列中位數',
+  'adminScore.noteCheap':
+    '「買得便宜」用的是當時收盤除以已公告的年度 EPS，不是交易所每天公布的本益比。過去每天的本益比沒有留下，用今天的會把後來的估值算進當天的分數。',
+  'adminScore.notePending':
+    '持有期間還沒走完，或中途沒有成交的，不計入中位數。下市的公司因此不會出現，這份結果偏向還在交易的。',
+  'adminScore.noteExcess':
+    '相對報酬只比價格，不含配息。加權指數本身不含息，拿它去比含息報酬會讓每一檔都看起來贏過大盤。',
+  'adminScore.noteCosts':
+    '沒有計入稅、二代健保與手續費，現金股利在除息日收盤再投入。真實結果會再差一點。',
 
   // ---------- login ----------
   'login.title': '登入',

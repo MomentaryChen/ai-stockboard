@@ -64,6 +64,8 @@ export const en: Messages = {
   'admin.listingNeverSynced': 'Never synced -- using the bundled snapshot',
   'admin.aiTitle': 'AI model',
   'admin.aiDesc': 'Which Gemini model generates position calls.',
+  'admin.scoreTitle': 'Hold-score study',
+  'admin.scoreDesc': 'One decision date, then what the following years returned.',
 
   // ---------- admin: AI model ----------
   'adminAi.title': 'AI model',
@@ -79,6 +81,37 @@ export const en: Messages = {
   'adminAi.saving': 'Saving…',
   'adminAi.saved': 'Saved.',
   'adminAi.saveFailed': 'Save failed: {message}',
+
+  // ---------- admin: hold-score study ----------
+  'adminScore.title': 'Hold-score study',
+  'adminScore.lede':
+    'Every name is scored on the same date, then grouped by what the following years returned. This checks the thresholds. It is not another single-stock backtest.',
+  'adminScore.loading': 'Computing…',
+  'adminScore.loadFailed': 'Could not compute: {message}',
+  'adminScore.notReady':
+    'The price backfill is not finished ({remaining} names still incomplete), so returns are not shown. A sample of whichever names were opened would make a high score look predictive for the wrong reason. Check Jobs and come back when remaining is zero.',
+  'adminScore.notReadyEmpty':
+    'There is no universe to compare yet. No dividend history is stored, so returns are not shown. Run the dividend warmup, then wait for the price backfill to finish.',
+  'adminScore.openJobs': 'Open jobs',
+  'adminScore.window': 'Scored on {start}, held to {end} ({years} years)',
+  'adminScore.universe': '{universe} in the universe, {included} compared',
+  'adminScore.excluded':
+    'No entry price {noEntry}, outcome not finished {pending}, too few bars {thinOutcome}, score not fully covered {thinScore}',
+  'adminScore.band': 'Band',
+  'adminScore.count': 'Names',
+  'adminScore.total': 'Median total return',
+  'adminScore.annualised': 'Median annualised',
+  'adminScore.excess': 'Vs own index (price)',
+  'adminScore.drawdown': 'Median max drawdown',
+  'adminScore.tooSmall': 'Fewer than {min} names, so no median',
+  'adminScore.noteCheap':
+    'Cheap uses that day’s close over annual EPS already on file, not the exchange’s daily PE. Past daily PEs are not stored, and using today’s would score the decision date with a valuation from later.',
+  'adminScore.notePending':
+    'A name whose holding window has not elapsed, or that stopped trading, is left out of the median. Delistings are therefore missing, and the result favours names that kept trading.',
+  'adminScore.noteExcess':
+    'The index comparison is price against price. The index pays no dividend, so setting it beside a dividend-reinvested return would make every name look better than the market.',
+  'adminScore.noteCosts':
+    'No tax, no health-insurance supplement, no brokerage. Cash dividends are reinvested at the ex-date close. The real result is a little worse.',
 
   // ---------- login ----------
   'login.title': 'Sign in',
