@@ -1483,6 +1483,59 @@ class WatchlistGroupUpdateRequest(BaseModel):
     name: str
 
 
+ScoreStudyWithheld = Literal["universe_incomplete", "bucket_too_small"]
+
+
+class ScoreStudyBand(BaseModel):
+    """One suitability band and what happened to the names that fell in it.
+
+    Medians are null when the band is too small to be a statement, and also
+    when the whole study is withheld because the price backfill has not
+    finished. `count` stays either way: how many names landed here is not
+    itself a return.
+    """
+
+    suitability: HoldSuitability
+    count: int
+    median_total_return_pct: float | None
+    median_annualised_return_pct: float | None
+    #: Price return minus that name's own index, in percentage points. Null
+    #: when the index has no bars over the window, and null for the whole band
+    #: when returns are withheld.
+    median_excess_price_return_pp: float | None
+    median_max_drawdown_pct: float | None
+    withheld: ScoreStudyWithheld | None
+
+
+class ScoreStudyResponse(BaseModel):
+    """Whether a high 存股 score was followed by a better holding outcome.
+
+    One date for the whole universe, then one forward window. Per-stock
+    windows would mix market regimes and the comparison between bands would
+    be a comparison of when each stock happened to have bars.
+    """
+
+    as_of: datetime.date
+    horizon_years: int
+    horizon_end: datetime.date
+    #: Cheap in this study is close divided by annual EPS. The live card
+    #: prefers the exchange's daily PE, and we do not store that PE on past
+    #: dates -- using today's would score 2018 with a 2026 valuation.
+    cheap_basis: Literal["close_over_annual_eps"]
+    #: False until every name in the backfill universe has its price window,
+    #: and false when that universe is empty. Returns are withheld either way.
+    sample_ready: bool
+    universe_size: int
+    remaining: int
+    included: int
+    excluded_no_entry: int
+    excluded_pending: int
+    excluded_thin_outcome: int
+    excluded_thin_score: int
+    min_bucket: int
+    bands: list[ScoreStudyBand]
+
+
 # `DeepInputs` names a schema declared after it -- see the note on its
 # `fundamentals` field. Pydantic resolves the string once the name exists, and
 # the only place that is guaranteed is here, below every declaration.

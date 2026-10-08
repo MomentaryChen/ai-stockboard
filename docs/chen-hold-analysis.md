@@ -2,9 +2,10 @@
 
 Branch: `feat/chen-hold-analysis`  
 Worktree: `…/worktree/ai-stockboard--feat-chen-hold-analysis`  
-Status: **M1, M2 and M3 shipped.** M4 is untouched and remains optional. The
-checklist below records what each milestone covered and where the build
-departed from the design.
+Status: **M1, M2 and M3 shipped.** M4's calibration fixes shipped with the
+study that compares score bands to later holding returns; that study withholds
+its numbers until the price backfill finishes. The original optional M4
+(screener, technical-AI replay, peer ranks) is untouched.
 
 ## Goal
 
@@ -343,19 +344,18 @@ surface area.
    `PROMPT_VERSION` -> `hold-v3`: the measurements changed and so did what
    Cheap means.
 
-Still open, and the one that matters most:
+The comparison that can settle the first point:
 
-4. [~] **Validate the thresholds.** Nothing demonstrates that a high score
-   predicts anything. Two things were missing: a way to compute the outcome,
-   and a sample to compute it over. The hold backtest supplied the first;
-   `history_backfill` now supplies the second, filling ten years of bars
-   across the longest-paying ~300 companies on an hourly schedule that yields
-   to live traffic.
-
-   The study itself is still not written, and deliberately so: running it
-   against today's coverage would measure whichever stocks happened to get
-   browsed, which is how you get a confident answer to the wrong question.
-   Wait for `remaining: 0` at /admin/jobs.
+4. [x] **Validate the thresholds — the study, not a fitted result.** Nothing
+   yet demonstrates that a high score predicts anything, and it still doesn't:
+   the comparison is written, and it refuses to publish returns until the
+   sample exists. `score_study.py` scores every name in the backfill universe
+   on one shared date, using only bars, ex-dates and annual filings knowable
+   that day (Cheap is close over annual EPS, not today's exchange PE), then
+   buckets the following years' holding return. Medians under eight names are
+   withheld, and so is the whole table while `history_backfill` reports
+   `remaining > 0`. Admins read it at `/admin/score-study`. Running it against
+   today's coverage would measure whichever stocks happened to get browsed.
 
 The remaining known distortions are listed in README under "Known
 distortions". The largest is that hold backtests are not comparable between

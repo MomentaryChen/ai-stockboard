@@ -1516,10 +1516,16 @@ was already collected.
 
 ### Still true, and worth knowing before trusting a number
 
-- **The thresholds have never been validated.** ROE ≥ 10%, PE ≤ 15, an 8-year
+- **The thresholds have never been validated against a finished sample.** ROE ≥ 10%, PE ≤ 15, an 8-year
   streak, the 25/20/20/25/10 weights -- all encode the published method, none
-  is fitted to or tested against outcomes. Nothing here demonstrates that a
-  high score predicts anything.
+  is fitted to outcomes. The study that would do it is
+  `services/analysis/score_study.py`, shown to admins at `/admin/score-study`:
+  one decision date for the whole backfill universe, the checklist as of that
+  date, and the median holding return over the following years by band.
+  Returns stay blank until `history_backfill` reports `remaining: 0`. A median
+  over whichever names have bars today would answer a question about browsing,
+  not about the thresholds. Cheap in that study is close over annual EPS,
+  because past daily PEs are not stored.
 - **Hold backtests are not comparable between stocks** -- *being addressed.*
   The window is however much history `daily_price` holds, which historically
   depended on which stocks someone browsed and how far back. The
@@ -1539,11 +1545,12 @@ was already collected.
   brokerage, dividends reinvested at the ex-date close rather than a month
   later, no 定期定額. Individually small, and all optimistic.
 
-What would settle the first point is bucketing stocks by score and measuring
-what happened next. The hold backtest made that computable; `history_backfill`
-is what gives it a sample worth computing over. Until that job reports
-`remaining: 0`, the study would be measuring whichever stocks happened to get
-browsed -- which is how you get a confident answer to the wrong question.
+What would settle the first point is bucketing stocks by the score they
+would have had on one shared date and measuring what happened next. That
+study is written (`score_study.py`, `/admin/score-study`). It withholds every
+return until `history_backfill` reports `remaining: 0` -- before that, the
+sample is whichever stocks happened to get browsed, which is how you get a
+confident answer to the wrong question.
 
 ### The history backfill job
 

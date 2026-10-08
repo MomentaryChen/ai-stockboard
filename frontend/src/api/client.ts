@@ -30,6 +30,7 @@ import type {
   ChipResponse,
   RealtimeResponse,
   SearchResponse,
+  ScoreStudyResponse,
   StockInfo,
   User,
   UserListResponse,
@@ -674,6 +675,11 @@ export const api = {
       method: 'POST',
       auth: true,
     }),
+
+  /** Hold-score bands versus the years that followed. ADMIN only, and heavy:
+   *  it reads the backfill universe. Returns are null until that backfill
+   *  reports nothing left. */
+  getScoreStudy: () => request<ScoreStudyResponse>('/api/admin/score-study', { auth: true }),
 
   // --- watchlist (signed in) ---
 
