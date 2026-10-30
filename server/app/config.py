@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     # Empty means this deployment does not run the engine, and the import job
     # reports that as a skip rather than a failure.
     engine_output_file: str = ""
+    engine_us_output_file: str = ""
 
     # --- Health / backup reporting ---
     # Path *inside this process* to the directory the db-backup container

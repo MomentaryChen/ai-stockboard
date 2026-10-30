@@ -212,6 +212,8 @@ def score(pick: dict, raw: pd.DataFrame, market_close: pd.Series, params: Params
         "long": None,
         "hold_state": "unknown",
         "risk_line": None,
+        "extended_price": pick.get("extended_price"),
+        "extended_change": pick.get("extended_change"),
     }
     bars = clean(raw, market_close.index, pick["code"], pick["market"])
     frame, prices = build_frame(bars, market_close)
@@ -225,10 +227,11 @@ def score(pick: dict, raw: pd.DataFrame, market_close: pd.Series, params: Params
 
     # The official figure can lag Yahoo by a session, so only the same date is comparable.
     date = pick["official_date"]
-    official_date = pd.Timestamp(int(date[:3]) + 1911, int(date[3:5]), int(date[5:7]))
-    if official_date in bars.index and abs(bars.loc[official_date, "Close"] / pick["official_close"] - 1) > 0.005:
-        row.update(status="data_mismatch", status_detail=f"{official_date.date()} differs from the exchange close")
-        return row, []
+    if date:  # US stocks have no free official close to compare with.
+        official_date = pd.Timestamp(int(date[:3]) + 1911, int(date[3:5]), int(date[5:7]))
+        if official_date in bars.index and abs(bars.loc[official_date, "Close"] / pick["official_close"] - 1) > 0.005:
+            row.update(status="data_mismatch", status_detail=f"{official_date.date()} differs from the exchange close")
+            return row, []
 
     last, history = usable.iloc[-1], usable.iloc[:-1]
     mu, sd = history[FEATURES].mean(), history[FEATURES].std() + 1e-9

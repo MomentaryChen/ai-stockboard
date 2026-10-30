@@ -43,6 +43,7 @@ FUNDAMENTALS_REFRESH = "fundamentals_refresh"
 FUNDAMENTALS_BACKFILL = "fundamentals_backfill"
 HISTORY_BACKFILL = "history_backfill"
 ENGINE_IMPORT = "engine_import"
+ENGINE_IMPORT_US = "engine_import_us"
 
 
 @dataclass(frozen=True)
@@ -383,6 +384,30 @@ def build() -> None:
             max_interval_minutes=7 * 24 * 60,
             manual_cooldown_seconds=30,
             # Safe at boot: reading one local file, and an unchanged file skips.
+            run_on_startup=True,
+            expected_seconds=5,
+            stat_labels={"rows": "匯入檔數", "scored": "完成評估", "graded": "新增評分"},
+        )
+    )
+
+    register(
+        JobDefinition(
+            id=ENGINE_IMPORT_US,
+            name="美股 AI 進場建議匯入",
+            description=(
+                "把 market-engine-us 容器算好的美股 AI 大廠建議匯入資料庫。"
+                "每天的結果都會保留，檔案沒有更新時會自動略過。"
+            ),
+            handler=handlers.engine_import_us,
+            default_enabled=True,
+            default_kind=SCHEDULE_DAILY,
+            # The US engine starts at 06:30, after the close in either daylight
+            # saving state, and takes a few minutes.
+            default_daily_at="07:30",
+            default_interval_minutes=24 * 60,
+            min_interval_minutes=15,
+            max_interval_minutes=7 * 24 * 60,
+            manual_cooldown_seconds=30,
             run_on_startup=True,
             expected_seconds=5,
             stat_labels={"rows": "匯入檔數", "scored": "完成評估", "graded": "新增評分"},

@@ -951,6 +951,8 @@ class EngineRun(Base):
 
     __tablename__ = "engine_run"
 
+    # Separate from `market`, which in the payload is the exchange (上市, 上櫃).
+    region: Mapped[str] = mapped_column(String(4), primary_key=True)
     as_of: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
     engine_version: Mapped[str] = mapped_column(String(16), primary_key=True)
     generated_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True))
@@ -979,6 +981,7 @@ class EngineRecommendation(Base):
 
     __tablename__ = "engine_recommendation"
 
+    region: Mapped[str] = mapped_column(String(4), primary_key=True)
     as_of: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
     engine_version: Mapped[str] = mapped_column(String(16), primary_key=True)
     sid: Mapped[str] = mapped_column(String(16), primary_key=True)
@@ -988,7 +991,7 @@ class EngineRecommendation(Base):
     hold_state: Mapped[str] = mapped_column(String(12))
     payload: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
 
-    __table_args__ = (Index("ix_engine_recommendation_sid", "sid", "as_of"),)
+    __table_args__ = (Index("ix_engine_recommendation_sid", "region", "sid", "as_of"),)
 
 
 class EngineOutcome(Base):
@@ -1001,6 +1004,7 @@ class EngineOutcome(Base):
 
     __tablename__ = "engine_outcome"
 
+    region: Mapped[str] = mapped_column(String(4), primary_key=True)
     call_as_of: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
     engine_version: Mapped[str] = mapped_column(String(16), primary_key=True)
     sid: Mapped[str] = mapped_column(String(16), primary_key=True)

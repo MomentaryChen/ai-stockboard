@@ -32,6 +32,7 @@ import type {
   SearchResponse,
   EngineOverview,
   EngineRecommendation,
+  EngineRegion,
   EngineStockResponse,
   EngineTrackRecord,
   ScoreStudyResponse,
@@ -686,13 +687,15 @@ export const api = {
   getScoreStudy: () => request<ScoreStudyResponse>('/api/admin/score-study', { auth: true }),
 
   // --- sector picks (signed in) ---
-  getEngineOverview: () => request<EngineOverview>('/api/engine/overview', { auth: true }),
-  getEngineRecommendations: (sector: string) =>
+  getEngineOverview: (region: EngineRegion) =>
+    request<EngineOverview>(`/api/engine/overview?region=${region}`, { auth: true }),
+  getEngineRecommendations: (sector: string, region: EngineRegion) =>
     request<EngineRecommendation[]>(
-      `/api/engine/recommendations?sector=${encodeURIComponent(sector)}`,
+      `/api/engine/recommendations?sector=${encodeURIComponent(sector)}&region=${region}`,
       { auth: true },
     ),
-  getEngineTrackRecord: () => request<EngineTrackRecord>('/api/engine/track-record', { auth: true }),
+  getEngineTrackRecord: (region: EngineRegion) =>
+    request<EngineTrackRecord>(`/api/engine/track-record?region=${region}`, { auth: true }),
   getEngineStock: (sid: string) =>
     request<EngineStockResponse>(`/api/engine/stocks/${encodeURIComponent(sid)}`, { auth: true }),
 

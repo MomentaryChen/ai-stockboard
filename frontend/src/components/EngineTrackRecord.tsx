@@ -1,7 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../api/client'
-import type { EngineTrackCall, EngineTrackConclusion, EngineTrackHold, EngineTrackSummary } from '../api/types'
+import type {
+  EngineRegion,
+  EngineTrackCall,
+  EngineTrackConclusion,
+  EngineTrackHold,
+  EngineTrackSummary,
+} from '../api/types'
 import { useI18n, type MessageKey } from '../i18n'
 import { errorMessage } from '../utils/errors'
 
@@ -43,10 +49,12 @@ function share(value: number | null): string {
 function TrackTable({
   heading,
   labelHeader,
+  benchmark,
   rows,
 }: {
   heading: string
   labelHeader: string
+  benchmark: string
   rows: Array<{ label: string; summary: EngineTrackSummary }>
 }) {
   const { t } = useI18n()
@@ -62,7 +70,7 @@ function TrackTable({
               <th>{t('engine.trackCalls')}</th>
               <th>{t('engine.trackReturn')}</th>
               <th>{t('engine.trackWin')}</th>
-              <th>{t('engine.trackExcess')}</th>
+              <th>{t('engine.trackExcess', { benchmark })}</th>
               <th>{t('engine.trackVerdict')}</th>
             </tr>
           </thead>
@@ -75,7 +83,7 @@ function TrackTable({
                 <td>{signed(summary.avg_return)}</td>
                 <td>{share(summary.win_rate)}</td>
                 <td>{signed(summary.avg_excess)}</td>
-                <td>{t(VERDICT_KEY[summary.conclusion])}</td>
+                <td>{t(VERDICT_KEY[summary.conclusion], { benchmark })}</td>
               </tr>
             ))}
           </tbody>
@@ -85,9 +93,13 @@ function TrackTable({
   )
 }
 
-export default function EngineTrackRecord() {
+export default function EngineTrackRecord({ region }: { region: EngineRegion }) {
   const { t } = useI18n()
-  const record = useQuery({ queryKey: ['engine', 'track-record'], queryFn: api.getEngineTrackRecord })
+  const record = useQuery({
+    queryKey: ['engine', 'track-record', region],
+    queryFn: () => api.getEngineTrackRecord(region),
+  })
+  const benchmark = region === 'us' ? 'SPY' : '0050'
 
   if (record.isLoading) {
     return (
@@ -109,7 +121,7 @@ export default function EngineTrackRecord() {
     <div className="stack engine-main-column">
       <div>
         <h1 className="engine-title">{t('engine.trackTitle')}</h1>
-        <p className="engine-note">{t('engine.trackIntro')}</p>
+        <p className="engine-note">{t('engine.trackIntro', { benchmark })}</p>
       </div>
       {data.graded === 0 ? (
         <p className="engine-warning">{t('engine.trackEmpty')}</p>
@@ -123,11 +135,12 @@ export default function EngineTrackRecord() {
             })}{' '}
             {t('engine.trackMinDates', { count: data.min_call_dates })}
           </p>
-          <TrackTable heading={t('engine.trackShortHeading')} labelHeader={t('engine.trackCall')} rows={callRows('short')} />
-          <TrackTable heading={t('engine.trackLongHeading')} labelHeader={t('engine.trackCall')} rows={callRows('long')} />
+          <TrackTable heading={t('engine.trackShortHeading')} labelHeader={t('engine.trackCall')} benchmark={benchmark} rows={callRows('short')} />
+          <TrackTable heading={t('engine.trackLongHeading')} labelHeader={t('engine.trackCall')} benchmark={benchmark} rows={callRows('long')} />
           <TrackTable
             heading={t('engine.trackHoldHeading')}
             labelHeader={t('engine.trackHold')}
+            benchmark={benchmark}
             rows={data.holds.map((row) => ({ label: t(HOLD_KEY[row.hold_state]), summary: row }))}
           />
           <p className="dim">{t('engine.trackFootnote')}</p>

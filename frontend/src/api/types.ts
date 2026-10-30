@@ -1023,7 +1023,11 @@ export interface EngineRecommendation {
   long: EnginePlan | null
   hold_state: EngineHoldState
   risk_line: number | null
+  extended_price?: number | null
+  extended_change?: number | null
 }
+
+export type EngineRegion = 'tw' | 'us'
 
 export interface EngineSectorSummary {
   sector: string

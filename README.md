@@ -2134,8 +2134,19 @@ periods: many stocks on one day are one market move, not many confirmations. Cal
 waiting to mature live on the engine's volume, which `pg_dump` does not cover, so
 losing the volume loses only those pending grades.
 
+**US AI stocks.** The sidebar also lists the five largest companies in five AI
+groups, from a separate `market-engine-us` container that runs at 06:30 Taipei
+time, after the US close, with `engine_import_us` following at 07:30. The method is
+the same, with these differences: the candidate list is hand-picked, the benchmark
+is SPY, returns are in dollars and exclude currency moves, and costs assume 0.25%
+each way through a sub-brokerage. No free official close exists to compare with,
+so the run only checks that the index is current. Earnings often move these stocks
+after the close, so cards show the pre- or after-market price beside the advice.
+US stocks have no stock page, because the rest of the app is Taiwan-only.
+
 `tools/market_engine` has its own tests and runs by hand with
-`uv run python -m market_engine --out latest.json`, which takes about 15 minutes.
+`uv run python -m market_engine --region tw --out latest.json`. A Taiwan run takes
+about 15 minutes.
 
 ## 已知限制
 

@@ -116,6 +116,7 @@ services:
       # that stopped happening. Distinct from BACKUP_DIR, which is a host path.
       BACKUP_STATUS_DIR: /backups
       ENGINE_OUTPUT_FILE: /engine/latest.json
+      ENGINE_US_OUTPUT_FILE: /engine/us.json
     ports:
       # Loopback by default: browsers reach the API through nginx at /api on the
       # frontend port, and the frontend container uses the compose network. This
@@ -152,6 +153,29 @@ services:
     environment:
       ENGINE_RUN_AT: ${ENGINE_RUN_AT:-20:00}
       ENGINE_OUTPUT: /output/latest.json
+      TZ: ${TZ:-Asia/Taipei}
+    volumes:
+      - stockboard-engine:/output
+    deploy:
+      resources:
+        limits:
+          cpus: "${ENGINE_CPU_LIMIT:-1.0}"
+          memory: ${ENGINE_MEMORY_LIMIT:-1500m}
+    logging: *default-logging
+
+  # The same image for US stocks. A second container rather than a second run in
+  # the first one, because the two markets close about 12 hours apart and each
+  # run should see that market's final close.
+  market-engine-us:
+    image: ai-stockboard-market-engine
+    build:
+      context: ../tools/market_engine
+    container_name: ai-stockboard-market-engine-us
+    restart: unless-stopped
+    environment:
+      ENGINE_RUN_AT: ${ENGINE_US_RUN_AT:-06:30}
+      ENGINE_REGION: us
+      ENGINE_OUTPUT: /output/us.json
       TZ: ${TZ:-Asia/Taipei}
     volumes:
       - stockboard-engine:/output

@@ -132,3 +132,52 @@ def official_index_closes() -> dict[pd.Timestamp, float]:
             row["TAIEX"].replace(",", "")
         )
     return closes
+
+
+# No exchange publishes "AI companies", so membership is a judgement call and the
+# page says so. Only the ranking inside each group is computed.
+US_GROUPS = {
+    "AI 晶片": ["NVDA", "AVGO", "TSM", "AMD", "MU", "INTC", "QCOM", "MRVL", "ARM"],
+    "半導體設備": ["ASML", "AMAT", "LRCX", "KLAC", "TER"],
+    "雲端與模型平台": ["MSFT", "GOOGL", "AMZN", "META", "ORCL"],
+    "AI 伺服器與基建": ["DELL", "ANET", "SMCI", "VRT", "CSCO", "HPE"],
+    "AI 軟體與應用": ["PLTR", "NOW", "CRM", "ADBE", "SNOW"],
+}
+
+
+def us_picks() -> list[dict]:
+    import yfinance as yf  # Only this function needs it, and tests of `pick` should not.
+
+    picks = []
+    for group, tickers in US_GROUPS.items():
+        members = []
+        for ticker in tickers:
+            try:
+                info = yf.Ticker(ticker).info
+            except Exception:  # One failed lookup only costs that company its ranking.
+                continue
+            if info.get("marketCap"):
+                members.append((ticker, info))
+        members.sort(key=lambda m: m[1]["marketCap"], reverse=True)
+        for rank, (ticker, info) in enumerate(members[:TOP_N], 1):
+            picks.append(
+                {
+                    "sector": group,
+                    "rank": rank,
+                    "members": len(members),
+                    "code": ticker,
+                    "name": info.get("shortName") or ticker,
+                    "cap": float(info["marketCap"]),
+                    "official_close": None,
+                    "official_date": None,
+                    "yahoo": ticker,
+                    "market": "美股",
+                    # Earnings often move a stock after the close, which the
+                    # close-based figures cannot see, so the reader needs this.
+                    "extended_price": info.get("postMarketPrice") or info.get("preMarketPrice"),
+                    "extended_change": info.get("postMarketChangePercent")
+                    if info.get("postMarketPrice")
+                    else info.get("preMarketChangePercent"),
+                }
+            )
+    return picks

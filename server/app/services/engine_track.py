@@ -85,8 +85,8 @@ def summarize_group(rows: list[EngineOutcome], horizon: str) -> dict:
     return summary
 
 
-def load(db: Session) -> dict:
-    rows = list(db.scalars(select(EngineOutcome)))
+def load(db: Session, region: str = "tw") -> dict:
+    rows = list(db.scalars(select(EngineOutcome).where(EngineOutcome.region == region)))
     groups = defaultdict(list)
     holds = defaultdict(list)
     for row in rows:

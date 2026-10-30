@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 #: 1 is accepted so the first import after an upgrade can still read the file the
 #: previous engine version left behind.
-SUPPORTED_SCHEMAS = {1, 2}
+SUPPORTED_SCHEMAS = {1, 2, 3}
 
 
 class EngineEntry(BaseModel):
@@ -61,6 +61,8 @@ class EngineRow(BaseModel):
     long: EnginePlan | None
     hold_state: Literal["strong", "unclear", "weak", "unknown"]
     risk_line: float | None
+    extended_price: float | None = None
+    extended_change: float | None = None
 
 
 class EngineValidationRow(BaseModel):
@@ -90,6 +92,7 @@ class EngineOutcomeRow(BaseModel):
 
 class EngineFile(BaseModel):
     schema_version: int
+    region: Literal["tw", "us"] = "tw"  # Files before schema 3 are all Taiwan.
     engine_version: str
     generated_at: datetime.datetime
     as_of: datetime.date
@@ -134,7 +137,7 @@ def run(db: Session, path: str, *, force: bool = False) -> ImportReport:
     digest = hashlib.sha256(raw).hexdigest()
     parsed = parse(raw)
 
-    existing = db.get(EngineRun, (parsed.as_of, parsed.engine_version))
+    existing = db.get(EngineRun, (parsed.region, parsed.as_of, parsed.engine_version))
     if existing is not None and existing.source_sha256 == digest and not force:
         return ImportReport("unchanged", f"{parsed.as_of} is already imported")
 
@@ -142,6 +145,7 @@ def run(db: Session, path: str, *, force: bool = False) -> ImportReport:
     # earlier one whole, including any stock that fell out of the top five.
     db.execute(
         delete(EngineRecommendation).where(
+            EngineRecommendation.region == parsed.region,
             EngineRecommendation.as_of == parsed.as_of,
             EngineRecommendation.engine_version == parsed.engine_version,
         )
@@ -151,6 +155,7 @@ def run(db: Session, path: str, *, force: bool = False) -> ImportReport:
         db.flush()
     db.add(
         EngineRun(
+            region=parsed.region,
             as_of=parsed.as_of,
             engine_version=parsed.engine_version,
             generated_at=parsed.generated_at,
@@ -161,6 +166,7 @@ def run(db: Session, path: str, *, force: bool = False) -> ImportReport:
     for row in parsed.recommendations:
         db.add(
             EngineRecommendation(
+                region=parsed.region,
                 as_of=parsed.as_of,
                 engine_version=parsed.engine_version,
                 sid=row.sid,
@@ -171,14 +177,14 @@ def run(db: Session, path: str, *, force: bool = False) -> ImportReport:
                 payload=row.model_dump(mode="json"),
             )
         )
-    graded = _store_new_outcomes(db, parsed.outcomes)
+    graded = _store_new_outcomes(db, parsed.region, parsed.outcomes)
     db.commit()
     scored = sum(row.status == "ok" for row in parsed.recommendations)
     logger.info("Imported engine run %s (%d rows)", parsed.as_of, len(parsed.recommendations))
     return ImportReport("imported", rows=len(parsed.recommendations), scored=scored, graded=graded)
 
 
-def _store_new_outcomes(db: Session, outcomes: list[EngineOutcomeRow]) -> int:
+def _store_new_outcomes(db: Session, region: str, outcomes: list[EngineOutcomeRow]) -> int:
     known = set(
         db.execute(
             select(
@@ -186,7 +192,7 @@ def _store_new_outcomes(db: Session, outcomes: list[EngineOutcomeRow]) -> int:
                 EngineOutcome.engine_version,
                 EngineOutcome.sid,
                 EngineOutcome.horizon,
-            )
+            ).where(EngineOutcome.region == region)
         ).tuples()
     )
     added = 0
@@ -194,19 +200,20 @@ def _store_new_outcomes(db: Session, outcomes: list[EngineOutcomeRow]) -> int:
         key = (row.call_as_of, row.engine_version, row.sid, row.horizon)
         if key not in known:
             known.add(key)
-            db.add(EngineOutcome(**row.model_dump()))
+            db.add(EngineOutcome(region=region, **row.model_dump()))
             added += 1
     return added
 
 
-def latest_run(db: Session) -> EngineRun | None:
+def latest_run(db: Session, region: str = "tw") -> EngineRun | None:
     return db.scalars(
-        select(EngineRun).order_by(EngineRun.as_of.desc(), EngineRun.imported_at.desc()).limit(1)
+        select(EngineRun).where(EngineRun.region == region).order_by(EngineRun.as_of.desc(), EngineRun.imported_at.desc()).limit(1)
     ).first()
 
 
 def run_rows(db: Session, run_row: EngineRun, *, sector: str | None = None) -> list[EngineRecommendation]:
     query = select(EngineRecommendation).where(
+        EngineRecommendation.region == run_row.region,
         EngineRecommendation.as_of == run_row.as_of,
         EngineRecommendation.engine_version == run_row.engine_version,
     )
@@ -216,4 +223,4 @@ def run_rows(db: Session, run_row: EngineRun, *, sector: str | None = None) -> l
 
 
 def stock_row(db: Session, run_row: EngineRun, sid: str) -> EngineRecommendation | None:
-    return db.get(EngineRecommendation, (run_row.as_of, run_row.engine_version, sid))
+    return db.get(EngineRecommendation, (run_row.region, run_row.as_of, run_row.engine_version, sid))

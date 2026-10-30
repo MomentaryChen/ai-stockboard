@@ -79,9 +79,14 @@ const ENGINE_SECTOR_KEYS: Record<string, MessageKey> = {
   '金融保險': 'engineSector.finance',
   '航運': 'engineSector.shipping',
   '鋼鐵': 'engineSector.steel',
+  'AI 晶片': 'engineSector.usChips',
+  '半導體設備': 'engineSector.usEquipment',
+  '雲端與模型平台': 'engineSector.usCloud',
+  'AI 伺服器與基建': 'engineSector.usServers',
+  'AI 軟體與應用': 'engineSector.usSoftware',
 }
 
-export const ENGINE_SECTOR_ORDER = ['半導體', '記憶體', '電腦及週邊', '電子零組件', '其他電子（含代工）', '通信網路', '電子通路', '光電', '建材營造（房市）', '水泥', '金融保險', '航運', '鋼鐵']
+export const ENGINE_SECTOR_ORDER = ['半導體', '記憶體', '電腦及週邊', '電子零組件', '其他電子（含代工）', '通信網路', '電子通路', '光電', '建材營造（房市）', '水泥', '金融保險', '航運', '鋼鐵', 'AI 晶片', '半導體設備', '雲端與模型平台', 'AI 伺服器與基建', 'AI 軟體與應用']
 
 export function translateEngineSector(sector: string, t: Translate): string {
   const key = ENGINE_SECTOR_KEYS[sector]
@@ -140,6 +145,7 @@ const JOB_KEYS: Record<string, { name: MessageKey; description: MessageKey }> = 
   },
   chip_refresh: { name: 'jobName.chip_refresh', description: 'jobDesc.chip_refresh' },
   engine_import: { name: 'jobName.engine_import', description: 'jobDesc.engine_import' },
+  engine_import_us: { name: 'jobName.engine_import_us', description: 'jobDesc.engine_import_us' },
 }
 
 export function translateJobName(id: string, fallback: string, t: Translate): string {

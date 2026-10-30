@@ -91,6 +91,12 @@ describe('EngineAdvice', () => {
     expect(text).not.toContain('--')
   })
 
+  it('uses dollars and shows the pre-market move for a US stock', () => {
+    const text = render(item({ sid: 'NVDA', market: '美股', extended_price: 207.7, extended_change: -2.79 }))
+    expect(text).toContain('買 10,000 美元，平均約賺 500 美元')
+    expect(text).toContain('207.70（-2.8%）')
+  })
+
   it('names the price when it has to fall first', () => {
     expect(render(item({ short: plan(entry({ k_atr: 2, price: 901.5 })) }))).toContain('跌到 901.50 以下再進')
   })
