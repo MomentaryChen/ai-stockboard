@@ -2125,6 +2125,15 @@ fills, and the next level down agrees or has too few fills to say.
   feed. Check its terms before any commercial use.
 - News and sudden events only change the advice once they reach the price.
 
+**Checking the calls.** The sidebar's track record grades each call once it has
+matured, using the same trade replay that made it, and compares it with buying
+0050 over the same period. A "not recommended" call is graded on what buying would
+have done, since that is the only way to judge a warning. Averages stay hidden
+until 20 call dates have matured, and a conclusion needs 8 non-overlapping holding
+periods: many stocks on one day are one market move, not many confirmations. Calls
+waiting to mature live on the engine's volume, which `pg_dump` does not cover, so
+losing the volume loses only those pending grades.
+
 `tools/market_engine` has its own tests and runs by hand with
 `uv run python -m market_engine --out latest.json`, which takes about 15 minutes.
 

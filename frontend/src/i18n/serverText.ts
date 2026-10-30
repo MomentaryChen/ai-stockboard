@@ -169,6 +169,7 @@ const JOB_STAT_KEYS: Record<string, MessageKey> = {
   cached: 'jobStat.cached',
   rows: 'jobStat.rows',
   scored: 'jobStat.scored',
+  graded: 'jobStat.graded',
 }
 
 export function translateJobStat(key: string, fallback: string, t: Translate): string {

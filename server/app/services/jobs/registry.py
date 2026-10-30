@@ -385,7 +385,7 @@ def build() -> None:
             # Safe at boot: reading one local file, and an unchanged file skips.
             run_on_startup=True,
             expected_seconds=5,
-            stat_labels={"rows": "匯入檔數", "scored": "完成評估"},
+            stat_labels={"rows": "匯入檔數", "scored": "完成評估", "graded": "新增評分"},
         )
     )
 

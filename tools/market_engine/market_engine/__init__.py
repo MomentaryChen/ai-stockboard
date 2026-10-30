@@ -11,4 +11,4 @@ ENGINE_VERSION = "1.0.0"
 
 #: Bumped when the JSON shape changes. The importer refuses a version it does
 #: not know rather than storing fields under the wrong meaning.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2

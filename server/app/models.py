@@ -50,6 +50,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -989,3 +990,26 @@ class EngineRecommendation(Base):
 
     __table_args__ = (Index("ix_engine_recommendation_sid", "sid", "as_of"),)
 
+
+class EngineOutcome(Base):
+    """How one earlier call turned out. Written once, when the call has matured.
+
+    The engine re-sends recent grades on every run so a missed import loses
+    nothing. The importer keeps the first copy, because a later copy could differ
+    after Yahoo restates its adjusted prices, and a track record must not change.
+    """
+
+    __tablename__ = "engine_outcome"
+
+    call_as_of: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
+    engine_version: Mapped[str] = mapped_column(String(16), primary_key=True)
+    sid: Mapped[str] = mapped_column(String(16), primary_key=True)
+    horizon: Mapped[str] = mapped_column(String(8), primary_key=True)
+    sector: Mapped[str] = mapped_column(String(32))
+    call: Mapped[str] = mapped_column(String(12))
+    hold_state: Mapped[str] = mapped_column(String(12))
+    filled: Mapped[bool] = mapped_column(Boolean)
+    stopped: Mapped[bool] = mapped_column(Boolean)
+    followed_return: Mapped[float | None] = mapped_column(Float)
+    market_entry_return: Mapped[float] = mapped_column(Float)
+    benchmark_return: Mapped[float | None] = mapped_column(Float)

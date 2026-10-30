@@ -6,12 +6,13 @@ the trade replay, the choice of entry level, and whether future data leaks in.
 
 from __future__ import annotations
 
+import datetime
 import math
 
 import numpy as np
 import pandas as pd
 
-from market_engine import scoring, simulate
+from market_engine import scoring, simulate, tracking
 from market_engine.simulate import ROUND_TRIP_COST
 
 
@@ -135,3 +136,72 @@ def test_clean_drops_invented_holiday_bars_and_zero_prices():
     cleaned = scoring.clean(bars, calendar, "9999", "上櫃")
     assert bars.index[10] not in cleaned.index
     assert (cleaned["Open"] > 0).all()
+
+
+def _bars(close, start="2026-01-01"):
+    close = np.asarray(close, float)
+    index = pd.bdate_range(start, periods=len(close))
+    return pd.DataFrame({"o": close, "h": close * 1.001, "l": close * 0.999, "c": close}, index=index)
+
+
+def _call_file(date, **overrides):
+    call = {
+        "sid": "1111",
+        "yahoo": "1111.TW",
+        "market": "上市",
+        "sector": "水泥",
+        "close": 100.0,
+        "risk_line": 95.0,  # An ATR of 2%.
+        "hold_state": "strong",
+        "short_entry_k": 0,
+        "long_entry_k": None,
+        **overrides,
+    }
+    return {"as_of": str(date.date()), "engine_version": "1.0.0", "calls": [call]}
+
+
+def test_only_matured_calls_are_graded():
+    frame = _bars([100.0] * 30)
+    rows = tracking.grade([_call_file(frame.index[0])], {"1111": frame}, frame)
+    assert [(r["horizon"], r["call"]) for r in rows] == [("short", "buy_now")]
+
+
+def test_grade_compares_with_the_benchmark_over_the_same_period():
+    frame = _bars(np.linspace(100, 120, 40))
+    flat = _bars([50.0] * 40)
+    row = tracking.grade([_call_file(frame.index[0])], {"1111": frame}, flat)[0]
+    assert row["benchmark_return"] == 0.0
+    expected = frame["c"].iloc[21] / frame["o"].iloc[1] - 1 - simulate.ROUND_TRIP_COST
+    assert math.isclose(row["market_entry_return"], expected)
+
+
+def test_no_buy_still_records_what_buying_would_have_done():
+    frame = _bars([100.0] * 70)
+    row = next(r for r in tracking.grade([_call_file(frame.index[0])], {"1111": frame}, frame) if r["horizon"] == "long")
+    assert row["call"] == "no_buy"
+    assert row["followed_return"] is None and row["filled"] is False
+    assert math.isclose(row["market_entry_return"], -simulate.ROUND_TRIP_COST)
+
+
+def test_unfilled_dip_order_has_no_return_of_its_own():
+    frame = _bars([100.0] * 30)
+    row = tracking.grade([_call_file(frame.index[0], short_entry_k=2.0)], {"1111": frame}, frame)[0]
+    assert row["call"] == "buy_dip" and row["filled"] is False and row["followed_return"] is None
+
+
+def test_call_files_round_trip_and_expire(tmp_path):
+    entry = {"entry": {"k_atr": 0}}
+    payload = {
+        "as_of": "2026-10-30",
+        "engine_version": "1.0.0",
+        "recommendations": [
+            {"sid": "1111", "market": "上市", "sector": "水泥", "close": 100.0, "risk_line": 95.0, "hold_state": "weak",
+             "status": "ok", "short": entry, "long": {"entry": None}},
+            {"sid": "2222", "status": "failed"},
+        ],
+    }
+    tracking.save_calls(str(tmp_path), payload, {"1111": "1111.TW"})
+    loaded = tracking.load_calls(str(tmp_path), today=datetime.date(2026, 11, 1))
+    assert [c["sid"] for c in loaded[0]["calls"]] == ["1111"]
+    assert loaded[0]["calls"][0]["long_entry_k"] is None
+    assert tracking.load_calls(str(tmp_path), today=datetime.date(2027, 6, 1)) == []

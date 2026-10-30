@@ -1058,3 +1058,40 @@ export interface EngineStockResponse {
   stale: boolean
   item: EngineRecommendation | null
 }
+
+
+export type EngineTrackConclusion = 'collecting' | 'beat' | 'lagged' | 'no_difference'
+
+export interface EngineTrackSummary {
+  calls: number
+  call_dates: number
+  independent_periods: number
+  ready: boolean
+  avg_return: number | null
+  win_rate: number | null
+  avg_benchmark: number | null
+  avg_excess: number | null
+  excess_lo: number | null
+  excess_hi: number | null
+  conclusion: EngineTrackConclusion
+}
+
+export interface EngineTrackCall extends EngineTrackSummary {
+  horizon: 'short' | 'long'
+  call: 'buy_now' | 'buy_dip' | 'no_buy'
+  fill_rate: number | null
+  avg_followed_return: number | null
+}
+
+export interface EngineTrackHold extends EngineTrackSummary {
+  hold_state: 'strong' | 'unclear' | 'weak'
+}
+
+export interface EngineTrackRecord {
+  first_call: string | null
+  last_call: string | null
+  graded: number
+  min_call_dates: number
+  calls: EngineTrackCall[]
+  holds: EngineTrackHold[]
+}

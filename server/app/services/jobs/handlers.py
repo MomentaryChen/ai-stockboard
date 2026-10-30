@@ -165,7 +165,7 @@ def engine_import(context: JobContext) -> JobResult:
     )
     if report.status == "imported":
         return JobResult(
-            status="success", stats={"rows": report.rows, "scored": report.scored}
+            status="success", stats={"rows": report.rows, "scored": report.scored, "graded": report.graded}
         )
     return JobResult(status="skipped", message=report.message)
 
