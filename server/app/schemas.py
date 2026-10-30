@@ -1540,3 +1540,74 @@ class ScoreStudyResponse(BaseModel):
 # `fundamentals` field. Pydantic resolves the string once the name exists, and
 # the only place that is guaranteed is here, below every declaration.
 DeepInputs.model_rebuild()
+
+
+class EngineEntryItem(BaseModel):
+    k_atr: float
+    price: float
+    ev: float
+    ev_lo: float
+    win_rate: float
+    worst_5pct: float
+    fill_rate: float
+    max_weight: float
+
+
+class EnginePlanItem(BaseModel):
+    ev: float | None
+    worst_5pct: float | None
+    trust: Literal["low", "medium"]
+    entry: EngineEntryItem | None
+
+
+class EngineRecommendationItem(BaseModel):
+    sid: str
+    name: str
+    market: str
+    sector: str
+    sector_rank: int
+    market_cap: float
+    status: Literal["ok", "insufficient_history", "data_mismatch", "failed"]
+    close: float | None
+    as_of: datetime.date | None
+    short: EnginePlanItem | None
+    long: EnginePlanItem | None
+    hold_state: Literal["strong", "unclear", "weak", "unknown"]
+    risk_line: float | None
+
+
+class EngineSectorSummary(BaseModel):
+    sector: str
+    stocks: int = 0
+    short_now: int = 0
+    long_now: int = 0
+    weak: int = 0
+
+
+class EngineValidationItem(BaseModel):
+    state: Literal["strong", "unclear", "weak", "unknown"]
+    samples: int
+    excess_20d: float
+    excess_60d: float
+    excess_60d_lo: float | None
+    excess_60d_hi: float | None
+    up_rate_60d: float
+
+
+class EngineOverviewResponse(BaseModel):
+    """Every field empty until the first import has landed."""
+
+    as_of: datetime.date | None = None
+    engine_version: str | None = None
+    generated_at: datetime.datetime | None = None
+    imported_at: datetime.datetime | None = None
+    stale: bool = False
+    sectors: list[EngineSectorSummary] = []
+    hold_backtest: list[EngineValidationItem] = []
+
+
+class EngineStockResponse(BaseModel):
+    as_of: datetime.date | None = None
+    stale: bool = False
+    item: EngineRecommendationItem | None = None
+

@@ -1,0 +1,26 @@
+[project]
+name = "market-engine"
+version = "1.0.0"
+description = "Daily batch that estimates entry prices for the largest Taiwan-listed stocks in each sector"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "requests>=2.32",
+    "yfinance>=1.0",
+    "tzdata>=2024.1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.hatch.build.targets.wheel]
+packages = ["market_engine"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

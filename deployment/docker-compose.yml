@@ -115,6 +115,7 @@ services:
       # the newest one is, which is the only thing that ever notices a backup
       # that stopped happening. Distinct from BACKUP_DIR, which is a host path.
       BACKUP_STATUS_DIR: /backups
+      ENGINE_OUTPUT_FILE: /engine/latest.json
     ports:
       # Loopback by default: browsers reach the API through nginx at /api on the
       # frontend port, and the frontend container uses the compose network. This
@@ -124,6 +125,8 @@ services:
       # Read-only, and only so /api/health can stat the newest dump. Nothing in
       # the API writes here; the db-backup container owns this directory.
       - ${BACKUP_DIR:-./backups}:/backups:ro
+      # Read-only: the market-engine container owns this directory.
+      - stockboard-engine:/engine:ro
     depends_on:
       db:
         condition: service_healthy
@@ -135,6 +138,28 @@ services:
           # job that goes wrong, not for the ones that go right. The container
           # is OOM-killed and restarted rather than swapping the host to death.
           memory: ${SERVER_MEMORY_LIMIT:-1g}
+    logging: *default-logging
+
+  # The daily sector batch, in its own container because pandas and a full run
+  # need memory the single-process API should not have to share. It talks to the
+  # server through one file on a shared volume, and needs no database access.
+  market-engine:
+    build:
+      context: ../tools/market_engine
+    image: ai-stockboard-market-engine
+    container_name: ai-stockboard-market-engine
+    restart: unless-stopped
+    environment:
+      ENGINE_RUN_AT: ${ENGINE_RUN_AT:-20:00}
+      ENGINE_OUTPUT: /output/latest.json
+      TZ: ${TZ:-Asia/Taipei}
+    volumes:
+      - stockboard-engine:/output
+    deploy:
+      resources:
+        limits:
+          cpus: "${ENGINE_CPU_LIMIT:-1.0}"
+          memory: ${ENGINE_MEMORY_LIMIT:-1500m}
     logging: *default-logging
 
   frontend:
@@ -169,3 +194,4 @@ services:
 
 volumes:
   stockboard-pgdata:
+  stockboard-engine:

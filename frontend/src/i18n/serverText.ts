@@ -64,6 +64,30 @@ export function translateBfpLabel(label: string, t: Translate): string {
   return label === '資料不足' ? t('bfpLabel.insufficient') : label
 }
 
+/** The market engine's sectors, in the order the sidebar lists them. */
+const ENGINE_SECTOR_KEYS: Record<string, MessageKey> = {
+  '半導體': 'engineSector.semiconductor',
+  '記憶體': 'engineSector.memory',
+  '電腦及週邊': 'engineSector.computer',
+  '電子零組件': 'engineSector.components',
+  '其他電子（含代工）': 'engineSector.otherElectronics',
+  '通信網路': 'engineSector.network',
+  '電子通路': 'engineSector.distribution',
+  '光電': 'engineSector.optoelectronics',
+  '建材營造（房市）': 'engineSector.construction',
+  '水泥': 'engineSector.cement',
+  '金融保險': 'engineSector.finance',
+  '航運': 'engineSector.shipping',
+  '鋼鐵': 'engineSector.steel',
+}
+
+export const ENGINE_SECTOR_ORDER = ['半導體', '記憶體', '電腦及週邊', '電子零組件', '其他電子（含代工）', '通信網路', '電子通路', '光電', '建材營造（房市）', '水泥', '金融保險', '航運', '鋼鐵']
+
+export function translateEngineSector(sector: string, t: Translate): string {
+  const key = ENGINE_SECTOR_KEYS[sector]
+  return key ? t(key) : sector
+}
+
 const MARKET_KEYS: Record<string, MessageKey> = {
   上市: 'stockMarket.twse',
   上櫃: 'stockMarket.tpex',
@@ -115,6 +139,7 @@ const JOB_KEYS: Record<string, { name: MessageKey; description: MessageKey }> = 
     description: 'jobDesc.refresh_token_cleanup',
   },
   chip_refresh: { name: 'jobName.chip_refresh', description: 'jobDesc.chip_refresh' },
+  engine_import: { name: 'jobName.engine_import', description: 'jobDesc.engine_import' },
 }
 
 export function translateJobName(id: string, fallback: string, t: Translate): string {
@@ -143,6 +168,7 @@ const JOB_STAT_KEYS: Record<string, MessageKey> = {
   fetched: 'jobStat.fetched',
   cached: 'jobStat.cached',
   rows: 'jobStat.rows',
+  scored: 'jobStat.scored',
 }
 
 export function translateJobStat(key: string, fallback: string, t: Translate): string {

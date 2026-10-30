@@ -19,6 +19,7 @@ from app.services import chip as chip_service
 from app.services import code_sync
 from app.services import codes as codes_service
 from app.services import dividend as dividend_service
+from app.services import engine_import as engine_import_service
 from app.services import fundamentals as fundamentals_service
 from app.services import history_backfill as history_backfill_service
 from app.services import valuation as valuation_service
@@ -149,6 +150,24 @@ def history_backfill(context: JobContext) -> JobResult:
         message="Every stock in the universe has its full history",
         stats=stats,
     )
+
+
+def engine_import(context: JobContext) -> JobResult:
+    """Load the market engine's newest file.
+
+    `skipped` here means there was nothing new: the deployment has no engine, the
+    first run has not finished, or the file is one already loaded. A file that
+    fails validation raises, so `runner` records a failure and the page stays on
+    the last good day.
+    """
+    report = engine_import_service.run(
+        context.db, settings.engine_output_file, force=context.force
+    )
+    if report.status == "imported":
+        return JobResult(
+            status="success", stats={"rows": report.rows, "scored": report.scored}
+        )
+    return JobResult(status="skipped", message=report.message)
 
 
 def refresh_token_cleanup(context: JobContext) -> JobResult:

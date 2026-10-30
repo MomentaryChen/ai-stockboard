@@ -5,7 +5,9 @@ import { useQuery } from '@tanstack/react-query'
 import { ApiError, api } from '../api/client'
 import type { RuleSet } from '../api/types'
 import AiVerdictSection from '../components/AiVerdict'
+import { useAuth } from '../auth/AuthContext'
 import BacktestCard from '../components/BacktestCard'
+import EngineAdvice from '../components/EngineAdvice'
 import BestFourPointCard from '../components/BestFourPointCard'
 import ChenHoldCard from '../components/ChenHoldCard'
 import ChipCard from '../components/ChipCard'
@@ -35,6 +37,7 @@ export default function StockDetail() {
   const { sid = '2330' } = useParams()
   const navigate = useNavigate()
   const { locale, t } = useI18n()
+  const { status } = useAuth()
 
   const [months, setMonths] = useState(3)
   const [mode, setMode] = useState<'candle' | 'line'>('candle')
@@ -43,6 +46,14 @@ export default function StockDetail() {
   const [ruleSet, setRuleSet] = useState<RuleSet>('grs')
   // Two analysis intents, not a card carousel: trade grades days, hold grades years.
   const [analysisMode, setAnalysisMode] = useState<'trade' | 'hold'>('trade')
+
+  // Signed-in only, and not fetched otherwise: the server would answer 401, and
+  // the client would treat that as an expired session.
+  const engineAdvice = useQuery({
+    queryKey: ['engine', 'stock', sid],
+    queryFn: () => api.getEngineStock(sid),
+    enabled: status === 'authenticated',
+  })
 
   const history = useQuery({
     queryKey: ['history', sid, months],
@@ -243,6 +254,11 @@ export default function StockDetail() {
       {/* Mode first, then the matching AI band: switching tabs must change
           which question the stage answers, not leave a trade verdict hanging
           over a hold evidence column. Quote and chart stay put either way. */}
+      {/* Above the mode switch because it answers neither tab's question: this
+          is a separate method with its own time frame, and most stocks have no
+          card at all, since only each sector's largest names are scored. */}
+      {engineAdvice.data?.item && <EngineAdvice item={engineAdvice.data.item} />}
+
       <div className="analysis-mode-bar">
         <div className="analysis-modes" role="tablist" aria-label={t('nav.stock')}>
           <button

@@ -2083,6 +2083,51 @@ not support.
 
 ---
 
+## Sector picks (market engine)
+
+`/picks` lists the five largest companies in 13 Taiwan sectors and answers three
+questions for each: when buying for about a month is reasonable, when buying for
+about three months is reasonable, and how a position looks to someone already
+holding it. The page and every `/api/engine` route require an account, because
+naming a buy price is a different thing from showing market data, and opening it
+to the public is a licensing question to settle first.
+
+**How it runs.** No LLM is involved at any step.
+
+1. `tools/market_engine` runs in its own container at `ENGINE_RUN_AT` (default
+   20:00) and writes one JSON file to a shared volume. It needs pandas and more
+   memory than the single-process API should share.
+2. The `engine_import` job (default 21:30) validates the file and stores it. A
+   file that fails validation changes nothing, so the page stays on the last
+   good day.
+3. Rows are kept per day and engine version. They cannot be recomputed later,
+   and checking whether the calls were right needs what was said at the time.
+
+**The method.** For each stock the engine finds the 300 days most like today in
+its own history and replays limit orders from them, after a 0.585% round-trip
+cost (the stock tax rate, not the ETF rate). The entry price is the highest of six
+levels where the average return's 90% interval is above zero with at least 30
+fills, and the next level down agrees or has too few fills to say.
+
+**What the evidence does and does not support:**
+
+- The page's hold grades are not a sell signal. In the walk-forward check, names
+  graded weak beat names graded strong, so weak is worded as "sell these first if
+  you want less exposure". The warning is driven by the stored check, so it goes
+  away on its own if a later version fixes this.
+- Reliability is usually low: for most stocks the look-alike method did not beat
+  the stock's own running average out of sample. A buy call says returns were
+  positive on average, not that now is better than any other day.
+- Ranking today's largest companies and looking back makes results look better
+  than they were.
+- Prices come from Yahoo Finance. The run stops if the index disagrees with the
+  exchange, and a stock is withheld if its close does, but this is not a licensed
+  feed. Check its terms before any commercial use.
+- News and sudden events only change the advice once they reach the price.
+
+`tools/market_engine` has its own tests and runs by hand with
+`uv run python -m market_engine --out latest.json`, which takes about 15 minutes.
+
 ## 已知限制
 
 - **這個服務目前只能單 process 部署。** 限流視窗、job 鎖、名冊快照與未設定時的

@@ -988,3 +988,73 @@ export interface ScoreStudyResponse {
   min_bucket: number
   bands: ScoreStudyBand[]
 }
+
+export interface EngineEntry {
+  k_atr: number
+  price: number
+  ev: number
+  ev_lo: number
+  win_rate: number
+  worst_5pct: number
+  fill_rate: number
+  max_weight: number
+}
+
+export interface EnginePlan {
+  ev: number | null
+  worst_5pct: number | null
+  trust: 'low' | 'medium'
+  entry: EngineEntry | null
+}
+
+export type EngineHoldState = 'strong' | 'unclear' | 'weak' | 'unknown'
+
+export interface EngineRecommendation {
+  sid: string
+  name: string
+  market: string
+  sector: string
+  sector_rank: number
+  market_cap: number
+  status: 'ok' | 'insufficient_history' | 'data_mismatch' | 'failed'
+  close: number | null
+  as_of: string | null
+  short: EnginePlan | null
+  long: EnginePlan | null
+  hold_state: EngineHoldState
+  risk_line: number | null
+}
+
+export interface EngineSectorSummary {
+  sector: string
+  stocks: number
+  short_now: number
+  long_now: number
+  weak: number
+}
+
+export interface EngineValidationItem {
+  state: EngineHoldState
+  samples: number
+  excess_20d: number
+  excess_60d: number
+  excess_60d_lo: number | null
+  excess_60d_hi: number | null
+  up_rate_60d: number
+}
+
+export interface EngineOverview {
+  as_of: string | null
+  engine_version: string | null
+  generated_at: string | null
+  imported_at: string | null
+  stale: boolean
+  sectors: EngineSectorSummary[]
+  hold_backtest: EngineValidationItem[]
+}
+
+export interface EngineStockResponse {
+  as_of: string | null
+  stale: boolean
+  item: EngineRecommendation | null
+}

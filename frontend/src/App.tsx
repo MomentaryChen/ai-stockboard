@@ -24,6 +24,7 @@ import MarketDashboard from './pages/MarketDashboard'
  */
 const StockDetail = lazy(() => import('./pages/StockDetail'))
 const RealtimeBoard = lazy(() => import('./pages/RealtimeBoard'))
+const EnginePicks = lazy(() => import('./pages/EnginePicks'))
 const Login = lazy(() => import('./pages/Login'))
 const Register = lazy(() => import('./pages/Register'))
 const ChangePassword = lazy(() => import('./pages/ChangePassword'))
@@ -73,6 +74,16 @@ export default function App() {
               <span className="nav-lock">{t('nav.realtimeLocked')}</span>
             )}
           </Link>
+          <Link
+            to="/picks"
+            className={pathname.startsWith('/picks') ? 'active' : ''}
+            title={status === 'anonymous' ? t('nav.picksLockedTitle') : undefined}
+          >
+            {t('nav.picks')}
+            {status === 'anonymous' && (
+              <span className="nav-lock">{t('nav.realtimeLocked')}</span>
+            )}
+          </Link>
         </nav>
         <div className="topbar-right">
           <UserMenu />
@@ -105,6 +116,14 @@ export default function App() {
                 <Route path="/" element={<MarketDashboard />} />
                 <Route path="/stock/:sid" element={<StockDetail />} />
                 <Route path="/realtime" element={<RealtimeBoard />} />
+                <Route
+                  path="/picks"
+                  element={
+                    <RequireAuth>
+                      <EnginePicks />
+                    </RequireAuth>
+                  }
+                />
                 <Route path="/login" element={<Login />} />
                 <Route path="/register" element={<Register />} />
                 <Route

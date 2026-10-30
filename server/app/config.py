@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     # you want when the log is being read by a person in `docker compose logs`.
     log_format: str = "text"
 
+    # --- Market engine ---
+    # The file the market-engine container writes, as seen from this process.
+    # Empty means this deployment does not run the engine, and the import job
+    # reports that as a skip rather than a failure.
+    engine_output_file: str = ""
+
     # --- Health / backup reporting ---
     # Path *inside this process* to the directory the db-backup container
     # writes dumps into. Distinct from the compose-side BACKUP_DIR, which is a

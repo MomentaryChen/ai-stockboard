@@ -30,6 +30,9 @@ import type {
   ChipResponse,
   RealtimeResponse,
   SearchResponse,
+  EngineOverview,
+  EngineRecommendation,
+  EngineStockResponse,
   ScoreStudyResponse,
   StockInfo,
   User,
@@ -680,6 +683,16 @@ export const api = {
    *  it reads the backfill universe. Returns are null until that backfill
    *  reports nothing left. */
   getScoreStudy: () => request<ScoreStudyResponse>('/api/admin/score-study', { auth: true }),
+
+  // --- sector picks (signed in) ---
+  getEngineOverview: () => request<EngineOverview>('/api/engine/overview', { auth: true }),
+  getEngineRecommendations: (sector: string) =>
+    request<EngineRecommendation[]>(
+      `/api/engine/recommendations?sector=${encodeURIComponent(sector)}`,
+      { auth: true },
+    ),
+  getEngineStock: (sid: string) =>
+    request<EngineStockResponse>(`/api/engine/stocks/${encodeURIComponent(sid)}`, { auth: true }),
 
   // --- watchlist (signed in) ---
 
