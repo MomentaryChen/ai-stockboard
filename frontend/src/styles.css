@@ -1375,3 +1375,74 @@ table.chip-table th:first-child, table.chip-table td:first-child { text-align: l
   /* The pill keeps its title attribute, which says the same thing. */
   .nav-lock { display: none; }
 }
+
+/* ---------- sector picks ---------- */
+.engine-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.engine-side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+.engine-side-title { padding: 4px 8px 8px; }
+.engine-side-item {
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 7px 8px;
+  text-align: left;
+}
+.engine-side-item:hover { background: var(--bg-input); }
+.engine-side-item.active { background: var(--accent); color: #fff; }
+.engine-main-column { min-width: 0; }
+.engine-title { font-size: 22px; margin: 0 0 4px; }
+.engine-warning {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  margin: 0;
+  padding: 10px 14px;
+  line-height: 1.6;
+}
+.engine-how { color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+.engine-how summary { cursor: pointer; }
+.engine-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-bottom: 14px;
+}
+.engine-head a { color: var(--text); }
+.engine-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 16px;
+}
+.engine-box { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.engine-main { font-size: 16px; font-weight: 600; }
+/* No red or green: in this market they mean up and down, not good and bad. */
+.engine-main.go { color: var(--accent); }
+.engine-main.wait { color: var(--text); }
+.engine-main.no { color: var(--text-muted); }
+.engine-note { color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+.engine-foot { border-top: 1px solid var(--border); margin: 14px 0 0; padding-top: 10px; }
+@media (max-width: 720px) {
+  .engine-layout { grid-template-columns: minmax(0, 1fr); }
+  .engine-side { position: static; flex-direction: row; flex-wrap: wrap; }
+  .engine-side-title { width: 100%; padding-bottom: 2px; }
+}

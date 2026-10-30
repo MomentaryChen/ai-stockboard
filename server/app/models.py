@@ -44,6 +44,7 @@ editing an env var and bouncing the process.
 import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -937,3 +938,54 @@ class SystemSetting(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     updated_by: Mapped[str | None] = mapped_column(String(32))
+
+
+class EngineRun(Base):
+    """One day's output from the market engine, as imported.
+
+    `source_sha256` lets the nightly import recognise a file it has already
+    loaded. A failed engine run leaves the old file in place, so that is the
+    common case on any day the batch had a problem, and on every weekend.
+    """
+
+    __tablename__ = "engine_run"
+
+    as_of: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
+    engine_version: Mapped[str] = mapped_column(String(16), primary_key=True)
+    generated_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True))
+    imported_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    source_sha256: Mapped[str] = mapped_column(String(64))
+    # The walk-forward check of the holder's grades. Stored with the run because
+    # the page must quote the evidence that belongs to these calls.
+    hold_backtest: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), default=list
+    )
+
+
+class EngineRecommendation(Base):
+    """What the engine said about one stock on one day.
+
+    A record rather than a cache, unlike `backtest_result`: it cannot be
+    recomputed, because the rankings and Yahoo's adjusted prices move, and
+    judging these calls later needs what was said at the time. Hence one row per
+    day and engine version, never overwritten by a new method.
+
+    The figures stay in `payload` because the page renders them whole and nothing
+    filters on them. Only what a query needs is a column.
+    """
+
+    __tablename__ = "engine_recommendation"
+
+    as_of: Mapped[datetime.date] = mapped_column(Date, primary_key=True)
+    engine_version: Mapped[str] = mapped_column(String(16), primary_key=True)
+    sid: Mapped[str] = mapped_column(String(16), primary_key=True)
+    sector: Mapped[str] = mapped_column(String(32))
+    sector_rank: Mapped[int] = mapped_column(SmallInteger)
+    status: Mapped[str] = mapped_column(String(24))
+    hold_state: Mapped[str] = mapped_column(String(12))
+    payload: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+
+    __table_args__ = (Index("ix_engine_recommendation_sid", "sid", "as_of"),)
+
