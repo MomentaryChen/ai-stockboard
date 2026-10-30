@@ -19,7 +19,7 @@ from sqlalchemy.pool import StaticPool
 from app.db import get_db
 from app.deps import get_current_user
 from app.main import app
-from app.models import EngineRecommendation, EngineRun
+from app.models import EngineOutcome, EngineRecommendation, EngineRun
 from app.services import engine_import
 from app.services.jobs import handlers
 from app.services.jobs.registry import JobContext
@@ -34,6 +34,7 @@ def engine_db() -> Session:
     )
     EngineRun.__table__.create(engine)
     EngineRecommendation.__table__.create(engine)
+    EngineOutcome.__table__.create(engine)
     session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
     try:
         yield session
@@ -128,7 +129,7 @@ def test_a_new_session_keeps_yesterdays_rows(engine_db, tmp_path):
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"schema_version": 2},
+        {"schema_version": 99},
         {"rows": []},
         {"rows": [_row(hold_state="sell_now")]},
         {"rows": [{"sid": "2330"}]},
@@ -198,3 +199,75 @@ def test_sector_list_is_ranked_and_stock_lookup_works(signed_in, engine_db, tmp_
 def test_old_data_is_flagged(signed_in, engine_db, tmp_path):
     engine_import.run(engine_db, _file(tmp_path, as_of="2020-01-02"))
     assert signed_in.get("/api/engine/overview").json()["stale"] is True
+
+
+def _outcome(day, *, sid="2330", horizon="short", call="buy_now", hold_state="strong", ret=0.05, bench=0.02):
+    return {
+        "call_as_of": (datetime.date(2026, 1, 1) + datetime.timedelta(days=day)).isoformat(),
+        "engine_version": "1.0.0",
+        "sid": sid,
+        "sector": "半導體",
+        "horizon": horizon,
+        "call": call,
+        "hold_state": hold_state,
+        "filled": call != "no_buy",
+        "stopped": False,
+        "followed_return": None if call == "no_buy" else ret,
+        "market_entry_return": ret,
+        "benchmark_return": bench,
+    }
+
+
+def _import_outcomes(db, tmp_path, outcomes):
+    return engine_import.run(db, _file(tmp_path, schema_version=2, outcomes=outcomes), force=True)
+
+
+def _call(body, horizon, call):
+    return next(c for c in body["calls"] if c["horizon"] == horizon and c["call"] == call)
+
+
+def test_first_grade_wins(engine_db, tmp_path):
+    """A later copy can differ after Yahoo restates prices. The record must not."""
+    assert _import_outcomes(engine_db, tmp_path, [_outcome(0)]).graded == 1
+    assert _import_outcomes(engine_db, tmp_path, [_outcome(0, ret=-0.5)]).graded == 0
+    assert engine_db.scalars(select(EngineOutcome)).one().market_entry_return == 0.05
+
+
+def test_old_file_without_outcomes_still_imports(engine_db, tmp_path):
+    assert engine_import.run(engine_db, _file(tmp_path)).graded == 0
+
+
+def test_track_record_requires_sign_in(client):
+    assert client.get("/api/engine/track-record").status_code == 401
+
+
+def test_no_figures_before_enough_call_dates(signed_in, engine_db, tmp_path):
+    """Many stocks on one day are one market mood, however many rows they make."""
+    many = [_outcome(day, sid=str(sid)) for day in range(5) for sid in range(50)]
+    _import_outcomes(engine_db, tmp_path, many)
+    row = _call(signed_in.get("/api/engine/track-record").json(), "short", "buy_now")
+    assert row["calls"] == 250
+    assert row["ready"] is False and row["avg_return"] is None and row["conclusion"] == "collecting"
+
+
+def test_average_appears_but_no_conclusion_until_periods_accumulate(signed_in, engine_db, tmp_path):
+    _import_outcomes(engine_db, tmp_path, [_outcome(day) for day in range(30)])
+    row = _call(signed_in.get("/api/engine/track-record").json(), "short", "buy_now")
+    assert row["ready"] is True and row["avg_excess"] == pytest.approx(0.03)
+    assert row["conclusion"] == "collecting"
+
+
+def test_conclusion_once_enough_independent_periods(signed_in, engine_db, tmp_path):
+    rows = [_outcome(day) for day in range(170)]
+    rows += [_outcome(day, sid="2454", call="no_buy", ret=-0.03) for day in range(170)]
+    _import_outcomes(engine_db, tmp_path, rows)
+    body = signed_in.get("/api/engine/track-record").json()
+    assert _call(body, "short", "buy_now")["conclusion"] == "beat"
+    assert _call(body, "short", "no_buy")["conclusion"] == "lagged"
+
+
+def test_hold_grades_use_only_the_long_horizon(signed_in, engine_db, tmp_path):
+    rows = [_outcome(day, horizon="short", hold_state="weak") for day in range(30)]
+    _import_outcomes(engine_db, tmp_path, rows)
+    body = signed_in.get("/api/engine/track-record").json()
+    assert next(h for h in body["holds"] if h["hold_state"] == "weak")["calls"] == 0

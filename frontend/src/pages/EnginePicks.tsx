@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { EngineValidationItem } from '../api/types'
 import EngineAdvice from '../components/EngineAdvice'
+import EngineTrackRecord from '../components/EngineTrackRecord'
 import { useI18n } from '../i18n'
 import { ENGINE_SECTOR_ORDER, translateEngineSector } from '../i18n/serverText'
 import { errorMessage } from '../utils/errors'
@@ -45,7 +46,8 @@ export default function EnginePicks() {
     return index === -1 ? ENGINE_SECTOR_ORDER.length : index
   }
   const sectors = [...(overview.data?.sectors ?? [])].sort((a, b) => order(a.sector) - order(b.sector))
-  const selected = params.get('sector') ?? sectors[0]?.sector ?? null
+  const showTrack = params.get('view') === 'track'
+  const selected = showTrack ? null : (params.get('sector') ?? sectors[0]?.sector ?? null)
 
   const stocks = useQuery({
     queryKey: ['engine', 'recommendations', selected, overview.data?.as_of],
@@ -82,8 +84,19 @@ export default function EnginePicks() {
             {translateEngineSector(sector.sector, t)}
           </button>
         ))}
+        <button
+          type="button"
+          className={`engine-side-item engine-side-track ${showTrack ? 'active' : ''}`}
+          aria-current={showTrack ? 'true' : undefined}
+          onClick={() => setParams({ view: 'track' })}
+        >
+          {t('engine.trackNav')}
+        </button>
       </nav>
 
+      {showTrack ? (
+        <EngineTrackRecord />
+      ) : (
       <div className="stack engine-main-column">
         <div>
           <h1 className="engine-title">{selected && translateEngineSector(selected, t)}</h1>
@@ -113,6 +126,7 @@ export default function EnginePicks() {
 
         <p className="dim">{t('engine.disclaimer')}</p>
       </div>
+      )}
     </div>
   )
 }

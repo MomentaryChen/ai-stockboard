@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
 
-from market_engine import ENGINE_VERSION, SCHEMA_VERSION, scoring, universe
+from market_engine import ENGINE_VERSION, SCHEMA_VERSION, scoring, tracking, universe
 
 logger = logging.getLogger("market_engine")
 TAIPEI = ZoneInfo("Asia/Taipei")
@@ -22,6 +22,10 @@ TAIPEI = ZoneInfo("Asia/Taipei")
 #: Below this share of stocks scored, an outage is more likely than bad luck,
 #: and replacing yesterday's page with a mostly empty one helps nobody.
 MIN_OK_SHARE = 0.6
+
+#: What the calls are compared against: a fund a reader could simply have bought,
+#: with dividends, unlike the price index.
+BENCHMARK = "0050.TW"
 
 
 def verified_index(raw: pd.DataFrame) -> pd.Series:
@@ -45,10 +49,34 @@ def verified_index(raw: pd.DataFrame) -> pd.Series:
     return close
 
 
-def run(params: scoring.Params, start: str) -> dict:
+def grade_earlier_calls(files: list[dict], raw: pd.DataFrame, market_close: pd.Series) -> list[dict]:
+    """Grades what can be graded. Never allowed to cost today's recommendations."""
+    if not files:
+        return []
+    try:
+        benchmark = scoring.build_frame(
+            scoring.clean(raw[BENCHMARK], market_close.index, "0050", "上市"), market_close
+        )[1]
+        prices = {}
+        for call in {c["sid"]: c for file in files for c in file["calls"]}.values():
+            try:
+                bars = scoring.clean(raw[call["yahoo"]], market_close.index, call["sid"], call["market"])
+                prices[call["sid"]] = scoring.build_frame(bars, market_close)[1]
+            except Exception:  # A delisted stock must not stop the others being graded.
+                logger.exception("Could not load prices for %s", call["sid"])
+        return tracking.grade(files, prices, benchmark)
+    except Exception:
+        logger.exception("Could not grade earlier calls")
+        return []
+
+
+def run(params: scoring.Params, start: str, calls_dir: str) -> tuple[dict, dict[str, str]]:
     picks = universe.pick(universe.fetch_listing())
+    files = tracking.load_calls(calls_dir)
+    # A stock that has left the top five still has calls waiting to be graded.
+    earlier = {c["yahoo"] for file in files for c in file["calls"]}
     raw = yf.download(
-        [p["yahoo"] for p in picks] + ["^TWII"],
+        sorted({p["yahoo"] for p in picks} | earlier | {"^TWII", BENCHMARK}),
         start=start,
         auto_adjust=False,
         group_by="ticker",
@@ -88,14 +116,16 @@ def run(params: scoring.Params, start: str) -> dict:
     ok = sum(r["status"] == "ok" for r in rows)
     if ok < len(rows) * MIN_OK_SHARE:
         raise RuntimeError(f"only {ok} of {len(rows)} stocks scored; keeping the previous output")
-    return {
+    payload = {
         "schema_version": SCHEMA_VERSION,
         "engine_version": ENGINE_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "as_of": market_close.index[-1].strftime("%Y-%m-%d"),
         "recommendations": rows,
         "hold_backtest": scoring.summarize_walk_forward(records),
+        "outcomes": grade_earlier_calls(files, raw, market_close),
     }
+    return payload, {p["code"]: p["yahoo"] for p in picks}
 
 
 def write_atomically(payload: dict, path: str) -> None:
@@ -115,7 +145,11 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     warnings.filterwarnings("ignore")
     try:
-        write_atomically(run(scoring.Params(), args.start), args.out)
+        calls_dir = os.path.join(os.path.dirname(os.path.abspath(args.out)), "calls")
+        payload, symbols = run(scoring.Params(), args.start, calls_dir)
+        write_atomically(payload, args.out)
+        # After the write: a call is only worth grading if readers could have seen it.
+        tracking.save_calls(calls_dir, payload, symbols)
     except Exception:
         logger.exception("Run failed; the previous output was left in place")
         return 1

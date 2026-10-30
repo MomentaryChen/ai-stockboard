@@ -1611,3 +1611,36 @@ class EngineStockResponse(BaseModel):
     stale: bool = False
     item: EngineRecommendationItem | None = None
 
+
+class EngineTrackSummary(BaseModel):
+    calls: int
+    call_dates: int
+    independent_periods: int
+    ready: bool
+    avg_return: float | None
+    win_rate: float | None
+    avg_benchmark: float | None
+    avg_excess: float | None
+    excess_lo: float | None
+    excess_hi: float | None
+    conclusion: Literal["collecting", "beat", "lagged", "no_difference"]
+
+
+class EngineTrackCall(EngineTrackSummary):
+    horizon: Literal["short", "long"]
+    call: Literal["buy_now", "buy_dip", "no_buy"]
+    fill_rate: float | None
+    avg_followed_return: float | None
+
+
+class EngineTrackHold(EngineTrackSummary):
+    hold_state: Literal["strong", "unclear", "weak"]
+
+
+class EngineTrackRecordResponse(BaseModel):
+    first_call: datetime.date | None
+    last_call: datetime.date | None
+    graded: int
+    min_call_dates: int
+    calls: list[EngineTrackCall]
+    holds: list[EngineTrackHold]

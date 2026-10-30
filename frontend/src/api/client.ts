@@ -33,6 +33,7 @@ import type {
   EngineOverview,
   EngineRecommendation,
   EngineStockResponse,
+  EngineTrackRecord,
   ScoreStudyResponse,
   StockInfo,
   User,
@@ -691,6 +692,7 @@ export const api = {
       `/api/engine/recommendations?sector=${encodeURIComponent(sector)}`,
       { auth: true },
     ),
+  getEngineTrackRecord: () => request<EngineTrackRecord>('/api/engine/track-record', { auth: true }),
   getEngineStock: (sid: string) =>
     request<EngineStockResponse>(`/api/engine/stocks/${encodeURIComponent(sid)}`, { auth: true }),
 

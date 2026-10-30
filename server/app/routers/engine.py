@@ -20,8 +20,9 @@ from app.schemas import (
     EngineRecommendationItem,
     EngineSectorSummary,
     EngineStockResponse,
+    EngineTrackRecordResponse,
 )
-from app.services import engine_import
+from app.services import engine_import, engine_track
 
 router = APIRouter(
     prefix="/api/engine",
@@ -74,6 +75,11 @@ def recommendations(
     if run is None:
         return []
     return [EngineRecommendationItem(**row.payload) for row in engine_import.run_rows(db, run, sector=sector)]
+
+
+@router.get("/track-record", response_model=EngineTrackRecordResponse)
+def track_record(db: Session = Depends(get_db)) -> EngineTrackRecordResponse:
+    return EngineTrackRecordResponse(**engine_track.load(db))
 
 
 @router.get("/stocks/{sid}", response_model=EngineStockResponse)

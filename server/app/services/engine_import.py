@@ -19,11 +19,13 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models import EngineRecommendation, EngineRun
+from app.models import EngineOutcome, EngineRecommendation, EngineRun
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_SCHEMA = 1
+#: 1 is accepted so the first import after an upgrade can still read the file the
+#: previous engine version left behind.
+SUPPORTED_SCHEMAS = {1, 2}
 
 
 class EngineEntry(BaseModel):
@@ -71,6 +73,21 @@ class EngineValidationRow(BaseModel):
     up_rate_60d: float
 
 
+class EngineOutcomeRow(BaseModel):
+    call_as_of: datetime.date
+    engine_version: str
+    sid: str
+    sector: str
+    horizon: Literal["short", "long"]
+    call: Literal["buy_now", "buy_dip", "no_buy"]
+    hold_state: Literal["strong", "unclear", "weak", "unknown"]
+    filled: bool
+    stopped: bool
+    followed_return: float | None
+    market_entry_return: float
+    benchmark_return: float | None
+
+
 class EngineFile(BaseModel):
     schema_version: int
     engine_version: str
@@ -78,6 +95,7 @@ class EngineFile(BaseModel):
     as_of: datetime.date
     recommendations: list[EngineRow]
     hold_backtest: list[EngineValidationRow]
+    outcomes: list[EngineOutcomeRow] = []
 
 
 @dataclass(frozen=True)
@@ -86,6 +104,7 @@ class ImportReport:
     message: str | None = None
     rows: int = 0
     scored: int = 0
+    graded: int = 0
 
 
 class EngineFileError(ValueError):
@@ -97,10 +116,8 @@ def parse(raw: bytes) -> EngineFile:
         parsed = EngineFile.model_validate_json(raw)
     except ValidationError as error:
         raise EngineFileError(f"Engine file failed validation: {error.error_count()} problem(s)") from error
-    if parsed.schema_version != SUPPORTED_SCHEMA:
-        raise EngineFileError(
-            f"Engine file schema {parsed.schema_version} is not supported (expected {SUPPORTED_SCHEMA})"
-        )
+    if parsed.schema_version not in SUPPORTED_SCHEMAS:
+        raise EngineFileError(f"Engine file schema {parsed.schema_version} is not supported")
     if not parsed.recommendations:
         raise EngineFileError("Engine file has no recommendations")
     return parsed
@@ -154,10 +171,32 @@ def run(db: Session, path: str, *, force: bool = False) -> ImportReport:
                 payload=row.model_dump(mode="json"),
             )
         )
+    graded = _store_new_outcomes(db, parsed.outcomes)
     db.commit()
     scored = sum(row.status == "ok" for row in parsed.recommendations)
     logger.info("Imported engine run %s (%d rows)", parsed.as_of, len(parsed.recommendations))
-    return ImportReport("imported", rows=len(parsed.recommendations), scored=scored)
+    return ImportReport("imported", rows=len(parsed.recommendations), scored=scored, graded=graded)
+
+
+def _store_new_outcomes(db: Session, outcomes: list[EngineOutcomeRow]) -> int:
+    known = set(
+        db.execute(
+            select(
+                EngineOutcome.call_as_of,
+                EngineOutcome.engine_version,
+                EngineOutcome.sid,
+                EngineOutcome.horizon,
+            )
+        ).tuples()
+    )
+    added = 0
+    for row in outcomes:
+        key = (row.call_as_of, row.engine_version, row.sid, row.horizon)
+        if key not in known:
+            known.add(key)
+            db.add(EngineOutcome(**row.model_dump()))
+            added += 1
+    return added
 
 
 def latest_run(db: Session) -> EngineRun | None:
