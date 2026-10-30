@@ -17,6 +17,7 @@ import { fmtInt, fmtPrice } from '../utils/format'
 //: The worked example. A round lot of a NT$2,000 stock is out of reach for many
 //: readers, so this is a sum of money rather than a number of shares.
 const EXAMPLE_AMOUNT = 100_000
+const EXAMPLE_AMOUNT_USD = 10_000
 
 const HOLD_COPY: Record<EngineRecommendation['hold_state'], { title: MessageKey; note: MessageKey; tone: string }> = {
   strong: { title: 'engine.holdStrong', note: 'engine.holdStrongNote', tone: 'go' },
@@ -29,12 +30,14 @@ function percent(share: number): string {
   return `${(share * 100).toFixed(1)}%`
 }
 
-function PlanBox({ label, plan }: { label: MessageKey; plan: EnginePlan | null }) {
+function PlanBox({ label, plan, usd }: { label: MessageKey; plan: EnginePlan | null; usd: boolean }) {
   const { t } = useI18n()
   if (!plan) return null
   const entry = plan.entry
   const expected = entry ? entry.ev : plan.ev
-  const amount = expected === null ? null : fmtInt(Math.round((Math.abs(expected) * EXAMPLE_AMOUNT) / 10) * 10)
+  const base = usd ? EXAMPLE_AMOUNT_USD : EXAMPLE_AMOUNT
+  const amount = expected === null ? null : fmtInt(Math.round((Math.abs(expected) * base) / 10) * 10)
+  const gain = expected !== null && expected >= 0
 
   return (
     <div className="engine-box">
@@ -50,8 +53,8 @@ function PlanBox({ label, plan }: { label: MessageKey; plan: EnginePlan | null }
       )}
       <div className="engine-note">
         {amount !== null &&
-          t(expected !== null && expected >= 0 ? 'engine.earn' : 'engine.lose', {
-            base: fmtInt(EXAMPLE_AMOUNT),
+          t(usd ? (gain ? 'engine.earnUsd' : 'engine.loseUsd') : gain ? 'engine.earn' : 'engine.lose', {
+            base: fmtInt(base),
             amount,
           })}
         {entry && ` ${t('engine.maxWeight', { weight: percent(entry.max_weight) })}`}
@@ -86,11 +89,12 @@ export default function EngineAdvice({
 }) {
   const { t } = useI18n()
   const title = `${item.name} ${item.sid}`
+  const usd = item.market === '美股'
 
   return (
     <article className="card engine-card">
       <div className="engine-head">
-        <strong>{linked ? <Link to={`/stock/${item.sid}`}>{title}</Link> : title}</strong>
+        <strong>{linked && !usd ? <Link to={`/stock/${item.sid}`}>{title}</Link> : title}</strong>
         <span className="dim">
           {t('engine.sectorRank', {
             sector: translateEngineSector(item.sector, t),
@@ -99,13 +103,19 @@ export default function EngineAdvice({
           {item.close !== null &&
             item.as_of &&
             ` · ${t('engine.closeOn', { price: fmtPrice(item.close), date: item.as_of })}`}
+          {item.extended_price != null &&
+            item.extended_change != null &&
+            ` · ${t('engine.extended', {
+              price: fmtPrice(item.extended_price),
+              change: `${item.extended_change >= 0 ? '+' : ''}${item.extended_change.toFixed(1)}%`,
+            })}`}
         </span>
       </div>
       {item.status === 'ok' ? (
         <>
           <div className="engine-grid">
-            <PlanBox label="engine.short" plan={item.short} />
-            <PlanBox label="engine.long" plan={item.long} />
+            <PlanBox label="engine.short" plan={item.short} usd={usd} />
+            <PlanBox label="engine.long" plan={item.long} usd={usd} />
             <HoldBox item={item} />
           </div>
           <p className="dim engine-foot">

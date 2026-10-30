@@ -233,6 +233,29 @@ def test_first_grade_wins(engine_db, tmp_path):
     assert engine_db.scalars(select(EngineOutcome)).one().market_entry_return == 0.05
 
 
+def test_regions_can_share_a_date_and_stay_apart(signed_in, engine_db, tmp_path):
+    engine_import.run(engine_db, _file(tmp_path))
+    us = _row(sid="NVDA", sector="AI 晶片", market="美股", extended_price=207.7, extended_change=-2.8)
+    engine_import.run(engine_db, _file(tmp_path, region="us", schema_version=3, rows=[us]))
+
+    assert signed_in.get("/api/engine/overview").json()["sectors"][0]["sector"] == "半導體"
+    assert signed_in.get("/api/engine/overview?region=us").json()["sectors"][0]["sector"] == "AI 晶片"
+    rows = signed_in.get("/api/engine/recommendations?sector=AI 晶片&region=us").json()
+    assert rows[0]["extended_price"] == 207.7
+    assert signed_in.get("/api/engine/recommendations?sector=AI 晶片").json() == []
+
+
+def test_track_records_stay_apart_by_region(signed_in, engine_db, tmp_path):
+    outcomes = [_outcome(0)]
+    engine_import.run(engine_db, _file(tmp_path, region="us", schema_version=3, outcomes=outcomes))
+    assert signed_in.get("/api/engine/track-record?region=us").json()["graded"] == 1
+    assert signed_in.get("/api/engine/track-record").json()["graded"] == 0
+
+
+def test_unknown_region_is_refused(signed_in):
+    assert signed_in.get("/api/engine/overview?region=jp").status_code == 422
+
+
 def test_old_file_without_outcomes_still_imports(engine_db, tmp_path):
     assert engine_import.run(engine_db, _file(tmp_path)).graded == 0
 

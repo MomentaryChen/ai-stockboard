@@ -13,6 +13,11 @@ import pandas as pd
 #: pay 0.1% tax, so this constant must not be reused for an ETF.
 ROUND_TRIP_COST = 0.00585
 
+#: A Taiwanese account buying US stocks through a broker's sub-brokerage, at a
+#: typical 0.25% each way. A run handles one market, so `__main__` sets the
+#: active rate once at startup.
+US_ROUND_TRIP_COST = 0.005
+
 #: Limit prices tried below the last close, in multiples of the average daily
 #: range. Zero means buying at the next open.
 LEVELS = [0, 0.5, 1.0, 1.5, 2.0, 3.0]

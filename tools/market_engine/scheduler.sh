@@ -6,6 +6,7 @@ set -u
 
 ENGINE_RUN_AT=${ENGINE_RUN_AT:-20:00}
 ENGINE_OUTPUT=${ENGINE_OUTPUT:-/output/latest.json}
+ENGINE_REGION=${ENGINE_REGION:-tw}
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') engine: $*"; }
 
@@ -22,5 +23,5 @@ while :; do
     sleep $((next - now))
     # A failed run leaves yesterday's file in place, and the importer then
     # reports it as unchanged, so the loop only needs to keep going.
-    python -m market_engine --out "$ENGINE_OUTPUT" || log "run failed"
+    python -m market_engine --region "$ENGINE_REGION" --out "$ENGINE_OUTPUT" || log "run failed"
 done

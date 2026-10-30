@@ -9,6 +9,7 @@ a product setting.
 from __future__ import annotations
 
 import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -30,6 +31,8 @@ router = APIRouter(
     dependencies=[Depends(get_current_user)],
 )
 
+Region = Literal["tw", "us"]
+
 #: A market closure lasts about a week at most, so anything older than this
 #: means the batch has stopped, and the page should say so.
 STALE_AFTER_DAYS = 7
@@ -44,8 +47,8 @@ def _buy_now(plan: dict | None) -> bool:
 
 
 @router.get("/overview", response_model=EngineOverviewResponse)
-def overview(db: Session = Depends(get_db)) -> EngineOverviewResponse:
-    run = engine_import.latest_run(db)
+def overview(region: Region = "tw", db: Session = Depends(get_db)) -> EngineOverviewResponse:
+    run = engine_import.latest_run(db, region)
     if run is None:
         return EngineOverviewResponse()
     sectors: dict[str, EngineSectorSummary] = {}
@@ -69,17 +72,18 @@ def overview(db: Session = Depends(get_db)) -> EngineOverviewResponse:
 @router.get("/recommendations", response_model=list[EngineRecommendationItem])
 def recommendations(
     sector: str = Query(..., max_length=32),
+    region: Region = "tw",
     db: Session = Depends(get_db),
 ) -> list[EngineRecommendationItem]:
-    run = engine_import.latest_run(db)
+    run = engine_import.latest_run(db, region)
     if run is None:
         return []
     return [EngineRecommendationItem(**row.payload) for row in engine_import.run_rows(db, run, sector=sector)]
 
 
 @router.get("/track-record", response_model=EngineTrackRecordResponse)
-def track_record(db: Session = Depends(get_db)) -> EngineTrackRecordResponse:
-    return EngineTrackRecordResponse(**engine_track.load(db))
+def track_record(region: Region = "tw", db: Session = Depends(get_db)) -> EngineTrackRecordResponse:
+    return EngineTrackRecordResponse(**engine_track.load(db, region))
 
 
 @router.get("/stocks/{sid}", response_model=EngineStockResponse)

@@ -1574,6 +1574,8 @@ class EngineRecommendationItem(BaseModel):
     long: EnginePlanItem | None
     hold_state: Literal["strong", "unclear", "weak", "unknown"]
     risk_line: float | None
+    extended_price: float | None = None
+    extended_change: float | None = None
 
 
 class EngineSectorSummary(BaseModel):

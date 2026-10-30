@@ -10,8 +10,10 @@ import datetime
 import math
 
 import numpy as np
+import pytest
 import pandas as pd
 
+from market_engine import __main__ as main
 from market_engine import scoring, simulate, tracking
 from market_engine.simulate import ROUND_TRIP_COST
 
@@ -205,3 +207,22 @@ def test_call_files_round_trip_and_expire(tmp_path):
     assert [c["sid"] for c in loaded[0]["calls"]] == ["1111"]
     assert loaded[0]["calls"][0]["long_entry_k"] is None
     assert tracking.load_calls(str(tmp_path), today=datetime.date(2027, 6, 1)) == []
+
+
+def test_us_stock_has_no_official_close_to_compare():
+    bars, market = _history(900)
+    pick = {
+        "sector": "AI 晶片", "rank": 1, "members": 5, "code": "TEST", "name": "Test", "cap": 1e9,
+        "official_close": None, "official_date": None, "yahoo": "TEST", "market": "美股",
+        "extended_price": 99.0, "extended_change": -1.0,
+    }
+    row, _ = scoring.score(pick, bars, market, scoring.Params(k=100, min_history=500))
+    assert row["status"] == "ok"
+    assert row["extended_price"] == 99.0
+
+
+def test_stale_index_stops_the_run():
+    dates = pd.bdate_range("2020-01-01", periods=30)
+    raw = pd.concat({"^GSPC": pd.DataFrame({"Close": np.full(30, 100.0)}, index=dates)}, axis=1)
+    with pytest.raises(RuntimeError, match="newest"):
+        main.verified_index(raw, main.REGIONS["us"])

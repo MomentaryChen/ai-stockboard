@@ -2,10 +2,10 @@ import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 
 import { api } from '../api/client'
-import type { EngineValidationItem } from '../api/types'
+import type { EngineOverview, EngineRegion, EngineValidationItem } from '../api/types'
 import EngineAdvice from '../components/EngineAdvice'
 import EngineTrackRecord from '../components/EngineTrackRecord'
-import { useI18n } from '../i18n'
+import { useI18n, type MessageKey } from '../i18n'
 import { ENGINE_SECTOR_ORDER, translateEngineSector } from '../i18n/serverText'
 import { errorMessage } from '../utils/errors'
 
@@ -39,93 +39,112 @@ export default function EnginePicks() {
   // a stock page.
   const [params, setParams] = useSearchParams()
 
-  const overview = useQuery({ queryKey: ['engine', 'overview'], queryFn: api.getEngineOverview })
+  const taiwan = useQuery({ queryKey: ['engine', 'overview', 'tw'], queryFn: () => api.getEngineOverview('tw') })
+  const us = useQuery({ queryKey: ['engine', 'overview', 'us'], queryFn: () => api.getEngineOverview('us') })
 
   const order = (sector: string) => {
     const index = ENGINE_SECTOR_ORDER.indexOf(sector)
     return index === -1 ? ENGINE_SECTOR_ORDER.length : index
   }
-  const sectors = [...(overview.data?.sectors ?? [])].sort((a, b) => order(a.sector) - order(b.sector))
+  const sorted = (data?: EngineOverview) =>
+    [...(data?.sectors ?? [])].sort((a, b) => order(a.sector) - order(b.sector))
+  const groups = { tw: sorted(taiwan.data), us: sorted(us.data) }
+
+  const region: EngineRegion =
+    params.get('region') === 'us' || (groups.tw.length === 0 && groups.us.length > 0) ? 'us' : 'tw'
+  const overview = region === 'us' ? us.data : taiwan.data
   const showTrack = params.get('view') === 'track'
-  const selected = showTrack ? null : (params.get('sector') ?? sectors[0]?.sector ?? null)
+  const selected = showTrack ? null : (params.get('sector') ?? groups[region][0]?.sector ?? null)
 
   const stocks = useQuery({
-    queryKey: ['engine', 'recommendations', selected, overview.data?.as_of],
-    queryFn: () => api.getEngineRecommendations(selected as string),
+    queryKey: ['engine', 'recommendations', region, selected, overview?.as_of],
+    queryFn: () => api.getEngineRecommendations(selected as string, region),
     enabled: selected !== null,
   })
 
-  if (overview.isLoading) {
+  if (taiwan.isLoading || us.isLoading) {
     return (
       <div className="center-note">
         <span className="spinner" />
       </div>
     )
   }
-  if (overview.error) {
-    return <div className="center-note">{errorMessage(overview.error, t)}</div>
+  if (taiwan.error || us.error) {
+    return <div className="center-note">{errorMessage(taiwan.error ?? us.error, t)}</div>
   }
-  if (sectors.length === 0) {
+  if (groups.tw.length === 0 && groups.us.length === 0) {
     return <div className="center-note">{t('engine.empty')}</div>
   }
+
+  const sideGroup = (name: EngineRegion, title: MessageKey, track: MessageKey) =>
+    groups[name].length > 0 && (
+      <>
+        <div className="dim engine-side-title">{t(title)}</div>
+        {groups[name].map((sector) => {
+          const active = region === name && sector.sector === selected
+          return (
+            <button
+              type="button"
+              key={sector.sector}
+              className={`engine-side-item ${active ? 'active' : ''}`}
+              aria-current={active ? 'true' : undefined}
+              onClick={() => setParams({ region: name, sector: sector.sector })}
+            >
+              {translateEngineSector(sector.sector, t)}
+            </button>
+          )
+        })}
+        <button
+          type="button"
+          className={`engine-side-item engine-side-track ${showTrack && region === name ? 'active' : ''}`}
+          aria-current={showTrack && region === name ? 'true' : undefined}
+          onClick={() => setParams({ region: name, view: 'track' })}
+        >
+          {t(track)}
+        </button>
+      </>
+    )
 
   return (
     <div className="engine-layout">
       <nav className="engine-side" aria-label={t('engine.sectors')}>
-        <div className="dim engine-side-title">{t('engine.sectors')}</div>
-        {sectors.map((sector) => (
-          <button
-            type="button"
-            key={sector.sector}
-            className={`engine-side-item ${sector.sector === selected ? 'active' : ''}`}
-            aria-current={sector.sector === selected ? 'true' : undefined}
-            onClick={() => setParams({ sector: sector.sector })}
-          >
-            {translateEngineSector(sector.sector, t)}
-          </button>
-        ))}
-        <button
-          type="button"
-          className={`engine-side-item engine-side-track ${showTrack ? 'active' : ''}`}
-          aria-current={showTrack ? 'true' : undefined}
-          onClick={() => setParams({ view: 'track' })}
-        >
-          {t('engine.trackNav')}
-        </button>
+        {sideGroup('tw', 'engine.twSectors', 'engine.trackNav')}
+        {sideGroup('us', 'engine.usSectors', 'engine.usTrackNav')}
       </nav>
 
       {showTrack ? (
-        <EngineTrackRecord />
+        <EngineTrackRecord region={region} />
       ) : (
-      <div className="stack engine-main-column">
-        <div>
-          <h1 className="engine-title">{selected && translateEngineSector(selected, t)}</h1>
-          <p className="dim">{t('engine.asOf', { date: overview.data?.as_of ?? '' })}</p>
-          {overview.data?.stale && <p className="engine-warning">{t('engine.stale')}</p>}
-        </div>
-
-        <ValidationNote rows={overview.data?.hold_backtest ?? []} />
-
-        <details className="engine-how">
-          <summary>{t('engine.howTitle')}</summary>
-          <p>{t('engine.howWindows')}</p>
-          <p>{t('engine.howPrice')}</p>
-          <p>{t('engine.howHold')}</p>
-          <p>{t('engine.howLimits')}</p>
-        </details>
-
-        {stocks.isLoading ? (
-          <div className="center-note">
-            <span className="spinner" />
+        <div className="stack engine-main-column">
+          <div>
+            <h1 className="engine-title">{selected && translateEngineSector(selected, t)}</h1>
+            <p className="dim">{t('engine.asOf', { date: overview?.as_of ?? '' })}</p>
+            {overview?.stale && <p className="engine-warning">{t('engine.stale')}</p>}
           </div>
-        ) : stocks.error ? (
-          <div className="center-note">{errorMessage(stocks.error, t)}</div>
-        ) : (
-          (stocks.data ?? []).map((item) => <EngineAdvice key={item.sid} item={item} linked />)
-        )}
 
-        <p className="dim">{t('engine.disclaimer')}</p>
-      </div>
+          {region === 'us' && <p className="engine-warning">{t('engine.usNote')}</p>}
+          <ValidationNote rows={overview?.hold_backtest ?? []} />
+
+          <details className="engine-how">
+            <summary>{t('engine.howTitle')}</summary>
+            <p>{t('engine.howWindows')}</p>
+            <p>{t('engine.howPrice')}</p>
+            <p>{t('engine.howHold')}</p>
+            <p>{t('engine.howLimits')}</p>
+          </details>
+
+          {stocks.isLoading ? (
+            <div className="center-note">
+              <span className="spinner" />
+            </div>
+          ) : stocks.error ? (
+            <div className="center-note">{errorMessage(stocks.error, t)}</div>
+          ) : (
+            (stocks.data ?? []).map((item) => <EngineAdvice key={item.sid} item={item} linked />)
+          )}
+
+          <p className="dim">{t('engine.disclaimer')}</p>
+        </div>
       )}
     </div>
   )

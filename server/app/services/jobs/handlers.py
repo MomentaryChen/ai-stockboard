@@ -160,9 +160,19 @@ def engine_import(context: JobContext) -> JobResult:
     fails validation raises, so `runner` records a failure and the page stays on
     the last good day.
     """
-    report = engine_import_service.run(
-        context.db, settings.engine_output_file, force=context.force
+    return _engine_result(
+        engine_import_service.run(context.db, settings.engine_output_file, force=context.force)
     )
+
+
+def engine_import_us(context: JobContext) -> JobResult:
+    """The same import for the US file. Separate because the markets close 12 hours apart."""
+    return _engine_result(
+        engine_import_service.run(context.db, settings.engine_us_output_file, force=context.force)
+    )
+
+
+def _engine_result(report: engine_import_service.ImportReport) -> JobResult:
     if report.status == "imported":
         return JobResult(
             status="success", stats={"rows": report.rows, "scored": report.scored, "graded": report.graded}
